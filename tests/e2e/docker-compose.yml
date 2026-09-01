@@ -330,6 +330,10 @@ services:
       # Don't ship test-run noise to PostHog. Read by src-tauri/src/telemetry.rs;
       # `init()` is a no-op when this is set, so no events are emitted.
       ANYSCP_DISABLE_TELEMETRY: "1"
+      # The suite selects elements by their English text; pin the UI language
+      # (read by src-tauri/src/lib.rs and injected as data-lang before first
+      # paint) so the product's zh-CN default doesn't break every selector.
+      ANYSCP_UI_LANG: "en-US"
       # Force-rebuild the binary on every run: set to 1
       E2E_FORCE_BUILD: ""
       # WDIO log level
