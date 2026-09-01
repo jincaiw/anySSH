@@ -107,6 +107,8 @@ jobs:
 
       - name: Set version from tag
         shell: bash
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
           echo "Setting version to $VERSION"
@@ -116,6 +118,13 @@ jobs:
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
           # Update Cargo.toml
           sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml && rm -f src-tauri/Cargo.toml.bak
+          # Updater signing needs the minisign private key. Without it (e.g. a
+          # fork building its own releases) the bundler hard-fails on the
+          # configured pubkey, so disable updater artifacts for this build.
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "TAURI_SIGNING_PRIVATE_KEY not set — building without updater artifacts"
+            jq '.bundle.createUpdaterArtifacts = false' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+          fi
 
       - name: Install frontend dependencies
         run: pnpm install
