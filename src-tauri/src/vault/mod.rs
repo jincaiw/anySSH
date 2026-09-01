@@ -1,3 +1,5 @@
+pub mod portable;
+
 use serde::{Deserialize, Serialize};
 use tracing::instrument;
 
@@ -23,6 +25,14 @@ pub enum VaultError {
 
     #[error("Invalid credential data: {0}")]
     InvalidData(String),
+
+    /// Filesystem failure reading or writing the portable vault.
+    #[error("Vault I/O error: {0}")]
+    Io(String),
+
+    /// Key derivation or AEAD failure in the portable vault.
+    #[error("Vault encryption error: {0}")]
+    Crypto(String),
 }
 
 /// Serialise `VaultError` as `{ kind, message }` so the frontend can
@@ -34,10 +44,15 @@ impl Serialize for VaultError {
     {
         use serde::ser::SerializeStruct;
         let mut state = serializer.serialize_struct("VaultError", 2)?;
+        // The new `Io` / `Crypto` variants deliberately reuse the kinds already
+        // emitted by `BackupError` so the frontend's error catalogue (which maps
+        // `kind` → translated copy) needs no new entries.
         let kind = match self {
             VaultError::Keychain(_) => "keychain",
             VaultError::NotFound(_) => "not_found",
             VaultError::InvalidData(_) => "invalid_data",
+            VaultError::Io(_) => "io",
+            VaultError::Crypto(_) => "crypto",
         };
         state.serialize_field("kind", kind)?;
         state.serialize_field("message", &self.to_string())?;
@@ -61,75 +76,109 @@ pub enum StoredCredential {
 }
 
 // ---------------------------------------------------------------------------
+// Backend selection
+// ---------------------------------------------------------------------------
+
+/// Where credentials are stored for this session.
+///
+/// * Installed — the OS keychain (Keychain / Credential Manager / keyutils).
+/// * Portable  — an encrypted file inside the portable data directory, because
+///   the keychain is bound to one machine and would not follow a USB install.
+///
+/// The choice is fixed at startup by `portable::install()`; every caller below
+/// goes through this so no call site needs to know which one is in play.
+enum Backend {
+    Keychain,
+    File(&'static crate::portable::PortablePaths),
+}
+
+fn backend() -> Backend {
+    match crate::portable::current() {
+        Some(paths) => Backend::File(paths),
+        None => Backend::Keychain,
+    }
+}
+
+fn keychain_entry(host_id: &str) -> Result<keyring::Entry, VaultError> {
+    keyring::Entry::new(SERVICE_NAME, host_id).map_err(|e| VaultError::Keychain(e.to_string()))
+}
+
+// ---------------------------------------------------------------------------
 // Core vault operations (synchronous — callers must use spawn_blocking)
 // ---------------------------------------------------------------------------
 
-/// Persist `credential` in the OS keychain under `host_id`.
+/// Persist `credential` under `host_id`.
 ///
-/// The credential is JSON-encoded before being handed to the keychain so that
-/// the `StoredCredential` variant is preserved and can be round-tripped via
+/// The credential is JSON-encoded before storage so that the
+/// `StoredCredential` variant is preserved and can be round-tripped via
 /// [`get_credential`].
 ///
 /// # Security
-/// The plaintext value is only held in Rust memory long enough to pass it to
-/// the keychain C-API.  It is never written to disk or emitted to logs.
+/// The plaintext value is only held in Rust memory long enough to hand it to
+/// the backend. It is never written to disk unencrypted, nor emitted to logs.
 #[instrument(skip(credential), fields(host_id = %host_id))]
 pub fn save_credential(host_id: &str, credential: &StoredCredential) -> Result<(), VaultError> {
-    let entry = keyring::Entry::new(SERVICE_NAME, host_id)
-        .map_err(|e| VaultError::Keychain(e.to_string()))?;
-
-    let json =
-        serde_json::to_string(credential).map_err(|e| VaultError::InvalidData(e.to_string()))?;
-
-    entry
-        .set_password(&json)
-        .map_err(|e| VaultError::Keychain(e.to_string()))?;
-
-    tracing::debug!(host_id = %host_id, "credential saved to keychain");
-    Ok(())
+    match backend() {
+        Backend::File(paths) => portable::save_credential(paths, host_id, credential),
+        Backend::Keychain => {
+            let entry = keychain_entry(host_id)?;
+            let json = serde_json::to_string(credential)
+                .map_err(|e| VaultError::InvalidData(e.to_string()))?;
+            entry
+                .set_password(&json)
+                .map_err(|e| VaultError::Keychain(e.to_string()))?;
+            tracing::debug!(host_id = %host_id, "credential saved to keychain");
+            Ok(())
+        }
+    }
 }
 
-/// Retrieve the `StoredCredential` for `host_id` from the OS keychain.
+/// Retrieve the `StoredCredential` for `host_id`.
 ///
 /// Returns `VaultError::NotFound` when no entry exists for `host_id`.
 #[instrument(fields(host_id = %host_id))]
 pub fn get_credential(host_id: &str) -> Result<StoredCredential, VaultError> {
-    let entry = keyring::Entry::new(SERVICE_NAME, host_id)
-        .map_err(|e| VaultError::Keychain(e.to_string()))?;
-
-    let json = entry.get_password().map_err(|e| match e {
-        keyring::Error::NoEntry => VaultError::NotFound(host_id.to_string()),
-        other => VaultError::Keychain(other.to_string()),
-    })?;
-
-    serde_json::from_str(&json).map_err(|e| VaultError::InvalidData(e.to_string()))
+    match backend() {
+        Backend::File(paths) => portable::get_credential(paths, host_id),
+        Backend::Keychain => {
+            let entry = keychain_entry(host_id)?;
+            let json = entry.get_password().map_err(|e| match e {
+                keyring::Error::NoEntry => VaultError::NotFound(host_id.to_string()),
+                other => VaultError::Keychain(other.to_string()),
+            })?;
+            serde_json::from_str(&json).map_err(|e| VaultError::InvalidData(e.to_string()))
+        }
+    }
 }
 
-/// Remove the credential for `host_id` from the OS keychain.
+/// Remove the credential for `host_id`.
 ///
 /// Treating a missing entry as success avoids spurious errors when
 /// `delete_host` and `vault_delete_credential` are called together.
 #[instrument(fields(host_id = %host_id))]
 pub fn delete_credential(host_id: &str) -> Result<(), VaultError> {
-    let entry = keyring::Entry::new(SERVICE_NAME, host_id)
-        .map_err(|e| VaultError::Keychain(e.to_string()))?;
-
-    match entry.delete_credential() {
-        Ok(()) => {
-            tracing::debug!(host_id = %host_id, "credential deleted from keychain");
-            Ok(())
-        }
-        Err(keyring::Error::NoEntry) => Ok(()), // already absent — that is fine
-        Err(e) => Err(VaultError::Keychain(e.to_string())),
+    match backend() {
+        Backend::File(paths) => portable::delete_credential(paths, host_id),
+        Backend::Keychain => match keychain_entry(host_id)?.delete_credential() {
+            Ok(()) => {
+                tracing::debug!(host_id = %host_id, "credential deleted from keychain");
+                Ok(())
+            }
+            Err(keyring::Error::NoEntry) => Ok(()), // already absent — that is fine
+            Err(e) => Err(VaultError::Keychain(e.to_string())),
+        },
     }
 }
 
 /// Return `true` when a credential exists for `host_id`, without retrieving
 /// the secret value.
 pub fn has_credential(host_id: &str) -> bool {
-    keyring::Entry::new(SERVICE_NAME, host_id)
-        .and_then(|e| e.get_password())
-        .is_ok()
+    match backend() {
+        Backend::File(paths) => portable::has_credential(paths, host_id),
+        Backend::Keychain => keyring::Entry::new(SERVICE_NAME, host_id)
+            .and_then(|e| e.get_password())
+            .is_ok(),
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -140,7 +189,10 @@ pub fn has_credential(host_id: &str) -> bool {
 // may perform synchronous I/O or IPC to the OS credential store.  Blocking
 // the tokio executor thread even briefly would degrade all concurrent tasks.
 
-/// Save or replace the credential for a host in the OS keychain.
+/// Save or replace the credential for a host.
+///
+/// Goes to the OS keychain on an installed build, or to the encrypted portable
+/// vault when running in portable mode.
 #[tauri::command]
 pub async fn vault_save_credential(
     host_id: String,
@@ -151,7 +203,7 @@ pub async fn vault_save_credential(
         .map_err(|e| VaultError::Keychain(format!("task panicked: {e}")))?
 }
 
-/// Delete the credential for a host from the OS keychain.
+/// Delete the credential for a host (keychain, or portable vault).
 #[tauri::command]
 pub async fn vault_delete_credential(host_id: String) -> Result<(), VaultError> {
     tokio::task::spawn_blocking(move || delete_credential(&host_id))

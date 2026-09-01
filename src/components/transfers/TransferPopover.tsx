@@ -3,6 +3,7 @@ import { X, ExternalLink } from "lucide-react";
 import { useTabStore } from "../../stores/tab-store";
 import { useTransfers } from "../../hooks/use-transfers";
 import { TransferList } from "./TransferList";
+import { useTranslation } from "../../i18n";
 
 // ─── Component ───────────────────────────────────────────────────────────────
 
@@ -16,13 +17,14 @@ interface TransferPopoverProps {
 }
 
 export function TransferPopover({ anchorRect, triggerRef, onClose }: TransferPopoverProps) {
+  const { t } = useTranslation();
   const { list, activeCount, queuedCount, finishedCount, onCancel, onRetry, onDismiss, onClearFinished } =
     useTransfers();
   const openPageTab = useTabStore((s) => s.openPageTab);
   const popoverRef = useRef<HTMLDivElement>(null);
 
   const handlePopOut = () => {
-    openPageTab("transfers", "Transfers");
+    openPageTab("transfers", t("transfers.title"));
     onClose();
   };
 
@@ -64,9 +66,9 @@ export function TransferPopover({ anchorRect, triggerRef, onClose }: TransferPop
   // ─── Summary text ───────────────────────────────────────────────────────────
 
   const summaryParts: string[] = [];
-  if (activeCount > 0) summaryParts.push(`${activeCount} active`);
-  if (queuedCount > 0) summaryParts.push(`${queuedCount} queued`);
-  if (finishedCount > 0) summaryParts.push(`${finishedCount} done`);
+  if (activeCount > 0) summaryParts.push(t("transfers.summary.activeCount", { count: activeCount }));
+  if (queuedCount > 0) summaryParts.push(t("transfers.summary.queuedCount", { count: queuedCount }));
+  if (finishedCount > 0) summaryParts.push(t("transfers.summary.doneCount", { count: finishedCount }));
 
   // ─── Render ─────────────────────────────────────────────────────────────────
 
@@ -74,7 +76,7 @@ export function TransferPopover({ anchorRect, triggerRef, onClose }: TransferPop
     <div
       ref={popoverRef}
       role="dialog"
-      aria-label="Transfers"
+      aria-label={t("transfers.title")}
       style={style}
       className={[
         "w-[340px] flex flex-col",
@@ -86,7 +88,7 @@ export function TransferPopover({ anchorRect, triggerRef, onClose }: TransferPop
       {/* Header */}
       <div className="flex items-center gap-2.5 px-3.5 py-2.5 border-b border-border/60 shrink-0">
         <span className="text-[length:var(--text-xs)] font-semibold text-text-primary">
-          Transfers
+          {t("transfers.title")}
         </span>
 
         {summaryParts.length > 0 && (
@@ -101,8 +103,8 @@ export function TransferPopover({ anchorRect, triggerRef, onClose }: TransferPop
         {finishedCount > 0 && (
           <button
             onClick={onClearFinished}
-            title="Clear completed transfers"
-            aria-label="Clear completed transfers"
+            title={t("transfers.clearCompletedAria")}
+            aria-label={t("transfers.clearCompletedAria")}
             className={[
               "flex items-center gap-1 px-2 py-1 rounded-md",
               "text-[length:var(--text-2xs)] font-medium",
@@ -111,15 +113,15 @@ export function TransferPopover({ anchorRect, triggerRef, onClose }: TransferPop
               "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
             ].join(" ")}
           >
-            Clear
+            {t("transfers.clearCompleted")}
           </button>
         )}
 
         {/* Open the full-page view */}
         <button
           onClick={handlePopOut}
-          title="Open in a tab"
-          aria-label="Open transfers in a tab"
+          title={t("transfers.openInTab")}
+          aria-label={t("transfers.openInTabAria")}
           className={[
             "flex items-center justify-center w-7 h-7 rounded-md",
             "text-text-muted hover:text-text-primary hover:bg-bg-subtle",
@@ -133,8 +135,8 @@ export function TransferPopover({ anchorRect, triggerRef, onClose }: TransferPop
         {/* Close */}
         <button
           onClick={onClose}
-          title="Close"
-          aria-label="Close transfers"
+          title={t("common.close")}
+          aria-label={t("transfers.closeAria")}
           className={[
             "flex items-center justify-center w-7 h-7 rounded-md",
             "text-text-muted hover:text-text-primary hover:bg-bg-subtle",

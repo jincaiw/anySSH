@@ -84,10 +84,16 @@ pub fn capture(event: &str, properties: Value) {
 /// The ID is a random UUID that is persisted to disk on first launch.  It is
 /// not linked to any user account, email address, or system identity.
 fn get_or_create_device_id() -> String {
-    let id_path = dirs::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("com.macnev2013.anyscp")
-        .join(".device_id");
+    // In portable mode the device id lives inside the portable folder, next to
+    // the rest of the data — otherwise every machine the stick is plugged into
+    // would mint a fresh anonymous id and fragment the analytics history.
+    let id_path = match crate::portable::device_id_path() {
+        Some(path) => path,
+        None => dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("com.macnev2013.anyscp")
+            .join(".device_id"),
+    };
 
     if let Ok(id) = std::fs::read_to_string(&id_path) {
         let trimmed = id.trim().to_string();

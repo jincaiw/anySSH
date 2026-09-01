@@ -41,6 +41,7 @@ import { GroupModal } from "./GroupModal";
 import { ConnectionDialog } from "./ConnectionDialog";
 import { RecentConnections } from "./RecentConnections";
 import { toast } from "../../stores/toast-store";
+import { useTranslation } from "../../i18n";
 
 // Abort an in-flight SSH connection attempt on the Rust side. Best-effort:
 // the attempt may already have settled, in which case the backend reports it
@@ -57,6 +58,7 @@ async function cancelConnectAttempt(attemptId: string) {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function HostsDashboard() {
+  const { t } = useTranslation();
   const { hosts, loadHosts, recentConnections, loadRecent, saveHost, deleteHost, reorderHosts } =
     useHostsStore();
   const { groups, loadGroups, createGroup, deleteGroup, reorderGroups } = useGroupsStore();
@@ -89,7 +91,7 @@ export function HostsDashboard() {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("s3_save_connection", {
-        label: `${conn.label} (copy)`,
+        label: `${conn.label} ${t("dashboard.duplicateSuffix")}`,
         provider: conn.provider,
         bucketName: conn.bucket ?? "",
         region: conn.region,
@@ -127,7 +129,7 @@ export function HostsDashboard() {
       if (cancelled) return;
       const msg = err && typeof err === "object" && "message" in err
         ? String((err as { message: string }).message)
-        : "S3 connection failed";
+        : t("dashboard.connect.s3Fallback");
       setConnectingHost({ label: conn.label, error: msg, retry: () => void handleS3Connect(conn), cancel: null });
     }
   };
@@ -251,11 +253,11 @@ export function HostsDashboard() {
         if (cancelled) return;
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
-          : "Connection failed. Check host, port, and credentials.";
+          : t("dashboard.connect.fallback");
         setConnectingHost({ label, error: msg, retry: () => void connectToHost(host), cancel: null });
       }
     },
-    [],
+    [t],
   );
 
   const handleRecentConnect = useCallback(
@@ -292,11 +294,11 @@ export function HostsDashboard() {
         if (cancelled) return;
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
-          : "Connection failed.";
+          : t("dashboard.connect.fallbackShort");
         setConnectingHost({ label, error: msg, retry: () => void handleRecentConnect(conn), cancel: null });
       }
     },
-    [],
+    [t],
   );
 
   // Explore: connect SSH + open a file browser + switch to Files page.
@@ -358,11 +360,11 @@ export function HostsDashboard() {
         if (cancelled) return;
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
-          : "Connection failed.";
+          : t("dashboard.connect.fallbackShort");
         setConnectingHost({ label, error: msg, retry: () => void exploreHost(host), cancel: null });
       }
     },
-    [],
+    [t],
   );
 
   // ─── Host action handlers ──────────────────────────────────────────────────
@@ -381,7 +383,7 @@ export function HostsDashboard() {
       const duplicate: SavedHost = {
         ...host,
         id: crypto.randomUUID(),
-        label: `${host.label || host.host} (copy)`,
+        label: `${host.label || host.host} ${t("dashboard.duplicateSuffix")}`,
         created_at: now,
         updated_at: now,
         last_connected_at: null,
@@ -390,7 +392,7 @@ export function HostsDashboard() {
       await saveHost(duplicate);
       // saveHost already reloads the hosts list in the store
     },
-    [saveHost],
+    [saveHost, t],
   );
 
   // ─── Drag-and-drop reordering ────────────────────────────────────────────────
@@ -427,10 +429,10 @@ export function HostsDashboard() {
       );
 
       void reorderHosts(newFullOrder).catch(() => {
-        toast.error("Couldn't save the new host order — reverted.");
+        toast.error(t("dashboard.toast.reorderHostsFailed"));
       });
     },
-    [filteredHosts, hosts, reorderHosts],
+    [filteredHosts, hosts, reorderHosts, t],
   );
 
   // Reorder the group cards themselves. This is a separate DnD layer from the
@@ -447,10 +449,10 @@ export function HostsDashboard() {
 
       const newOrder = arrayMove(groups, oldIndex, newIndex);
       void reorderGroups(newOrder).catch(() => {
-        toast.error("Couldn't save the new group order — reverted.");
+        toast.error(t("dashboard.toast.reorderGroupsFailed"));
       });
     },
-    [groups, reorderGroups],
+    [groups, reorderGroups, t],
   );
 
   // Reorder the S3 connection cards. Its own DndContext over the Cloud Storage
@@ -474,10 +476,10 @@ export function HostsDashboard() {
       );
 
       void reorderS3Connections(newFullOrder).catch(() => {
-        toast.error("Couldn't save the new connection order — reverted.");
+        toast.error(t("dashboard.toast.reorderS3Failed"));
       });
     },
-    [filteredS3, s3Connections, reorderS3Connections],
+    [filteredS3, s3Connections, reorderS3Connections, t],
   );
 
   // ─── Group handlers ────────────────────────────────────────────────────────
@@ -553,8 +555,8 @@ export function HostsDashboard() {
 
           {/* ── Page title ── */}
           <div>
-            <h1 className="text-[length:var(--text-lg)] font-semibold text-text-primary">Hosts</h1>
-            <p className="text-[length:var(--text-xs)] text-text-muted mt-1">Manage your saved servers, organize them into groups, and connect with one click</p>
+            <h1 className="text-[length:var(--text-lg)] font-semibold text-text-primary">{t("dashboard.title")}</h1>
+            <p className="text-[length:var(--text-xs)] text-text-muted mt-1">{t("dashboard.subtitle")}</p>
           </div>
 
           {/* ── Search bar ── */}
@@ -574,8 +576,8 @@ export function HostsDashboard() {
               onKeyDown={(e) => {
                 if (e.key === "Escape") setQuery("");
               }}
-              placeholder="Search hosts..."
-              aria-label="Search hosts"
+              placeholder={t("dashboard.search.placeholder")}
+              aria-label={t("dashboard.search.ariaLabel")}
               className={[
                 "w-full pl-10 pr-4 py-2.5 rounded-xl text-[length:var(--text-sm)]",
                 "bg-bg-surface border border-border text-text-primary placeholder:text-text-muted",
@@ -605,10 +607,10 @@ export function HostsDashboard() {
                 "transition-all duration-[var(--duration-fast)]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               ].join(" ")}
-              title="New Server (Cmd+T)"
+              title={t("dashboard.action.newServerHint")}
             >
               <Plus size={14} strokeWidth={2.2} aria-hidden="true" />
-              New Server
+              {t("dashboard.action.newServer")}
             </button>
 
             <button
@@ -621,10 +623,10 @@ export function HostsDashboard() {
                 "transition-all duration-[var(--duration-fast)]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               ].join(" ")}
-              title="New S3 Connection"
+              title={t("dashboard.action.newS3Hint")}
             >
               <Cloud size={14} strokeWidth={2} aria-hidden="true" />
-              New S3
+              {t("dashboard.action.newS3")}
             </button>
 
             <button
@@ -637,10 +639,10 @@ export function HostsDashboard() {
                 "transition-all duration-[var(--duration-fast)]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               ].join(" ")}
-              title="New Group"
+              title={t("dashboard.action.newGroup")}
             >
               <FolderPlus size={14} strokeWidth={2} aria-hidden="true" />
-              New Group
+              {t("dashboard.action.newGroup")}
             </button>
 
             <button
@@ -653,10 +655,10 @@ export function HostsDashboard() {
                 "transition-all duration-[var(--duration-fast)]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               ].join(" ")}
-              title="Import from SSH Config"
+              title={t("dashboard.action.importHint")}
             >
               <Import size={14} strokeWidth={2} aria-hidden="true" />
-              Import
+              {t("dashboard.action.import")}
             </button>
           </div>
 
@@ -667,7 +669,7 @@ export function HostsDashboard() {
                 id="groups-heading"
                 className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted mb-3"
               >
-                Groups
+                {t("dashboard.heading.groups")}
               </h2>
               <DndContext
                 sensors={sensors}
@@ -708,10 +710,10 @@ export function HostsDashboard() {
                     "hover:text-text-secondary transition-colors duration-[var(--duration-fast)]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded",
                   ].join(" ")}
-                  aria-label="Back to all hosts"
+                  aria-label={t("dashboard.action.backToAllHosts")}
                 >
                   <ArrowLeft size={13} strokeWidth={2.2} aria-hidden="true" />
-                  All Hosts
+                  {t("dashboard.action.allHosts")}
                 </button>
               )}
 
@@ -719,7 +721,7 @@ export function HostsDashboard() {
                 id="hosts-heading"
                 className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted"
               >
-                {activeGroup ? activeGroup.name : "Hosts"}
+                {activeGroup ? activeGroup.name : t("dashboard.heading.hosts")}
               </h2>
             </div>
 
@@ -766,7 +768,7 @@ export function HostsDashboard() {
                 id="s3-heading"
                 className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted mb-3"
               >
-                Cloud Storage
+                {t("dashboard.heading.cloudStorage")}
               </h2>
               <DndContext
                 sensors={sensors}
@@ -854,10 +856,12 @@ interface EmptyHostsStateProps {
 }
 
 function EmptyHostsState({ query, hasHosts, groupFiltered }: EmptyHostsStateProps) {
+  const { t } = useTranslation();
+
   if (query.trim()) {
     return (
       <p className="text-[length:var(--text-sm)] text-text-muted py-8 text-center">
-        No hosts match &ldquo;{query}&rdquo;
+        {t("dashboard.empty.noMatch", { query })}
       </p>
     );
   }
@@ -865,7 +869,7 @@ function EmptyHostsState({ query, hasHosts, groupFiltered }: EmptyHostsStateProp
   if (groupFiltered) {
     return (
       <p className="text-[length:var(--text-sm)] text-text-muted py-8 text-center">
-        No hosts in this group yet.
+        {t("dashboard.empty.noHostsInGroup")}
       </p>
     );
   }
@@ -873,7 +877,7 @@ function EmptyHostsState({ query, hasHosts, groupFiltered }: EmptyHostsStateProp
   if (!hasHosts) {
     return (
       <p className="text-[length:var(--text-sm)] text-text-muted py-8 text-center">
-        No saved hosts yet. Connect to a server to save it here.
+        {t("dashboard.empty.noSavedHosts")}
       </p>
     );
   }

@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, Check } from "lucide-react";
+import { useTranslation } from "../../i18n";
 
 export interface SelectOption {
   value: string;
@@ -28,7 +29,7 @@ export function CustomSelect({
   value,
   options,
   onChange,
-  placeholder = "Select...",
+  placeholder,
   disabled,
   className,
   id,
@@ -36,6 +37,7 @@ export function CustomSelect({
   "data-testid": testid,
   previewOptionFont,
 }: CustomSelectProps) {
+  const { t } = useTranslation();
   const [open, setOpen] = useState(false);
   const [highlightIndex, setHighlightIndex] = useState(-1);
   const [dropdownPos, setDropdownPos] = useState<{ top: number; left: number; width: number } | null>(null);
@@ -44,7 +46,7 @@ export function CustomSelect({
   const listRef = useRef<HTMLDivElement>(null);
 
   const selectedOption = options.find((o) => o.value === value);
-  const displayLabel = selectedOption?.label ?? placeholder;
+  const displayLabel = selectedOption?.label ?? (placeholder ?? t("shared.select.placeholder"));
 
   // Close on outside click
   useEffect(() => {

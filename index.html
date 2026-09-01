@@ -1,5 +1,8 @@
 <!doctype html>
-<html lang="en">
+<!-- `lang` is the product default; the Rust setup() hook rewrites it before
+     the first paint from the persisted `app_language` setting (or the
+     ANYSCP_UI_LANG override), and the i18n store keeps it in sync after that. -->
+<html lang="zh-CN">
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/png" href="/favicon.png" />

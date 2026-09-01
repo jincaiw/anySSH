@@ -1,3 +1,4 @@
+import { useTranslation } from "../../i18n";
 import type { TransferEvent } from "../../types";
 import { TransferRow } from "./TransferRow";
 
@@ -12,12 +13,14 @@ interface TransferListProps {
 }
 
 export function TransferList({ list, onCancel, onRetry, onDismiss, maxHeight }: TransferListProps) {
+  const { t } = useTranslation();
+
   if (list.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-10 gap-2">
-        <p className="text-[length:var(--text-xs)] text-text-muted">No transfers</p>
+        <p className="text-[length:var(--text-xs)] text-text-muted">{t("transfers.empty")}</p>
         <p className="text-[length:var(--text-2xs)] text-text-muted/60">
-          Drag files onto the explorer to upload
+          {t("transfers.emptyHint")}
         </p>
       </div>
     );
@@ -28,7 +31,7 @@ export function TransferList({ list, onCancel, onRetry, onDismiss, maxHeight }: 
       className={maxHeight ? "overflow-y-auto" : ""}
       style={maxHeight ? { maxHeight } : undefined}
       role="list"
-      aria-label="Transfer items"
+      aria-label={t("transfers.listAria")}
     >
       {list.map((t) => (
         <TransferRow

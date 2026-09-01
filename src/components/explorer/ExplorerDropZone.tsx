@@ -1,4 +1,5 @@
 import { Upload } from "lucide-react";
+import { useTranslation } from "../../i18n";
 
 interface ExplorerDropZoneProps {
   path: string;
@@ -8,6 +9,7 @@ interface ExplorerDropZoneProps {
 }
 
 export function ExplorerDropZone({ path, intoFolder = false }: ExplorerDropZoneProps) {
+  const { t } = useTranslation();
   const folderName = intoFolder ? path.split("/").filter(Boolean).pop() ?? path : null;
   return (
     <div
@@ -19,7 +21,7 @@ export function ExplorerDropZone({ path, intoFolder = false }: ExplorerDropZoneP
         "animate-[fadeIn_120ms_var(--ease-expo-out)_both]",
       ].join(" ")}
       role="presentation"
-      aria-label="Drop files to upload"
+      aria-label={t("explorer.drop.ariaLabel")}
     >
       <div className="flex items-center justify-center w-12 h-12 rounded-xl bg-accent/10">
         <Upload
@@ -31,7 +33,9 @@ export function ExplorerDropZone({ path, intoFolder = false }: ExplorerDropZoneP
       </div>
       <div className="flex flex-col items-center gap-1">
         <p className="text-[length:var(--text-sm)] font-semibold text-accent">
-          {folderName ? `Drop to upload into ${folderName}` : "Drop files to upload"}
+          {folderName
+            ? t("explorer.drop.intoFolder", { name: folderName })
+            : t("explorer.drop.title")}
         </p>
         <p className="font-mono text-[length:var(--text-2xs)] text-text-muted truncate max-w-xs text-center">
           {path}

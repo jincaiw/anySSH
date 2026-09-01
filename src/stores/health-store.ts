@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { HostHealthCheckResult } from "../types";
+import { t } from "../i18n";
 
 // UI-only superset of the backend `HostHealthStatus`: adds the local view
 // states (`idle` before any check, `checking` while in flight, `error` for IPC
@@ -41,7 +42,7 @@ export const useHealthStore = create<HealthState>((set, get) => ({
     const setHealth = (h: HostHealth) =>
       set((s) => ({ byHostId: { ...s.byHostId, [hostId]: h } }));
 
-    setHealth({ status: "checking", message: "Pinging host...", latencyMs: null });
+    setHealth({ status: "checking", message: t("terminal.health.pinging"), latencyMs: null });
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const result = await invoke<HostHealthCheckResult>("ssh_health_check_saved_host", {
@@ -52,7 +53,7 @@ export const useHealthStore = create<HealthState>((set, get) => ({
       const msg =
         err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
-          : "Ping failed";
+          : t("terminal.health.pingFailed");
       setHealth({ status: "error", message: msg, latencyMs: null });
     }
   },

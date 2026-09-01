@@ -11,6 +11,7 @@ import {
   BUILTIN_NAMES,
 } from "../../utils/snippet-resolve";
 import { ModalShell, BTN_GHOST, BTN_PRIMARY } from "../shared/ModalShell";
+import { useTranslation } from "../../i18n";
 
 interface VariableDialogProps {
   snippet: Snippet;
@@ -19,6 +20,7 @@ interface VariableDialogProps {
 }
 
 export function VariableDialog({ snippet, onExecute, onCancel }: VariableDialogProps) {
+  const { t } = useTranslation();
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const sessions = useSessionStore((s) => s.sessions);
   const session = activeSessionId ? (sessions.get(activeSessionId) ?? null) : null;
@@ -74,7 +76,7 @@ export function VariableDialog({ snippet, onExecute, onCancel }: VariableDialogP
       footer={
         <>
           <button type="button" onClick={onCancel} className={BTN_GHOST}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             form="variable-dialog-form"
@@ -82,7 +84,7 @@ export function VariableDialog({ snippet, onExecute, onCancel }: VariableDialogP
             disabled={hasUnmetRequired}
             className={BTN_PRIMARY}
           >
-            Execute
+            {t("snippets.variableDialog.execute")}
           </button>
         </>
       }
@@ -92,16 +94,16 @@ export function VariableDialog({ snippet, onExecute, onCancel }: VariableDialogP
           <div className="flex items-start gap-2.5 p-3 rounded-lg bg-status-error/10 border border-status-error/30">
             <AlertTriangle size={16} strokeWidth={2} className="text-status-error shrink-0 mt-0.5" aria-hidden="true" />
             <p className="text-[length:var(--text-xs)] text-status-error leading-relaxed">
-              This snippet is flagged as dangerous. Review the resolved command carefully before execution.
+              {t("snippets.variableDialog.dangerousWarning")}
             </p>
           </div>
         )}
 
         {builtinVars.length > 0 && (
           <div className="flex flex-col gap-3">
-            <p className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted">Auto-filled</p>
+            <p className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted">{t("snippets.variableDialog.autoFilled")}</p>
             {builtinVars.map((name) => {
-              const resolved = resolveBuiltin(name, session) ?? "(no active session)";
+              const resolved = resolveBuiltin(name, session) ?? t("snippets.variableDialog.noActiveSession");
               return (
                 <div key={name}>
                   <label className={labelClass}>{`{{${name}}}`}</label>
@@ -119,14 +121,14 @@ export function VariableDialog({ snippet, onExecute, onCancel }: VariableDialogP
         {userVarNames.length > 0 && (
           <div className="flex flex-col gap-3">
             {builtinVars.length > 0 && (
-              <p className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted">Variables</p>
+              <p className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted">{t("snippets.variableDialog.variables")}</p>
             )}
             {userVarNames.map((name) => {
               const meta = variableMeta.find((v) => v.name === name);
               const isFirst = inputIndex === 0;
               inputIndex++;
               const label = meta?.label ?? name;
-              const placeholder = meta?.placeholder ?? `Enter ${name}`;
+              const placeholder = meta?.placeholder ?? t("snippets.variableDialog.enterPlaceholder", { name });
               const options = meta?.options ?? null;
               const required = meta?.required ?? false;
 
@@ -134,14 +136,14 @@ export function VariableDialog({ snippet, onExecute, onCancel }: VariableDialogP
                 <div key={name}>
                   <label className={labelClass}>
                     {label}
-                    {required && <span className="text-status-error ml-1" aria-label="required">*</span>}
+                    {required && <span className="text-status-error ml-1" aria-label={t("snippets.variableDialog.requiredAria")}>*</span>}
                   </label>
                   {options && options.length > 0 ? (
                     <CustomSelect
                       value={values[name] ?? ""}
                       onChange={(v) => setValue(name, v)}
-                      placeholder="— select —"
-                      options={[{ value: "", label: "— select —" }, ...options.map((opt) => ({ value: opt, label: opt }))]}
+                      placeholder={t("snippets.variableDialog.selectPlaceholder")}
+                      options={[{ value: "", label: t("snippets.variableDialog.selectPlaceholder") }, ...options.map((opt) => ({ value: opt, label: opt }))]}
                     />
                   ) : (
                     <input
@@ -162,7 +164,7 @@ export function VariableDialog({ snippet, onExecute, onCancel }: VariableDialogP
 
         {allVarNames.length === 0 && (
           <p className="text-[length:var(--text-sm)] text-text-muted text-center py-2">
-            No variables to fill in.
+            {t("snippets.variableDialog.noVariables")}
           </p>
         )}
       </form>

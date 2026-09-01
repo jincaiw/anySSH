@@ -64,6 +64,8 @@ AnySCP is a free, open-source desktop application that combines an SSH terminal,
 
 ## ✨ Features
 
+- **Bilingual interface** — 简体中文 / English, switchable in **Settings → Appearance** (follows the system language on first launch)
+
 ### 💻 SSH Terminal Client
 
 - Full-featured terminal emulator powered by xterm.js with GPU-accelerated WebGL rendering
@@ -153,6 +155,32 @@ AnySCP is a free, open-source desktop application that combines an SSH terminal,
 3. Install and launch
 
 > **macOS note**: If you see "app is damaged", run: `xattr -cr /Applications/anyscp.app`
+
+### Portable builds
+
+Every release also ships **portable** archives (file names containing `portable`) —
+no installation required:
+
+- **Windows**: `anySCP_<version>_windows_x86_64_portable.zip`
+- **Linux**: `anySCP_<version>_linux_x86_64_portable.tar.gz`
+- **macOS**: `anySCP_<version>_macos_<arch>_portable.zip`
+
+Extract the archive anywhere and run the app directly. In portable mode **all
+data** — hosts, groups, history, settings, snippets, and credentials — lives in
+an `anySCP-Data` folder next to the application, so the whole folder can live on
+a USB stick and move between machines. Keep `portable.txt` beside the app: that
+marker is what switches anySCP into portable mode; without it the app behaves
+like a normal installation.
+
+Credentials in portable mode are encrypted with AES-256-GCM into
+`anySCP-Data/vault.anyscp`, sealed by the key file `anySCP-Data/vault.key`.
+Back up or move the `anySCP-Data` folder as a whole — the vault is unreadable
+without its key. (The installed build instead uses the OS keychain.)
+
+便携版（文件名含 `portable`）：免安装，解压后直接运行。所有数据保存在程序旁的
+`anySCP-Data` 文件夹中，整个文件夹可随 U 盘携带、在多台电脑间使用。请保持
+`portable.txt` 与程序同目录。凭据以 AES-256-GCM 加密存放于
+`anySCP-Data/vault.anyscp`，由 `anySCP-Data/vault.key` 加密封装，请整体备份。
 
 ### Updating
 

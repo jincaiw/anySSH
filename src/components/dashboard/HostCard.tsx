@@ -7,6 +7,7 @@ import { ContextMenu } from "../shared/ContextMenu";
 import { ConfirmDangerDialog } from "../shared/ConfirmDangerDialog";
 import { useHealthStore, IDLE_HEALTH, type HealthStatus } from "../../stores/health-store";
 import { useHostsStore } from "../../stores/hosts-store";
+import { useTranslation } from "../../i18n";
 
 // Single source of truth for status → colour, shared by the button and the label.
 function statusColor(status: HealthStatus): string {
@@ -69,6 +70,7 @@ function isEnvironmentValue(val: string): val is EnvironmentValue {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDuplicate }: HostCardProps) {
+  const { t } = useTranslation();
   const displayName = host.label || host.host;
   const avatarColor = host.color || getHostColor(host.host);
   const initial = displayName.charAt(0).toUpperCase();
@@ -89,7 +91,7 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
   const jumpLabel = jumpHost ? jumpHost.label || jumpHost.host : null;
 
   // Build subtitle segments
-  const subtitleParts: string[] = [`SSH, ${host.username}`];
+  const subtitleParts: string[] = [t("dashboard.hostCard.subtitle", { username: host.username })];
   if (host.os_type) {
     const osLabels: Record<string, string> = {
       linux: "Linux",
@@ -114,32 +116,32 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
 
   const contextItems = [
     {
-      label: "Ping",
+      label: t("dashboard.hostCard.ping"),
       icon: Activity,
       onClick: () => void checkHealth(host.id),
     },
     {
-      label: "Terminal",
+      label: t("dashboard.hostCard.terminal"),
       icon: TerminalSquare,
       onClick: () => onConnect(host),
     },
     {
-      label: "Explorer",
+      label: t("dashboard.hostCard.explorer"),
       icon: FolderOpen,
       onClick: () => onExplore(host),
     },
     {
-      label: "Edit",
+      label: t("common.edit"),
       icon: Pencil,
       onClick: () => onEdit(host.id),
     },
     {
-      label: "Duplicate",
+      label: t("common.duplicate"),
       icon: Copy,
       onClick: () => onDuplicate(host),
     },
     {
-      label: "Delete",
+      label: t("common.delete"),
       icon: Trash2,
       danger: true,
       onClick: () => setConfirmDelete(true),
@@ -155,13 +157,13 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
 
   const healthLabel = (() => {
     if (health.status === "idle") return null;
-    if (health.status === "checking") return "Pinging...";
+    if (health.status === "checking") return t("dashboard.health.checking");
     const latency = health.latencyMs !== null ? ` · ${health.latencyMs}ms` : "";
-    if (health.status === "reachable") return `SSH reachable${latency}`;
-    if (health.status === "dnsFailed") return "DNS failed";
-    if (health.status === "portClosed") return "Port unreachable";
-    if (health.status === "sshFailed") return "SSH failed";
-    return "Ping failed";
+    if (health.status === "reachable") return t("dashboard.health.reachable", { latency });
+    if (health.status === "dnsFailed") return t("dashboard.health.dnsFailed");
+    if (health.status === "portClosed") return t("dashboard.health.portClosed");
+    if (health.status === "sshFailed") return t("dashboard.health.sshFailed");
+    return t("dashboard.health.failed");
   })();
 
   return (
@@ -175,7 +177,7 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
         onClick={() => onConnect(host)}
         onKeyDown={handleKeyDown}
         onContextMenu={handleContextMenu}
-        title={`Connect to ${displayName}`}
+        title={t("dashboard.hostCard.connectTo", { name: displayName })}
         className={[
           // grab/grabbing communicates the card is draggable; the click-to-connect
           // action still fires for a plain click (drag needs a 5px move first).
@@ -200,9 +202,9 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
         <CardActionStrip>
           <CardActionButton
             icon={Activity}
-            label="Ping"
+            label={t("dashboard.hostCard.ping")}
             onClick={() => void checkHealth(host.id)}
-            ariaLabel={`Ping ${displayName}`}
+            ariaLabel={t("dashboard.hostCard.pingAria", { name: displayName })}
             detail={health.message ?? undefined}
             testId={`host-card-${host.id}-health`}
             disabled={health.status === "checking"}
@@ -211,16 +213,16 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
           />
           <CardActionButton
             icon={TerminalSquare}
-            label="Terminal"
+            label={t("dashboard.hostCard.terminal")}
             onClick={() => onConnect(host)}
-            ariaLabel={`Open terminal for ${displayName}`}
+            ariaLabel={t("dashboard.hostCard.openTerminalFor", { name: displayName })}
             testId={`host-card-${host.id}-terminal`}
           />
           <CardActionButton
             icon={FolderOpen}
-            label="Explorer"
+            label={t("dashboard.hostCard.explorer")}
             onClick={() => onExplore(host)}
-            ariaLabel={`Open explorer for ${displayName}`}
+            ariaLabel={t("dashboard.hostCard.openExplorerFor", { name: displayName })}
             testId={`host-card-${host.id}-explorer`}
           />
         </CardActionStrip>
@@ -262,10 +264,10 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
             <div
               data-testid={`host-card-${host.id}-tunnel`}
               className="flex items-center gap-1 mt-0.5 text-[length:var(--text-xs)] text-text-muted truncate"
-              title={`Tunnels through ${jumpLabel}`}
+              title={t("dashboard.hostCard.tunnelsThrough", { name: jumpLabel })}
             >
               <Waypoints size={11} strokeWidth={2} aria-hidden="true" className="shrink-0" />
-              <span className="truncate">via {jumpLabel}</span>
+              <span className="truncate">{t("dashboard.hostCard.via", { name: jumpLabel })}</span>
             </div>
           )}
           {/* Always-mounted live region: announces the result to screen
@@ -297,8 +299,8 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
 
       <ConfirmDangerDialog
         open={confirmDelete}
-        title="Delete this host?"
-        message="This host will be permanently removed."
+        title={t("dashboard.hostCard.deleteTitle")}
+        message={t("dashboard.hostCard.deleteMessage")}
         onCancel={() => setConfirmDelete(false)}
         onConfirm={() => {
           setConfirmDelete(false);

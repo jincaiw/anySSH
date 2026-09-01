@@ -1,5 +1,6 @@
 import { AlertTriangle } from "lucide-react";
 import { ModalShell, BTN_GHOST, BTN_DANGER } from "./ModalShell";
+import { useTranslation } from "../../i18n";
 
 interface ConfirmDangerDialogProps {
   open: boolean;
@@ -16,12 +17,14 @@ export function ConfirmDangerDialog({
   open,
   title,
   message,
-  confirmLabel = "Confirm",
-  cancelLabel = "Cancel",
+  confirmLabel,
+  cancelLabel,
   busy = false,
   onConfirm,
   onCancel,
 }: ConfirmDangerDialogProps) {
+  const { t } = useTranslation();
+
   return (
     <ModalShell
       open={open}
@@ -35,10 +38,10 @@ export function ConfirmDangerDialog({
         <>
           {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
           <button autoFocus type="button" onClick={onCancel} disabled={busy} className={BTN_GHOST}>
-            {cancelLabel}
+            {cancelLabel ?? t("common.cancel")}
           </button>
           <button type="button" onClick={onConfirm} disabled={busy} className={BTN_DANGER}>
-            {busy ? "Deleting…" : confirmLabel}
+            {busy ? t("shared.confirmDanger.deleting") : (confirmLabel ?? t("common.confirm"))}
           </button>
         </>
       }

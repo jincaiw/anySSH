@@ -5,11 +5,13 @@ import { useTabStore, type PageId } from "../../stores/tab-store";
 import { useTransferStore } from "../../stores/transfer-store";
 import { TransferPopover } from "../transfers/TransferPopover";
 import { getStatusString } from "../../utils/format";
+import { useTranslation } from "../../i18n";
 
 interface NavItem {
   id: string;
   icon: React.ElementType;
-  label: string;
+  /** i18n key under the `sidebar.` namespace */
+  labelKey: string;
   /** For page tabs */
   page?: PageId;
   /** For session-type tabs */
@@ -17,10 +19,10 @@ interface NavItem {
 }
 
 const NAV_ITEMS: NavItem[] = [
-  { id: "hosts",            icon: Monitor,        label: "Hosts",     page: "hosts" },
-  { id: "snippets",         icon: Braces,         label: "Snippets",  page: "snippets" },
-  { id: "port-forwarding",  icon: Plug,           label: "Tunnels",   page: "port-forwarding" },
-  { id: "history",          icon: History,        label: "History",   page: "history" },
+  { id: "hosts",            icon: Monitor,        labelKey: "sidebar.nav.hosts",     page: "hosts" },
+  { id: "snippets",         icon: Braces,         labelKey: "sidebar.nav.snippets",  page: "snippets" },
+  { id: "port-forwarding",  icon: Plug,           labelKey: "sidebar.nav.tunnels",   page: "port-forwarding" },
+  { id: "history",          icon: History,        labelKey: "sidebar.nav.history",   page: "history" },
 ];
 
 // ─── Pill button ─────────────────────────────────────────────────────────────
@@ -120,6 +122,7 @@ function PillButton({
 // ─── Sidebar ─────────────────────────────────────────────────────────────────
 
 export function Sidebar() {
+  const { t } = useTranslation();
   const expanded = useUiStore((s) => s.sidebarExpanded);
   const toggleSidebar = useUiStore((s) => s.toggleSidebar);
 
@@ -163,7 +166,7 @@ export function Sidebar() {
 
   const handleNavClick = (item: NavItem) => {
     if (item.page) {
-      openPageTab(item.page, item.label);
+      openPageTab(item.page, t(item.labelKey));
     } else if (item.sessionType) {
       activateRecent(item.sessionType);
     }
@@ -174,7 +177,7 @@ export function Sidebar() {
       <nav
         data-testid="sidebar"
         data-sidebar-expanded={expanded}
-        aria-label="Main navigation"
+        aria-label={t("sidebar.mainNav")}
         className={[
           "no-select flex flex-col shrink-0 h-[calc(100%-16px)] py-3 ml-2 mt-2",
           "bg-bg-surface border border-border/60 rounded-lg",
@@ -188,7 +191,7 @@ export function Sidebar() {
             <PillButton
               key={item.id}
               icon={item.icon}
-              label={item.label}
+              label={t(item.labelKey)}
               isActive={activeNavId === item.id}
               badge={undefined}
               expanded={expanded}
@@ -204,7 +207,7 @@ export function Sidebar() {
         <div className={`flex flex-col gap-1 ${expanded ? "" : "items-center"}`}>
           <PillButton
             icon={ArrowUpDown}
-            label="Transfers"
+            label={t("sidebar.transfers")}
             isActive={popoverOpen}
             badge={activeTransferCount || undefined}
             expanded={expanded}
@@ -215,16 +218,16 @@ export function Sidebar() {
 
           <PillButton
             icon={Settings}
-            label="Settings"
+            label={t("sidebar.settings")}
             isActive={activeNavId === "settings"}
             expanded={expanded}
-            onClick={() => openPageTab("settings", "Settings")}
+            onClick={() => openPageTab("settings", t("sidebar.settings"))}
           />
 
           {/* Expand/collapse */}
           <PillButton
             icon={expanded ? ChevronsLeft : ChevronsRight}
-            label={expanded ? "Collapse" : "Expand"}
+            label={expanded ? t("sidebar.collapse") : t("sidebar.expand")}
             isActive={false}
             expanded={expanded}
             onClick={toggleSidebar}

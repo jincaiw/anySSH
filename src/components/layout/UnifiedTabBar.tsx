@@ -20,6 +20,7 @@ import {
 import { useTabStore, type UnifiedTab, type PageId } from "../../stores/tab-store";
 import { useSessionStore, countPanes, getTopDirection } from "../../stores/session-store";
 import { useUiStore } from "../../stores/ui-store";
+import { useTranslation } from "../../i18n";
 
 // ─── Icon mapping ───────────────────────────────────────────────────────────
 
@@ -55,6 +56,7 @@ const CHEVRON_BTN =
 // ─── Component ──────────────────────────────────────────────────────────────
 
 export function UnifiedTabBar() {
+  const { t } = useTranslation();
   const tabOrder = useTabStore((s) => s.tabOrder);
   const tabs = useTabStore((s) => s.tabs);
   const activeTabId = useTabStore((s) => s.activeTabId);
@@ -151,7 +153,7 @@ export function UnifiedTabBar() {
           type="button"
           onClick={() => scrollTabs(-1)}
           disabled={!canLeft}
-          aria-label="Scroll tabs left"
+          aria-label={t("tabs.scrollLeft")}
           className={`${CHEVRON_BTN} mr-1`}
         >
           <ChevronLeft size={16} strokeWidth={2} aria-hidden="true" />
@@ -161,7 +163,7 @@ export function UnifiedTabBar() {
         ref={scrollRef}
         className="flex items-center gap-2.5 overflow-x-auto overflow-y-hidden flex-1 min-w-0 [&::-webkit-scrollbar]:hidden"
         role="tablist"
-        aria-label="Open sessions"
+        aria-label={t("tabs.tablist")}
       >
         {tabOrder.map((tabId) => {
           const tab = tabs.get(tabId);
@@ -209,7 +211,7 @@ export function UnifiedTabBar() {
               // Middle-click closes the tab, like a browser.
               onAuxClick={(e) => { if (e.button === 1 && closeable) { e.preventDefault(); void handleClose(tabId, tab, e); } }}
               onKeyDown={(e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); setActiveTab(tabId); } }}
-              title={tab.label + (paneCount > 1 ? ` (${paneCount} panes)` : "")}
+              title={tab.label + (paneCount > 1 ? " " + t("tabs.panes", { count: paneCount }) : "")}
               className={[
                 "group relative flex items-center gap-2 px-3.5 h-[32px] shrink-0 max-w-[220px]",
                 "text-[length:var(--text-sm)] leading-none rounded-md cursor-pointer",
@@ -261,7 +263,7 @@ export function UnifiedTabBar() {
 
               {/* Zoom indicator */}
               {isZoomed && (
-                <span className="shrink-0 text-accent" aria-hidden="true" title="Zoomed pane">
+                <span className="shrink-0 text-accent" aria-hidden="true" title={t("tabs.zoomedPane")}>
                   <Maximize2 size={11} strokeWidth={2} />
                 </span>
               )}
@@ -280,7 +282,7 @@ export function UnifiedTabBar() {
                     "transition-all duration-[var(--duration-fast)]",
                     "focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
                   ].join(" ")}
-                  aria-label={`Close ${tab.label}`}
+                  aria-label={t("tabs.close", { label: tab.label })}
                   tabIndex={-1}
                 >
                   <X size={12} strokeWidth={2} aria-hidden="true" />
@@ -297,7 +299,7 @@ export function UnifiedTabBar() {
           type="button"
           onClick={() => scrollTabs(1)}
           disabled={!canRight}
-          aria-label="Scroll tabs right"
+          aria-label={t("tabs.scrollRight")}
           className={`${CHEVRON_BTN} ml-1`}
         >
           <ChevronRight size={16} strokeWidth={2} aria-hidden="true" />
@@ -311,8 +313,8 @@ export function UnifiedTabBar() {
         <div className="flex items-center gap-1 pl-2 shrink-0">
           <button
             onClick={toggleSnippetPanel}
-            title={`Snippets (${SNIPPET_SHORTCUT})`}
-            aria-label="Open snippet palette"
+            title={t("tabs.snippets", { shortcut: SNIPPET_SHORTCUT })}
+            aria-label={t("tabs.snippetPalette")}
             aria-pressed={snippetPanelOpen}
             className={[
               "flex items-center gap-1.5 h-7 px-2 rounded-md border shrink-0",
@@ -325,7 +327,7 @@ export function UnifiedTabBar() {
             ].join(" ")}
           >
             <Code size={14} strokeWidth={1.8} aria-hidden="true" />
-            <span>Snippets</span>
+            <span>{t("tabs.page.snippets")}</span>
           </button>
         </div>
       )}

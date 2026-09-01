@@ -2,6 +2,7 @@ import { useState, useId } from "react";
 import { AlertTriangle } from "lucide-react";
 import type { HostGroup } from "../../types";
 import { ModalShell, BTN_GHOST, BTN_DANGER } from "../shared/ModalShell";
+import { useTranslation } from "../../i18n";
 
 interface GroupDeleteDialogProps {
   group: HostGroup;
@@ -18,15 +19,18 @@ export function GroupDeleteDialog({
 }: GroupDeleteDialogProps) {
   const [deleteHosts, setDeleteHosts] = useState(false);
   const checkboxId = useId();
+  const { t } = useTranslation();
 
   const confirmLabel =
-    hostCount > 0 && deleteHosts ? "Delete Group & Hosts" : "Delete Group";
+    hostCount > 0 && deleteHosts
+      ? t("dashboard.groupDelete.confirmWithHosts")
+      : t("dashboard.group.delete");
 
   return (
     <ModalShell
       open
       onClose={onCancel}
-      title={`Delete "${group.name}"?`}
+      title={t("dashboard.groupDelete.title", { name: group.name })}
       icon={AlertTriangle}
       iconVariant="danger"
       maxWidth="sm"
@@ -34,7 +38,7 @@ export function GroupDeleteDialog({
         <>
           {/* eslint-disable-next-line jsx-a11y/no-autofocus */}
           <button autoFocus type="button" onClick={onCancel} className={BTN_GHOST}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button type="button" onClick={() => onConfirm(deleteHosts)} className={BTN_DANGER}>
             {confirmLabel}
@@ -45,8 +49,8 @@ export function GroupDeleteDialog({
       <div className="flex flex-col gap-3">
         <p className="text-[length:var(--text-sm)] text-text-secondary">
           {hostCount === 0
-            ? "This empty group will be permanently removed."
-            : `This group contains ${hostCount} ${hostCount === 1 ? "host" : "hosts"}.`}
+            ? t("dashboard.groupDelete.empty")
+            : t("dashboard.groupDelete.contains", { count: hostCount })}
         </p>
 
         {hostCount > 0 && (
@@ -62,9 +66,9 @@ export function GroupDeleteDialog({
               className="mt-0.5 h-3.5 w-3.5 rounded shrink-0 cursor-pointer accent-[oklch(0.650_0.200_25)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
             />
             <span className="text-[length:var(--text-xs)] text-text-secondary leading-snug select-none">
-              Also delete all {hostCount} {hostCount === 1 ? "host" : "hosts"} in this group
+              {t("dashboard.groupDelete.alsoDelete", { count: hostCount })}
               <span className="block text-text-muted mt-0.5">
-                Unchecked: hosts will be moved out of the group
+                {t("dashboard.groupDelete.uncheckedHint")}
               </span>
             </span>
           </label>

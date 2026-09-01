@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import { useSettingsStore } from "./settings-store";
+import { t } from "../i18n";
 import type { Update } from "@tauri-apps/plugin-updater";
 
 export type UpdaterStatus =
@@ -123,7 +124,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
               status: "error",
               error: message(
                 relaunchErr,
-                "Couldn't restart automatically — please reopen the app",
+                t("updater.error.relaunchFailed"),
               ),
             });
           }
@@ -136,7 +137,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
     } catch (err) {
       set({
         status: "error",
-        error: message(err, "Failed to check for updates"),
+        error: message(err, t("updater.error.checkFailed")),
       });
     }
   },
@@ -163,7 +164,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
     } catch (err) {
       set({
         status: "error",
-        error: message(err, "Failed to check for updates"),
+        error: message(err, t("updater.error.checkFailed")),
       });
     }
   },
@@ -185,7 +186,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
       const { relaunch } = await import("@tauri-apps/plugin-process");
       await relaunch();
     } catch (err) {
-      set({ status: "error", error: message(err, "Download failed") });
+      set({ status: "error", error: message(err, t("updater.error.downloadFailed")) });
     }
   },
 
@@ -196,10 +197,7 @@ export const useUpdaterStore = create<UpdaterState>((set, get) => ({
     } catch (err) {
       set({
         status: "error",
-        error: message(
-          err,
-          "Couldn't restart automatically — please reopen the app",
-        ),
+        error: message(err, t("updater.error.relaunchFailed")),
       });
     }
   },

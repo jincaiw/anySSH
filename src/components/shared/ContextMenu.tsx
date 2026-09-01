@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ChevronRight } from "lucide-react";
+import { useTranslation } from "../../i18n";
 
 export interface ContextMenuItem {
   label: string;
@@ -127,6 +128,7 @@ function MenuRow({ item, onClose }: { item: ContextMenuItem; onClose: () => void
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
+  const { t } = useTranslation();
   const menuRef = useRef<HTMLDivElement>(null);
   // Clamped coordinates, computed from the menu's rendered size. Until they
   // are known the menu renders hidden at the cursor — never at the origin, so
@@ -182,7 +184,7 @@ export function ContextMenu({ items, position, onClose }: ContextMenuProps) {
     <div
       ref={menuRef}
       role="menu"
-      aria-label="Context menu"
+      aria-label={t("shared.contextMenu.label")}
       style={
         coords
           ? { left: coords.x, top: coords.y }

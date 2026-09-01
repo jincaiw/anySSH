@@ -1,7 +1,9 @@
 import { useSessionStore } from "../../stores/session-store";
 import { useEffect, useState } from "react";
+import { useTranslation } from "../../i18n";
 
 export function StatusBar() {
+  const { t } = useTranslation();
   const activeSessionId = useSessionStore((s) => s.activeSessionId);
   const sessions = useSessionStore((s) => s.sessions);
   const sessionCount = sessions.size;
@@ -61,11 +63,11 @@ export function StatusBar() {
           )}
           <span className="flex-1" />
           <span className="font-mono text-text-muted tabular-nums">
-            {sessionCount} session{sessionCount !== 1 ? "s" : ""}
+            {t("tabs.sessionCount", { count: sessionCount })}
           </span>
         </>
       ) : (
-        <span className="text-text-muted">No active session</span>
+        <span className="text-text-muted">{t("tabs.noActiveSession")}</span>
       )}
     </div>
   );

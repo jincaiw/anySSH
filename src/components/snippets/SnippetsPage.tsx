@@ -11,6 +11,7 @@ import { useSessionStore } from "../../stores/session-store";
 import { useTabStore } from "../../stores/tab-store";
 import type { Snippet } from "../../types";
 import { extractVariables } from "../../utils/snippet-resolve";
+import { useTranslation } from "../../i18n";
 import { SnippetCard } from "./SnippetCard";
 import { SnippetFolderCard } from "./SnippetFolderCard";
 import { SnippetEditModal } from "./SnippetEditModal";
@@ -20,6 +21,7 @@ import { VariableDialog } from "./VariableDialog";
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function SnippetsPage() {
+  const { t } = useTranslation();
   const {
     snippets,
     folders,
@@ -175,7 +177,7 @@ export function SnippetsPage() {
       const copy: Snippet = {
         ...snippet,
         id: crypto.randomUUID(),
-        name: `${snippet.name} (copy)`,
+        name: t("snippets.page.copySuffix", { name: snippet.name }),
         use_count: 0,
         last_used_at: null,
         created_at: now,
@@ -239,8 +241,8 @@ export function SnippetsPage() {
 
           {/* Page title */}
           <div>
-            <h1 className="text-[length:var(--text-lg)] font-semibold text-text-primary">Snippets</h1>
-            <p className="text-[length:var(--text-xs)] text-text-muted mt-1">Save frequently used commands, organize them into folders, and execute with one click</p>
+            <h1 className="text-[length:var(--text-lg)] font-semibold text-text-primary">{t("snippets.page.title")}</h1>
+            <p className="text-[length:var(--text-xs)] text-text-muted mt-1">{t("snippets.page.subtitle")}</p>
           </div>
 
           {/* Search bar */}
@@ -259,8 +261,8 @@ export function SnippetsPage() {
               onKeyDown={(e) => {
                 if (e.key === "Escape") setQuery("");
               }}
-              placeholder="Search snippets... (Cmd+F)"
-              aria-label="Search snippets"
+              placeholder={t("snippets.page.searchPlaceholder")}
+              aria-label={t("snippets.page.searchAria")}
               className={[
                 "w-full pl-10 pr-4 py-2.5 rounded-xl text-[length:var(--text-sm)]",
                 "bg-bg-surface border border-border text-text-primary placeholder:text-text-muted",
@@ -282,10 +284,10 @@ export function SnippetsPage() {
                 "transition-all duration-[var(--duration-fast)]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               ].join(" ")}
-              title="New Snippet (Cmd+N)"
+              title={t("snippets.page.newSnippetTitle")}
             >
               <Plus size={14} strokeWidth={2.2} aria-hidden="true" />
-              New Snippet
+              {t("snippets.page.newSnippet")}
             </button>
 
             <button
@@ -297,10 +299,10 @@ export function SnippetsPage() {
                 "transition-all duration-[var(--duration-fast)]",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               ].join(" ")}
-              title="New Folder"
+              title={t("snippets.folderModal.create")}
             >
               <FolderPlus size={14} strokeWidth={2} aria-hidden="true" />
-              New Folder
+              {t("snippets.folderModal.create")}
             </button>
           </div>
 
@@ -311,7 +313,7 @@ export function SnippetsPage() {
                 id="folders-heading"
                 className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted mb-3"
               >
-                Folders
+                {t("snippets.page.folders")}
               </h2>
               <div className="grid grid-cols-3 gap-2.5">
                 {folders.map((folder) => (
@@ -342,10 +344,10 @@ export function SnippetsPage() {
                     "hover:text-text-secondary transition-colors duration-[var(--duration-fast)]",
                     "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded",
                   ].join(" ")}
-                  aria-label="Back to all snippets"
+                  aria-label={t("snippets.page.backToAll")}
                 >
                   <ArrowLeft size={13} strokeWidth={2.2} aria-hidden="true" />
-                  All Snippets
+                  {t("snippets.page.allSnippets")}
                 </button>
               )}
 
@@ -354,15 +356,15 @@ export function SnippetsPage() {
                 className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted"
               >
                 {searchQuery
-                  ? `Results for "${searchQuery}"`
+                  ? t("snippets.page.resultsFor", { query: searchQuery })
                   : activeFolder
                     ? activeFolder.name
-                    : "Snippets"}
+                    : t("snippets.page.title")}
               </h2>
 
               {loading && (
                 <span className="text-[11px] text-text-muted animate-pulse ml-auto">
-                  Loading...
+                  {t("snippets.page.loading")}
                 </span>
               )}
             </div>
@@ -423,10 +425,12 @@ interface EmptySnippetsStateProps {
 }
 
 function EmptySnippetsState({ query, hasFolderFilter }: EmptySnippetsStateProps) {
+  const { t } = useTranslation();
+
   if (query.trim()) {
     return (
       <p className="text-[length:var(--text-sm)] text-text-muted py-10 text-center">
-        No snippets match &ldquo;{query}&rdquo;
+        {t("snippets.page.noMatch", { query })}
       </p>
     );
   }
@@ -434,7 +438,7 @@ function EmptySnippetsState({ query, hasFolderFilter }: EmptySnippetsStateProps)
   if (hasFolderFilter) {
     return (
       <p className="text-[length:var(--text-sm)] text-text-muted py-10 text-center">
-        No snippets in this folder yet.
+        {t("snippets.page.emptyFolder")}
       </p>
     );
   }
@@ -446,11 +450,12 @@ function EmptySnippetsState({ query, hasFolderFilter }: EmptySnippetsStateProps)
       </div>
       <div>
         <p className="text-[length:var(--text-sm)] font-medium text-text-secondary">
-          No snippets yet
+          {t("snippets.page.emptyTitle")}
         </p>
         <p className="text-[length:var(--text-xs)] text-text-muted mt-1">
-          Create reusable commands with{" "}
-          <span className="font-mono text-accent">{"{{variables}}"}</span> for one-click execution.
+          {t("snippets.page.emptyHintPrefix")}
+          <span className="font-mono text-accent">{"{{variables}}"}</span>
+          {t("snippets.page.emptyHintSuffix")}
         </p>
       </div>
     </div>

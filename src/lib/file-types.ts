@@ -41,3 +41,31 @@ export function isEditableInEditor(name: string): boolean {
   if (dot <= 0) return true; // no extension, or a leading-dot dotfile (".env")
   return !BINARY_EXTENSIONS.has(name.slice(dot + 1).toLowerCase());
 }
+
+/**
+ * Map a backend entry-type discriminant onto its display label.
+ *
+ * The Rust side sends "File" / "Directory" / "Symlink" / "Other" and those
+ * strings are also compared in code, so they stay data — only the label shown
+ * to the user is translated. Unknown values fall back to the raw string.
+ *
+ * `t` is passed in (from `useTranslation()` in a component, or the standalone
+ * `t` elsewhere) so the caller stays reactive on a locale switch.
+ */
+export function fileTypeLabel(
+  entryType: string,
+  t: (key: string) => string,
+): string {
+  switch (entryType) {
+    case "File":
+      return t("explorer.type.File");
+    case "Directory":
+      return t("explorer.type.Directory");
+    case "Symlink":
+      return t("explorer.type.Symlink");
+    case "Other":
+      return t("explorer.type.Other");
+    default:
+      return entryType;
+  }
+}

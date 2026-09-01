@@ -1,12 +1,16 @@
 import { useState } from "react";
 import { Pencil, Copy, Trash2, AlertTriangle } from "lucide-react";
 import type { Snippet } from "../../types";
+import { useTranslation } from "../../i18n";
+import type { TVars } from "../../i18n";
 import { ContextMenu } from "../shared/ContextMenu";
 import { ConfirmDangerDialog } from "../shared/ConfirmDangerDialog";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 const VAR_REGEX = /(\{\{[a-zA-Z_][a-zA-Z0-9_]*\}\})/g;
+
+type Translate = (key: string, vars?: TVars) => string;
 
 /** Render a command string with {{variable}} tokens highlighted. */
 function HighlightedCommand({ command }: { command: string }) {
@@ -26,18 +30,18 @@ function HighlightedCommand({ command }: { command: string }) {
   );
 }
 
-function formatLastUsed(iso: string | null): string {
-  if (!iso) return "never";
+function formatLastUsed(iso: string | null, t: Translate): string {
+  if (!iso) return t("snippets.card.lastUsedNever");
   const date = new Date(iso);
   const now = Date.now();
   const diff = now - date.getTime();
   const days = Math.floor(diff / 86_400_000);
-  if (days === 0) return "today";
-  if (days === 1) return "yesterday";
-  if (days < 30) return `${days}d ago`;
+  if (days === 0) return t("snippets.card.lastUsedToday");
+  if (days === 1) return t("common.time.yesterday");
+  if (days < 30) return t("common.time.daysAgo", { count: days });
   const months = Math.floor(days / 30);
-  if (months < 12) return `${months}mo ago`;
-  return `${Math.floor(months / 12)}yr ago`;
+  if (months < 12) return t("common.time.monthsAgo", { count: months });
+  return t("snippets.card.lastUsedYearsAgo", { count: Math.floor(months / 12) });
 }
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -52,6 +56,7 @@ interface SnippetCardProps {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function SnippetCard({ snippet, onEdit, onDelete, onDuplicate }: SnippetCardProps) {
+  const { t } = useTranslation();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
 
@@ -67,17 +72,17 @@ export function SnippetCard({ snippet, onEdit, onDelete, onDuplicate }: SnippetC
 
   const contextItems = [
     {
-      label: "Edit",
+      label: t("common.edit"),
       icon: Pencil,
       onClick: () => onEdit(snippet),
     },
     {
-      label: "Duplicate",
+      label: t("common.duplicate"),
       icon: Copy,
       onClick: () => onDuplicate(snippet),
     },
     {
-      label: "Delete",
+      label: t("common.delete"),
       icon: Trash2,
       danger: true,
       onClick: () => setConfirmDelete(true),
@@ -110,7 +115,7 @@ export function SnippetCard({ snippet, onEdit, onDelete, onDuplicate }: SnippetC
                   size={14}
                   strokeWidth={2}
                   className="text-status-error shrink-0"
-                  aria-label="Dangerous — requires confirmation"
+                  aria-label={t("snippets.card.dangerousAria")}
                 />
               )}
             </div>
@@ -119,8 +124,8 @@ export function SnippetCard({ snippet, onEdit, onDelete, onDuplicate }: SnippetC
           {/* Edit button — visible on hover */}
           <button
             onClick={() => onEdit(snippet)}
-            title="Edit snippet"
-            aria-label="Edit snippet"
+            title={t("snippets.card.editHint")}
+            aria-label={t("snippets.card.editHint")}
             className={[
               "shrink-0 flex items-center justify-center w-7 h-7 rounded-md",
               "text-text-muted hover:text-text-secondary hover:bg-bg-subtle",
@@ -159,8 +164,11 @@ export function SnippetCard({ snippet, onEdit, onDelete, onDuplicate }: SnippetC
 
           <span className="ml-auto text-[11px] text-text-muted shrink-0 whitespace-nowrap">
             {snippet.use_count > 0
-              ? `Used ${snippet.use_count}x · ${formatLastUsed(snippet.last_used_at)}`
-              : "Never used"}
+              ? t("snippets.card.usedCount", {
+                  count: snippet.use_count,
+                  lastUsed: formatLastUsed(snippet.last_used_at, t),
+                })
+              : t("snippets.card.neverUsed")}
           </span>
         </div>
       </div>
@@ -175,8 +183,8 @@ export function SnippetCard({ snippet, onEdit, onDelete, onDuplicate }: SnippetC
 
       <ConfirmDangerDialog
         open={confirmDelete}
-        title="Delete this snippet?"
-        message="This snippet will be permanently removed."
+        title={t("snippets.card.deleteTitle")}
+        message={t("snippets.card.deleteMessage")}
         onCancel={() => setConfirmDelete(false)}
         onConfirm={() => {
           setConfirmDelete(false);

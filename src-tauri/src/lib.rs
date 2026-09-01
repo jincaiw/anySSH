@@ -3,6 +3,7 @@ mod backup;
 mod db;
 mod editors;
 mod import;
+mod portable;
 mod portforward;
 mod s3;
 mod scp;
@@ -53,10 +54,25 @@ pub fn run() {
         .plugin(tauri_plugin_process::init())
         .plugin(tauri_plugin_clipboard_manager::init())
         .setup(|app| {
-            let app_data_dir = app
-                .path()
-                .app_data_dir()
-                .map_err(|e| format!("could not resolve app data dir: {e}"))?;
+            // Portable mode is decided once, here, before anything touches the
+            // filesystem: `portable::install()` publishes the resolved data
+            // directory to the rest of the process (the vault reads it back via
+            // `portable::data_dir()`), so the database, the credential vault and
+            // the telemetry id all land in the same place.
+            let portable = portable::detect();
+            if let Some(p) = &portable {
+                tracing::info!(data_dir = %p.data_dir.display(), "portable mode enabled");
+            }
+            portable::install(portable.clone())
+                .map_err(|e| format!("could not create portable data directory: {e}"))?;
+
+            let app_data_dir = match &portable {
+                Some(p) => p.data_dir.clone(),
+                None => app
+                    .path()
+                    .app_data_dir()
+                    .map_err(|e| format!("could not resolve app data dir: {e}"))?,
+            };
 
             let host_db = HostDb::new(&app_data_dir)
                 .map_err(|e| format!("failed to initialise database: {e}"))?;
@@ -126,15 +142,47 @@ pub fn run() {
                 _ => String::new(),
             };
 
-            let theme_script = format!(
-                "document.documentElement.dataset.theme = {theme:?}; document.documentElement.style.setProperty('--accent-hue', '{accent_hue}');{custom_accent_script}{font_script}{mono_font_script}"
+            // The persisted UI language, injected before first paint for the
+            // same reason as the theme: without it, a user running the app in
+            // a non-default language sees the default copy flash up first.
+            //
+            // `ANYSCP_UI_LANG` wins over the stored preference — the E2E
+            // container sets it to `en-US` so the WebdriverIO suite can keep
+            // selecting elements by their English text even though the product
+            // default is now Chinese. Only known-good tags are accepted;
+            // anything else falls through so the frontend can do its own
+            // (browser-language based) detection.
+            let lang = ["ANYSCP_UI_LANG"]
+                .iter()
+                .filter_map(|k| std::env::var(k).ok())
+                .chain(host_db.get_setting("app_language").ok().flatten())
+                .find(|v| v == "zh-CN" || v == "en-US")
+                .unwrap_or_else(|| "zh-CN".to_string());
+
+            let lang_script = format!(
+                "document.documentElement.dataset.lang = {lang:?}; document.documentElement.lang = {lang:?};"
             );
 
-            WebviewWindowBuilder::new(app.handle(), "main", WebviewUrl::App("index.html".into()))
-                .title("anySCP")
-                .inner_size(1200.0, 800.0)
-                .min_inner_size(800.0, 500.0)
-                .initialization_script(&theme_script)
+            let theme_script = format!(
+                "document.documentElement.dataset.theme = {theme:?}; document.documentElement.style.setProperty('--accent-hue', '{accent_hue}');{custom_accent_script}{font_script}{mono_font_script}{lang_script}"
+            );
+
+            let mut window_builder =
+                WebviewWindowBuilder::new(app.handle(), "main", WebviewUrl::App("index.html".into()))
+                    .title("anySCP")
+                    .inner_size(1200.0, 800.0)
+                    .min_inner_size(800.0, 500.0)
+                    .initialization_script(&theme_script);
+
+            // In portable mode the webview's cache, cookies and localStorage
+            // move into the portable folder too — otherwise the UI's own state
+            // (and any cached session data) would stay behind on each machine
+            // the stick is plugged into.
+            if let Some(p) = &portable {
+                window_builder = window_builder.data_directory(p.webview_dir());
+            }
+
+            window_builder
                 .build()
                 .map_err(|e| format!("failed to create main window: {e}"))?;
 
@@ -331,6 +379,9 @@ pub fn run() {
             snippets::commands::snippet_execute,
             // Build info
             is_release_build,
+            // Portable mode
+            portable::is_portable_mode,
+            portable::portable_data_dir,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
