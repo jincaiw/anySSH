@@ -33,7 +33,7 @@
   },
   "plugins": {
     "updater": {
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDExMjY1REUyNkY0RDVDQjUKUldTMVhFMXY0bDBtRWM5d2Q1OHY3RWc1aHl4c0tYaFJjOGtGY1pSd2hrK0FRNkJzNkFzNi9GbEYK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDk0QUIzMjVDM0RERDU3QjMKUldTelY5MDlYREtybEd3YVI3a1F3Z3JXRnVVNlMzcHR3NGgxUko5eVJaK0lmN21QZTljN2RqS3kK",
       "endpoints": [
         "https://github.com/jincaiw/anySCP/releases/latest/download/latest.json"
       ]
