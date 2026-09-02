@@ -31,14 +31,20 @@ async function selectedValue(testid: string): Promise<string | null> {
 
 /**
  * Commit a hand-typed value in the editable TERM combobox: focus the input,
- * replace its contents, press Enter. The dropdown opens on focus and filters
- * as we type; with no matching preset, Enter commits the typed value.
+ * select-all, type the replacement, press Enter. The dropdown opens on focus
+ * and filters as we type; with no matching preset, Enter commits the typed
+ * value. Keystrokes only — `setValue`'s clearValue step rewrites `.value`
+ * directly and those events never reach React's controlled <input> on
+ * WebKitGTK, so the stale committed value survives and Enter re-picks the
+ * highlighted preset instead of committing (same quirk spec 08 works around
+ * for its search filter).
  */
 async function typeTermValue(value: string): Promise<void> {
     const input = await $("input[data-testid='s-termtype']");
     await input.waitForClickable({ timeout: 10_000 });
     await input.click();
-    await input.setValue(value);
+    await browser.keys(["Control", "a"]);
+    await browser.keys(value);
     await browser.keys("Enter");
 }
 

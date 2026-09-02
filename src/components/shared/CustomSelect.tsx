@@ -71,9 +71,14 @@ export function CustomSelect({
     if (!editingRef.current) setInputValue(value);
   }, [value]);
 
-  // In editable mode a query filters the option list; otherwise all options show.
+  // In editable mode a query filters the option list — but only once the
+  // typed input actually deviates from the committed value. While the input
+  // still shows the committed value (e.g. right after focusing the
+  // combobox, before anything is typed) filtering would reduce the list to
+  // the current selection alone and hide every other option.
   const query = inputValue.trim().toLowerCase();
-  const visibleOptions = editable && query.length > 0
+  const isFiltering = editable && inputValue !== value;
+  const visibleOptions = isFiltering && query.length > 0
     ? options.filter(
         (o) => o.label.toLowerCase().includes(query) || o.value.toLowerCase().includes(query),
       )
@@ -139,7 +144,7 @@ export function CustomSelect({
   const openDropdown = () => {
     computePos();
     setOpen(true);
-    const visible = editable && inputValue.trim().length > 0
+    const visible = isFiltering && inputValue.trim().length > 0
       ? visibleOptions
       : options;
     setHighlightIndex(visible.findIndex((o) => o.value === value));
