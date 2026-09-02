@@ -5,6 +5,7 @@ use std::sync::Arc;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, Mutex};
 
+use super::encoding::{SessionSettings, StreamConverter};
 use super::handler::SshClientHandler;
 
 /// Commands sent from the frontend to the reader/writer task.
@@ -59,6 +60,7 @@ impl SshSession {
         app_handle: AppHandle,
         default_shell: Option<String>,
         startup_command: Option<String>,
+        settings: SessionSettings,
     ) -> Result<Self, SshError> {
         // Wrap the handle immediately so it can be shared with SFTP later.
         let handle = Arc::new(Mutex::new(handle));
@@ -71,7 +73,7 @@ impl SshSession {
             .map_err(|e| SshError::ChannelError(e.to_string()))?;
 
         channel
-            .request_pty(false, "xterm-256color", cols, rows, 0, 0, &[])
+            .request_pty(false, &settings.term, cols, rows, 0, 0, &[])
             .await
             .map_err(|e| SshError::ChannelError(e.to_string()))?;
 
@@ -106,6 +108,11 @@ impl SshSession {
         let reader_session_id = session_id.clone();
         let reader_app = app_handle.clone();
 
+        // Per-direction converters. UTF-8 (the default) constructs no decoder
+        // or encoder and the bytes pass through untouched.
+        let mut out_conv = StreamConverter::new(&settings.encoding);
+        let mut in_conv = StreamConverter::new(&settings.encoding);
+
         // The background task owns the channel exclusively. It multiplexes
         // between reading SSH output and processing frontend commands.
         let reader_task = tokio::spawn(async move {
@@ -116,16 +123,18 @@ impl SshSession {
                     msg = channel.wait() => {
                         match msg {
                             Some(ChannelMsg::Data { data }) => {
+                                let data = out_conv.decode_to_utf8(&data);
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
-                                    data: data.to_vec(),
+                                    data,
                                 };
                                 let _ = reader_app.emit("ssh:output", &payload);
                             }
                             Some(ChannelMsg::ExtendedData { data, .. }) => {
+                                let data = out_conv.decode_to_utf8(&data);
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
-                                    data: data.to_vec(),
+                                    data,
                                 };
                                 let _ = reader_app.emit("ssh:output", &payload);
                             }
@@ -143,6 +152,7 @@ impl SshSession {
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             Some(SessionCmd::Data(data)) => {
+                                let data = in_conv.encode_from_utf8(&data, false);
                                 let _ = channel.data(&data[..]).await;
                             }
                             Some(SessionCmd::Resize { cols, rows }) => {
@@ -188,6 +198,7 @@ impl SshSession {
         rows: u32,
         app_handle: AppHandle,
         default_shell: Option<String>,
+        settings: SessionSettings,
     ) -> Result<Self, SshError> {
         let channel = handle
             .lock()
@@ -197,7 +208,7 @@ impl SshSession {
             .map_err(|e| SshError::ChannelError(e.to_string()))?;
 
         channel
-            .request_pty(false, "xterm-256color", cols, rows, 0, 0, &[])
+            .request_pty(false, &settings.term, cols, rows, 0, 0, &[])
             .await
             .map_err(|e| SshError::ChannelError(e.to_string()))?;
 
@@ -218,6 +229,10 @@ impl SshSession {
         let reader_session_id = session_id.clone();
         let reader_app = app_handle.clone();
 
+        // Per-direction converters (no-op when the encoding is UTF-8).
+        let mut out_conv = StreamConverter::new(&settings.encoding);
+        let mut in_conv = StreamConverter::new(&settings.encoding);
+
         let reader_task = tokio::spawn(async move {
             let mut channel = channel;
             loop {
@@ -225,16 +240,18 @@ impl SshSession {
                     msg = channel.wait() => {
                         match msg {
                             Some(ChannelMsg::Data { data }) => {
+                                let data = out_conv.decode_to_utf8(&data);
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
-                                    data: data.to_vec(),
+                                    data,
                                 };
                                 let _ = reader_app.emit("ssh:output", &payload);
                             }
                             Some(ChannelMsg::ExtendedData { data, .. }) => {
+                                let data = out_conv.decode_to_utf8(&data);
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
-                                    data: data.to_vec(),
+                                    data,
                                 };
                                 let _ = reader_app.emit("ssh:output", &payload);
                             }
@@ -252,6 +269,7 @@ impl SshSession {
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             Some(SessionCmd::Data(data)) => {
+                                let data = in_conv.encode_from_utf8(&data, false);
                                 let _ = channel.data(&data[..]).await;
                             }
                             Some(SessionCmd::Resize { cols, rows }) => {

@@ -7,6 +7,37 @@ export type PasteButton = "none" | "right" | "middle";
 /** What double-clicking a file in the Explorer does. */
 export type DoubleClickAction = "download" | "open";
 
+/** Character encoding used for terminal I/O (and intended for SFTP names).
+ *  Values must match the backend mapping in src-tauri/src/ssh/encoding.rs. */
+export const TERMINAL_ENCODINGS = [
+  { value: "utf-8", label: "UTF-8" },
+  { value: "gbk", label: "GBK / GB2312" },
+  { value: "big5", label: "Big5" },
+  { value: "shift_jis", label: "Shift_JIS" },
+  { value: "euc-kr", label: "EUC-KR" },
+  { value: "euc-jp", label: "EUC-JP" },
+  { value: "iso-8859-1", label: "ISO-8859-1" },
+  { value: "windows-1252", label: "Windows-1252" },
+] as const;
+
+export type TerminalEncoding = (typeof TERMINAL_ENCODINGS)[number]["value"];
+
+/** Preset TERM values offered in the terminal-type dropdown. Custom values
+ *  can be typed freely (validated against TERM_NAME_RE). */
+export const TERMINAL_TYPES = [
+  { value: "xterm-256color", label: "xterm-256color", recommended: true },
+  { value: "xterm", label: "xterm", recommended: false },
+  { value: "vt100", label: "VT100", recommended: false },
+  { value: "vt102", label: "VT102", recommended: false },
+  { value: "vt220", label: "VT220", recommended: false },
+  { value: "linux", label: "Linux", recommended: false },
+  { value: "ansi", label: "ANSI", recommended: false },
+  { value: "scoansi", label: "SCOANSI", recommended: false },
+] as const;
+
+/** Allowed characters for a hand-typed TERM value (letters, digits, + - . _). */
+export const TERM_NAME_RE = /^[A-Za-z0-9+._-]+$/;
+
 /** Full custom accent colour in oklch components (lightness, chroma, hue). */
 export interface AccentCustom { l: number; c: number; h: number }
 
@@ -47,6 +78,10 @@ interface SettingsState {
   terminalCopyOnSelect: boolean;
   terminalPasteButton: PasteButton;
 
+  // Terminal session (encoding + TERM sent to the server)
+  terminalEncoding: TerminalEncoding;
+  terminalType: string;
+
   // Explorer
   explorerDoubleClickAction: DoubleClickAction;
 
@@ -76,6 +111,8 @@ interface SettingsState {
   setTerminalScrollback: (lines: number) => void;
   setTerminalCopyOnSelect: (enabled: boolean) => void;
   setTerminalPasteButton: (button: PasteButton) => void;
+  setTerminalEncoding: (encoding: TerminalEncoding) => void;
+  setTerminalType: (type: string) => void;
   setExplorerDoubleClickAction: (action: DoubleClickAction) => void;
   setTransferConcurrency: (n: number) => void;
   addEditor: (editor: Omit<EditorConfig, "id">) => void;
@@ -102,6 +139,8 @@ const DEFAULTS = {
   terminalScrollback: 5000,
   terminalCopyOnSelect: false,
   terminalPasteButton: "none" as PasteButton,
+  terminalEncoding: "utf-8" as TerminalEncoding,
+  terminalType: "xterm-256color",
   explorerDoubleClickAction: "download" as DoubleClickAction,
   transferConcurrency: 3,
   editors: [] as EditorConfig[],
@@ -306,6 +345,20 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     persist("terminal_paste_button", button);
   },
 
+  setTerminalEncoding: (encoding) => {
+    set({ terminalEncoding: encoding });
+    persist("terminal_encoding", encoding);
+  },
+
+  setTerminalType: (type) => {
+    // TERM names are sent verbatim to the server in the PTY request — keep a
+    // tight whitelist so nothing injectable can end up in the protocol message.
+    const trimmed = type.trim();
+    const value = TERM_NAME_RE.test(trimmed) ? trimmed : DEFAULTS.terminalType;
+    set({ terminalType: value });
+    persist("terminal_type", value);
+  },
+
   setTransferConcurrency: (n) => {
     const clamped = Math.max(1, Math.min(10, n));
     set({ transferConcurrency: clamped });
@@ -372,6 +425,16 @@ export const useSettingsStore = create<SettingsState>((set) => ({
           case "terminal_scrollback": updates.terminalScrollback = Number(value) || DEFAULTS.terminalScrollback; break;
           case "terminal_copy_on_select": updates.terminalCopyOnSelect = value === "true"; break;
           case "terminal_paste_button": updates.terminalPasteButton = value === "right" || value === "middle" ? value : DEFAULTS.terminalPasteButton; break;
+          case "terminal_encoding": {
+            const valid = TERMINAL_ENCODINGS.some((e) => e.value === value);
+            updates.terminalEncoding = valid ? (value as TerminalEncoding) : DEFAULTS.terminalEncoding;
+            break;
+          }
+          case "terminal_type": {
+            const trimmed = value.trim();
+            updates.terminalType = TERM_NAME_RE.test(trimmed) ? trimmed : DEFAULTS.terminalType;
+            break;
+          }
           case "explorer_double_click_action": updates.explorerDoubleClickAction = value === "open" ? "open" : "download"; break;
           case "transfer_concurrency": updates.transferConcurrency = Number(value) || DEFAULTS.transferConcurrency; break;
           case "app_interface_font": updates.interfaceFont = value || DEFAULTS.interfaceFont; break;

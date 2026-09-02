@@ -32,6 +32,9 @@ russh = "0.46"
 russh-keys = "0.46"
 async-trait = "0.1"
 
+# Character set conversion for terminal I/O (GBK/Big5/Shift_JIS/EUC-*/… ↔ UTF-8)
+encoding_rs = "0.8"
+
 # Async runtime
 tokio = { version = "1", features = ["full"] }
 

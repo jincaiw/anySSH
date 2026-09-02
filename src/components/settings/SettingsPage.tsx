@@ -7,7 +7,8 @@ import { useUpdaterStore } from "../../stores/updater-store";
 import { toast } from "../../stores/toast-store";
 import { RefreshCw, CheckCircle2, AlertCircle, Palette, SquareTerminal, ArrowUpDown, Info, ExternalLink, Check, FileCode, Plus, Trash2, FolderOpen, Star, Search, Database, Download, Upload, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { CursorStyle, ThemeMode, EditorConfig, PasteButton, DoubleClickAction } from "../../stores/settings-store";
+import { TERMINAL_ENCODINGS, TERMINAL_TYPES, TERM_NAME_RE } from "../../stores/settings-store";
+import type { CursorStyle, ThemeMode, EditorConfig, PasteButton, DoubleClickAction, TerminalEncoding } from "../../stores/settings-store";
 
 // ─── Shared styles ───────────────────────────────────────────────────────────
 
@@ -566,6 +567,10 @@ function TerminalSettings() {
   const setCopyOnSelect = useSettingsStore((s) => s.setTerminalCopyOnSelect);
   const pasteButton = useSettingsStore((s) => s.terminalPasteButton);
   const setPasteButton = useSettingsStore((s) => s.setTerminalPasteButton);
+  const terminalEncoding = useSettingsStore((s) => s.terminalEncoding);
+  const setTerminalEncoding = useSettingsStore((s) => s.setTerminalEncoding);
+  const terminalType = useSettingsStore((s) => s.terminalType);
+  const setTerminalType = useSettingsStore((s) => s.setTerminalType);
 
   const termFontOptions = useInstalledFontOptions(TERMINAL_FONT_CANDIDATES, fontFamily);
 
@@ -655,6 +660,43 @@ function TerminalSettings() {
               { value: "right", label: "Right-click" },
               { value: "middle", label: "Middle-click" },
             ]}
+          />
+        </SettingRow>
+      </SettingsGroup>
+
+      <SettingsGroup label="Session">
+        <SettingRow>
+          <div>
+            <label htmlFor="s-encoding" className={LABEL_CLASS}>Encoding</label>
+            <p className={DESC_CLASS}>编码设置影响终端回显和SFTP中文文件名，需与服务端locale对齐。</p>
+          </div>
+          <CustomSelect
+            id="s-encoding"
+            data-testid="s-encoding"
+            value={terminalEncoding}
+            onChange={(v) => setTerminalEncoding(v as TerminalEncoding)}
+            options={TERMINAL_ENCODINGS.map((e) => ({ value: e.value, label: e.label }))}
+            className="w-44"
+          />
+        </SettingRow>
+
+        <SettingRow>
+          <div>
+            <label htmlFor="s-termtype" className={LABEL_CLASS}>Terminal Type</label>
+            <p className={DESC_CLASS}>终端类型作为TERM环境变量发送给服务器，影响颜色显示、光标控制等功能。</p>
+          </div>
+          <CustomSelect
+            id="s-termtype"
+            data-testid="s-termtype"
+            value={terminalType}
+            onChange={setTerminalType}
+            options={TERMINAL_TYPES.map((t) => ({
+              value: t.value,
+              label: t.recommended ? `${t.label}（推荐）` : t.label,
+            }))}
+            className="w-44"
+            editable
+            editableValidate={(v) => TERM_NAME_RE.test(v)}
           />
         </SettingRow>
       </SettingsGroup>

@@ -10,6 +10,7 @@ use tauri::{AppHandle, Emitter};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
+use super::encoding::SessionSettings;
 use super::handler::SshClientHandler;
 use super::session::SshSession;
 
@@ -90,6 +91,7 @@ impl SshManager {
         config: HostConfig,
         app_handle: AppHandle,
         attempt_id: Option<String>,
+        settings: SessionSettings,
     ) -> Result<SessionId, SshError> {
         let session_id = SessionId::new();
         let sid = session_id.0.clone();
@@ -149,6 +151,7 @@ impl SshManager {
                 app_handle,
                 config.default_shell.clone(),
                 config.startup_command.clone(),
+                settings,
             )
             .await
         };
@@ -392,6 +395,7 @@ impl SshManager {
         &self,
         source_session_id: &str,
         app_handle: AppHandle,
+        settings: SessionSettings,
     ) -> Result<SessionId, SshError> {
         // Get the shared handle, host config, and the ProxyJump tunnel chain from
         // the source session. The jump handles are shared (Arc) so the tunnel
@@ -420,6 +424,7 @@ impl SshManager {
             24,
             app_handle,
             host_config.default_shell,
+            settings,
         )
         .await?;
 
