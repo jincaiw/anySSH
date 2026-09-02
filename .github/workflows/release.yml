@@ -181,17 +181,19 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          # nullglob + array: plain `ls a.zip b.tar.gz | head -1` under
-          # pipefail exits 2 when either glob has no match (Linux has no
-          # .zip, macOS/Windows no .tar.gz) and kills the step silently.
-          shopt -s nullglob
-          files=(src-tauri/target*/portable/*.zip src-tauri/target*/portable/*.tar.gz)
-          if [ ${#files[@]} -eq 0 ]; then
+          # find (not glob): macOS cross-builds put the archive under
+          # src-tauri/target/<triple>/portable/, which a single-level
+          # `target*/portable` glob cannot match; find also exits 0 when
+          # nothing matches, so pipefail can't kill the step silently.
+          FILE=$(find src-tauri -path "*/portable/*.zip" -print 2>/dev/null | head -1)
+          if [ -z "$FILE" ]; then
+            FILE=$(find src-tauri -path "*/portable/*.tar.gz" -print 2>/dev/null | head -1)
+          fi
+          if [ -z "$FILE" ]; then
             echo "No portable archive produced" >&2
-            ls -la src-tauri/target/portable/ 2>/dev/null >&2 || true
+            find src-tauri -type d -name portable 2>/dev/null >&2 || true
             exit 1
           fi
-          FILE="${files[0]}"
           echo "Uploading $FILE"
           gh release upload "${{ github.ref_name }}" "$FILE" --clobber
 
