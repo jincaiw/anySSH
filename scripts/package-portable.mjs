@@ -143,15 +143,34 @@ mkdirSync(outDir, { recursive: true });
 const archive = join(outDir, `${folderName}.${ext}`);
 rmrf(archive);
 
-// `tar` is used on every platform: bsdtar (macOS / Windows 10+ / GitHub
-// runners) writes RFC-compliant archives with forward slashes when creating
-// zip via -a, and GNU tar handles tar.gz on Linux. No native zip tooling or
-// npm dependency required.
-const tarArgs =
-  ext === "zip"
-    ? ["-a", "-cf", archive, "-C", outDir, folderName]
-    : ["-czf", archive, "-C", outDir, folderName];
-execFileSync("tar", tarArgs, { stdio: "inherit" });
+// `tar` is used on macOS (bsdtar, zip via -a) and Linux (GNU tar, tar.gz).
+// On Windows the runner's PATH resolves `tar` to Git for Windows' GNU tar,
+// which rejects drive letters ("Cannot connect to D: resolve failed") and
+// cannot write zip via -a — so use the Windows-native bsdtar (ships with
+// Windows 10+) explicitly, falling back to PowerShell Compress-Archive.
+if (platform === "win32") {
+  const bsdtar = join(process.env.SystemRoot || "C:\\Windows", "System32", "tar.exe");
+  if (existsSync(bsdtar)) {
+    execFileSync(bsdtar, ["-a", "-cf", archive, "-C", outDir, folderName], { stdio: "inherit" });
+  } else {
+    execFileSync(
+      "powershell.exe",
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        `Compress-Archive -Force -Path '${staging}' -DestinationPath '${archive}'`,
+      ],
+      { stdio: "inherit" },
+    );
+  }
+} else {
+  const tarArgs =
+    ext === "zip"
+      ? ["-a", "-cf", archive, "-C", outDir, folderName]
+      : ["-czf", archive, "-C", outDir, folderName];
+  execFileSync("tar", tarArgs, { stdio: "inherit" });
+}
 
 console.log(`[portable] created: ${archive}`);
 
