@@ -99,3 +99,9 @@ dirs = "6"
 [dev-dependencies]
 tempfile = "3"
 
+
+# Vendored russh: exposes the server's "authentications that can continue"
+# list from USERAUTH_FAILURE via Handle::take_last_auth_methods — upstream
+# 0.46 parses the list but discards it. Needed for auth diagnostics.
+[patch.crates-io]
+russh = { path = "vendor/russh" }

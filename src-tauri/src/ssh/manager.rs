@@ -432,23 +432,70 @@ impl SshManager {
         // forever (russh's KI reply loop has no terminal None arm).
         const AUTH_STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
+        // ── 0. `none` probe — exactly what OpenSSH and PuTTY send before
+        // their first real attempt. Custom SSH servers (bastion appliances
+        // especially) often key their auth state machine off this probe, and
+        // its USERAUTH_FAILURE reply carries the methods the server is
+        // willing to continue with — the single most useful diagnostic
+        // available, since russh otherwise discards it (vendored patch
+        // exposes it via `take_last_auth_methods`).
+        outcome.push("none probe (OpenSSH-style)");
+        let server_methods: Option<Vec<String>> =
+            match tokio::time::timeout(AUTH_STEP_TIMEOUT, handle.authenticate_none(username)).await
+            {
+                Ok(Ok(true)) => {
+                    // Server authenticated us without any credential (must be a
+                    // wide-open host) — nothing else to do.
+                    outcome.authenticated = true;
+                    return Ok(outcome);
+                }
+                Ok(Ok(false)) => handle.take_last_auth_methods(),
+                Ok(Err(e)) => return Err(send_err(e)),
+                Err(_) => {
+                    outcome.push("none probe timed out");
+                    None
+                }
+            };
+        match &server_methods {
+            Some(methods) if !methods.is_empty() => {
+                outcome.push(format!("server allows [{}]", methods.join(", ")))
+            }
+            Some(_) => outcome.push("server allows no further methods"),
+            None => outcome.push("server method list unavailable"),
+        }
+        let server_allows = |method: &str| match &server_methods {
+            Some(methods) => methods.iter().any(|m| m == method),
+            None => true, // unknown — try anyway
+        };
+
         // ── 1. keyboard-interactive (preferred by network devices) ──────────
         const MAX_KI_ROUNDS: usize = 8;
-        let mut response = match tokio::time::timeout(
-            AUTH_STEP_TIMEOUT,
-            handle.authenticate_keyboard_interactive_start(username, None),
-        )
-        .await
-        {
-            Ok(r) => r.map_err(send_err)?,
-            Err(_) => {
-                outcome.push("keyboard-interactive timed out");
-                return Self::auth_password_plain(handle, username, password, outcome).await;
+        let mut response = if !server_allows("keyboard-interactive") {
+            outcome.push("keyboard-interactive not offered by server, skipped");
+            None
+        } else {
+            let started = tokio::time::timeout(
+                AUTH_STEP_TIMEOUT,
+                handle.authenticate_keyboard_interactive_start(username, None),
+            )
+            .await;
+            match started {
+                Ok(r) => Some(r.map_err(send_err)?),
+                Err(_) => {
+                    outcome.push("keyboard-interactive timed out");
+                    None
+                }
             }
         };
 
+        // The KI round loop runs while the server keeps sending InfoRequests;
+        // a `None` response (skipped / timed-out start) falls through to the
+        // plain-password fallback below.
         for _ in 0..MAX_KI_ROUNDS {
-            match response {
+            let Some(resp) = response.take() else {
+                break;
+            };
+            match resp {
                 client::KeyboardInteractiveAuthResponse::Success => {
                     outcome.authenticated = true;
                     return Ok(outcome);
@@ -473,23 +520,38 @@ impl SshManager {
                         .iter()
                         .map(|p| Self::answer_auth_prompt(&p.prompt, username, password))
                         .collect();
-                    response = match tokio::time::timeout(
-                        AUTH_STEP_TIMEOUT,
-                        handle.authenticate_keyboard_interactive_respond(responses),
-                    )
-                    .await
-                    {
-                        Ok(r) => r.map_err(send_err)?,
-                        Err(_) => {
-                            outcome.push("keyboard-interactive timed out mid-round");
-                            return Ok(outcome);
-                        }
-                    };
+                    response = Some(
+                        match tokio::time::timeout(
+                            AUTH_STEP_TIMEOUT,
+                            handle.authenticate_keyboard_interactive_respond(responses),
+                        )
+                        .await
+                        {
+                            Ok(r) => r.map_err(send_err)?,
+                            Err(_) => {
+                                outcome.push("keyboard-interactive timed out mid-round");
+                                return Ok(outcome);
+                            }
+                        },
+                    );
                 }
             }
         }
 
         // ── 2. plain password fallback ──────────────────────────────────────
+        // Let the user compare what was sent with what works in PuTTY: the
+        // length and charset fingerprint catches IME full-width characters,
+        // stale vault entries and copy-paste truncation without exposing the
+        // secret itself.
+        outcome.push(format!(
+            "password fingerprint: {} chars, ascii={}",
+            password.chars().count(),
+            password.is_ascii()
+        ));
+        if !server_allows("password") {
+            outcome.push("password not offered by server, skipped");
+            return Ok(outcome);
+        }
         Self::auth_password_plain(handle, username, password, outcome).await
     }
 
