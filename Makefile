@@ -276,6 +276,19 @@ $(E2E_IMAGE_STAMP): $(E2E_IMAGE_SRC)
 # Explicit rebuild target (alias).
 e2e-build: $(E2E_IMAGE_STAMP)
 
+# Pre-pull the external service images (sshd/minio/busybox...) with retries.
+# `up` does an implicit pull, so a transient registry error (EOF / timeout on
+# lscr.io or ghcr.io) would otherwise fail the whole E2E shard. Pulling up
+# front with retry turns that flake into a delay instead of a red run.
+e2e-pull:
+	@rc=1; \
+	for i in 1 2 3 4 5; do \
+		if $(E2E_COMPOSE) pull --ignore-buildable; then rc=0; break; fi; \
+		echo "  image pull attempt $$i failed; retrying in 15s"; \
+		sleep 15; \
+	done; \
+	exit $$rc
+
 # Run the full suite. Brings up the SSH targets + runner, runs WDIO, then
 # tears containers down — but KEEPS volumes (rust-target, cargo-cache,
 # node-modules) so the next run does an incremental compile (~5s instead
