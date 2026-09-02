@@ -33,11 +33,16 @@ async function selectedValue(testid: string): Promise<string | null> {
  * Commit a hand-typed value in the editable TERM combobox: focus the input,
  * select-all, type the replacement, press Enter. The dropdown opens on focus
  * and filters as we type; with no matching preset, Enter commits the typed
- * value. Keystrokes only — `setValue`'s clearValue step rewrites `.value`
- * directly and those events never reach React's controlled <input> on
- * WebKitGTK, so the stale committed value survives and Enter re-picks the
- * highlighted preset instead of committing (same quirk spec 08 works around
- * for its search filter).
+ * value.
+ *
+ * WebKitGTK hardening (the CI runner's browser): even real synthesized
+ * keystrokes on this combobox have proven unreliable at driving React's
+ * controlled <input> — when the input's onChange doesn't fire, the stale
+ * committed value survives and Enter re-picks the highlighted preset. So
+ * after typing we re-assert the value through the native prototype setter +
+ * an `input` event (the canonical way to update a React controlled input
+ * from WebDriver), and Tab-blur afterwards as a second commit path (the
+ * component also commits on blur).
  */
 async function typeTermValue(value: string): Promise<void> {
     const input = await $("input[data-testid='s-termtype']");
@@ -45,7 +50,17 @@ async function typeTermValue(value: string): Promise<void> {
     await input.click();
     await browser.keys(["Control", "a"]);
     await browser.keys(value);
+    await browser.execute((v: string) => {
+        const input = document.querySelector("input[data-testid='s-termtype']") as HTMLInputElement | null;
+        if (!input) return;
+        const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+        if (set) set.call(input, v);
+        input.dispatchEvent(new Event("input", { bubbles: true }));
+    }, value);
     await browser.keys("Enter");
+    // Fallback commit path: blur also commits in this component. If Enter
+    // already committed, this is a no-op (the value matches).
+    await browser.keys("Tab");
 }
 
 describe("terminal session settings", () => {
