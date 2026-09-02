@@ -352,15 +352,23 @@ impl SshManager {
 
     /// Password authentication with a keyboard-interactive fallback.
     ///
-    /// russh's `authenticate_password` only speaks the plain `password` method.
-    /// Many legacy servers — network devices, appliances, hardened sshd
-    /// configs — disable `password` and only accept `keyboard-interactive`
-    /// (with the password as the answer to its prompt). When the direct
-    /// password attempt is rejected, retry through keyboard-interactive,
-    /// answering every prompt with the stored password. A genuinely wrong
-    /// password still terminates in `Failure`, so this fallback cannot mask a
-    /// bad credential — it only rescues credentials the server would have
-    /// accepted via the interactive path.
+    /// Attempt order mirrors PuTTY: keyboard-interactive FIRST, plain
+    /// `password` second. Network devices commonly disable the `password`
+    /// method outright and/or set a very low `MaxAuthTries` (sometimes 1), so
+    /// burning the first attempt on plain `password` can get the connection
+    /// disconnected before the working method is ever tried. On standard
+    /// OpenSSH servers that don't offer keyboard-interactive, the KI attempt
+    /// is rejected instantly and the plain-password attempt follows — only
+    /// costing one extra failure against the (generous) default MaxAuthTries.
+    ///
+    /// Prompts are answered heuristically: a prompt that asks for a
+    /// user/login name gets the username, anything else gets the password.
+    /// Devices such as H3C/Huawei present *two* prompts ("Username:" /
+    /// "Password:") over keyboard-interactive; answering both with the
+    /// password fails even with correct credentials.
+    ///
+    /// A genuinely wrong password still terminates in `Failure`, so this
+    /// cannot mask a bad credential.
     async fn auth_with_password(
         handle: &mut client::Handle<SshClientHandler>,
         username: &str,
@@ -368,37 +376,81 @@ impl SshManager {
     ) -> Result<bool, SshError> {
         let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
 
-        if handle
-            .authenticate_password(username, password)
-            .await
-            .map_err(send_err)?
-        {
-            return Ok(true);
-        }
+        // Bound every auth round-trip: a server that silently drops the
+        // connection mid-authentication would otherwise hang the await
+        // forever (russh's KI reply loop has no terminal None arm).
+        const AUTH_STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
 
-        // Bounded so a misbehaving server cannot keep us in an endless
-        // prompt/response loop. Every round answers all prompts with the
-        // stored password.
+        // ── 1. keyboard-interactive (preferred by network devices) ──────────
         const MAX_KI_ROUNDS: usize = 8;
-        let mut response = handle
-            .authenticate_keyboard_interactive_start(username, None)
-            .await
-            .map_err(send_err)?;
+        let mut response = match tokio::time::timeout(
+            AUTH_STEP_TIMEOUT,
+            handle.authenticate_keyboard_interactive_start(username, None),
+        )
+        .await
+        {
+            Ok(r) => r.map_err(send_err)?,
+            Err(_) => {
+                return Self::auth_password_plain(handle, username, password).await;
+            }
+        };
 
         for _ in 0..MAX_KI_ROUNDS {
             match response {
                 client::KeyboardInteractiveAuthResponse::Success => return Ok(true),
-                client::KeyboardInteractiveAuthResponse::Failure => return Ok(false),
+                client::KeyboardInteractiveAuthResponse::Failure => break, // fall through to plain password
                 client::KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
-                    let responses = vec![password.to_string(); prompts.len()];
-                    response = handle
-                        .authenticate_keyboard_interactive_respond(responses)
-                        .await
-                        .map_err(send_err)?;
+                    let responses = prompts
+                        .iter()
+                        .map(|p| Self::answer_auth_prompt(&p.prompt, username, password))
+                        .collect();
+                    response = match tokio::time::timeout(
+                        AUTH_STEP_TIMEOUT,
+                        handle.authenticate_keyboard_interactive_respond(responses),
+                    )
+                    .await
+                    {
+                        Ok(r) => r.map_err(send_err)?,
+                        Err(_) => return Ok(false),
+                    };
                 }
             }
         }
-        Ok(false)
+
+        // ── 2. plain password fallback ──────────────────────────────────────
+        Self::auth_password_plain(handle, username, password).await
+    }
+
+    /// Single plain `password` method attempt (bounded).
+    async fn auth_password_plain(
+        handle: &mut client::Handle<SshClientHandler>,
+        username: &str,
+        password: &str,
+    ) -> Result<bool, SshError> {
+        let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            handle.authenticate_password(username, password),
+        )
+        .await
+        {
+            Ok(r) => r.map_err(send_err),
+            Err(_) => Ok(false),
+        }
+    }
+
+    /// Heuristically answer a keyboard-interactive prompt: prompts asking for
+    /// a user/login name get the username, everything else (password, passcode,
+    /// verification code, ...) gets the password.
+    fn answer_auth_prompt(prompt: &str, username: &str, password: &str) -> String {
+        let p = prompt.to_lowercase();
+        let asks_user = (p.contains("user") || p.contains("login") || p.contains("name"))
+            && !p.contains("pass");
+        if asks_user {
+            username.to_string()
+        } else {
+            password.to_string()
+        }
     }
 
     async fn auth_with_key_data(
@@ -577,6 +629,24 @@ impl SshManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Device-style prompts: username/login prompts get the username, all
+    /// other prompts (password, passcode, verification code) get the password.
+    #[test]
+    fn answer_auth_prompt_targets_user_vs_secret() {
+        let u = "420102-7";
+        let p = "s3cret";
+
+        assert_eq!(SshManager::answer_auth_prompt("Username:", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("User Name:", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("login:", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("Password:", u, p), p);
+        assert_eq!(
+            SshManager::answer_auth_prompt("Please enter verification code", u, p),
+            p
+        );
+        assert_eq!(SshManager::answer_auth_prompt("", u, p), p);
+    }
 
     /// Cancelling an attempt ID that was never registered (or whose attempt
     /// already settled) must report that nothing was found.
