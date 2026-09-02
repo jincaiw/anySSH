@@ -306,10 +306,9 @@ impl SshManager {
         config: &HostConfig,
     ) -> Result<(), SshError> {
         let authenticated = match &config.auth_method {
-            AuthMethod::Password { password } => handle
-                .authenticate_password(&config.username, password)
-                .await
-                .map_err(|e| SshError::AuthenticationFailed(e.to_string()))?,
+            AuthMethod::Password { password } => {
+                Self::auth_with_password(handle, &config.username, password).await?
+            }
             AuthMethod::PrivateKey {
                 key_path,
                 passphrase,
@@ -351,6 +350,57 @@ impl SshManager {
         Ok(())
     }
 
+    /// Password authentication with a keyboard-interactive fallback.
+    ///
+    /// russh's `authenticate_password` only speaks the plain `password` method.
+    /// Many legacy servers — network devices, appliances, hardened sshd
+    /// configs — disable `password` and only accept `keyboard-interactive`
+    /// (with the password as the answer to its prompt). When the direct
+    /// password attempt is rejected, retry through keyboard-interactive,
+    /// answering every prompt with the stored password. A genuinely wrong
+    /// password still terminates in `Failure`, so this fallback cannot mask a
+    /// bad credential — it only rescues credentials the server would have
+    /// accepted via the interactive path.
+    async fn auth_with_password(
+        handle: &mut client::Handle<SshClientHandler>,
+        username: &str,
+        password: &str,
+    ) -> Result<bool, SshError> {
+        let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
+
+        if handle
+            .authenticate_password(username, password)
+            .await
+            .map_err(send_err)?
+        {
+            return Ok(true);
+        }
+
+        // Bounded so a misbehaving server cannot keep us in an endless
+        // prompt/response loop. Every round answers all prompts with the
+        // stored password.
+        const MAX_KI_ROUNDS: usize = 8;
+        let mut response = handle
+            .authenticate_keyboard_interactive_start(username, None)
+            .await
+            .map_err(send_err)?;
+
+        for _ in 0..MAX_KI_ROUNDS {
+            match response {
+                client::KeyboardInteractiveAuthResponse::Success => return Ok(true),
+                client::KeyboardInteractiveAuthResponse::Failure => return Ok(false),
+                client::KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                    let responses = vec![password.to_string(); prompts.len()];
+                    response = handle
+                        .authenticate_keyboard_interactive_respond(responses)
+                        .await
+                        .map_err(send_err)?;
+                }
+            }
+        }
+        Ok(false)
+    }
+
     async fn auth_with_key_data(
         handle: &mut client::Handle<SshClientHandler>,
         username: &str,
@@ -360,10 +410,43 @@ impl SshManager {
         let key_pair = russh_keys::decode_secret_key(key_data, passphrase)
             .map_err(|e| SshError::KeyParseError(e.to_string()))?;
         let key = Arc::new(key_pair);
-        handle
-            .authenticate_publickey(username, key)
+
+        let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
+
+        // First attempt: the key as decoded. russh-keys gives RSA keys the
+        // modern rsa-sha2-512 signature hash.
+        if handle
+            .authenticate_publickey(username, Arc::clone(&key))
             .await
-            .map_err(|e| SshError::AuthenticationFailed(e.to_string()))
+            .map_err(send_err)?
+        {
+            return Ok(true);
+        }
+
+        // Legacy fallback for RSA keys: older servers commonly reject the
+        // rsa-sha2-512 signature algorithm outright and only accept
+        // rsa-sha2-256 — or, on vintage OpenSSH (< 7.2) and network
+        // appliances, only the original `ssh-rsa` (SHA-1). Retry down the
+        // chain. Non-RSA keys have no hash variants; `with_signature_hash`
+        // returns None for them.
+        if matches!(key.as_ref(), russh_keys::key::KeyPair::RSA { .. }) {
+            for hash in [
+                russh_keys::key::SignatureHash::SHA2_256,
+                russh_keys::key::SignatureHash::SHA1,
+            ] {
+                if let Some(rekey) = key.with_signature_hash(hash) {
+                    if handle
+                        .authenticate_publickey(username, Arc::new(rekey))
+                        .await
+                        .map_err(send_err)?
+                    {
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
+        Ok(false)
     }
 
     /// Return the shared Handle for an active session.  Used by the SFTP layer
