@@ -18,11 +18,11 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/jincaiw/anySCP/releases"><img src="https://img.shields.io/github/v/release/jincaiw/anySCP" alt="Release"/></a>
-  <a href="https://github.com/jincaiw/anySCP/releases"><img src="https://img.shields.io/github/downloads/jincaiw/anySCP/total" alt="Downloads"/></a>
+  <a href="https://github.com/jincaiw/anySSH/releases"><img src="https://img.shields.io/github/v/release/jincaiw/anySSH" alt="Release"/></a>
+  <a href="https://github.com/jincaiw/anySSH/releases"><img src="https://img.shields.io/github/downloads/jincaiw/anySSH/total" alt="Downloads"/></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue" alt="Platform"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License MIT"/></a>
-  <a href="https://github.com/jincaiw/anySCP/stargazers"><img src="https://img.shields.io/github/stars/jincaiw/anySCP?style=social" alt="Stars"/></a>
+  <a href="https://github.com/jincaiw/anySSH/stargazers"><img src="https://img.shields.io/github/stars/jincaiw/anySSH?style=social" alt="Stars"/></a>
   <img src="https://visitor-badge.laobi.icu/badge?page_id=jincaiw.anySCP&label=Views&color=blue" alt="Views"/>
   <a href="https://discord.gg/3xNRbNAmYb"><img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white" alt="Discord"/></a>
   <a href="https://join.slack.com/t/anyssh/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q"><img src="https://img.shields.io/badge/Slack-Join%20us-4A154B?logo=slack&logoColor=white" alt="Slack"/></a>
@@ -146,7 +146,7 @@ AnySSH is a free, open-source desktop application that combines an SSH terminal,
 
 ### Download
 
-1. Download the latest release from the [Releases](https://github.com/jincaiw/anySCP/releases) page
+1. Download the latest release from the [Releases](https://github.com/jincaiw/anySSH/releases) page
 2. Choose the right file for your platform:
    - **macOS (Apple Silicon)**: `.dmg` (aarch64)
    - **macOS (Intel)**: `.dmg` (x64)
@@ -205,8 +205,8 @@ Already have anySSH installed? Go to **Settings → About & Updates** and click 
 
 ```bash
 # Clone the repository
-git clone https://github.com/jincaiw/anySCP.git
-cd anyssh
+git clone https://github.com/jincaiw/anySSH.git
+cd anySSH
 
 # Install frontend dependencies
 pnpm install
@@ -317,13 +317,13 @@ This project is licensed under the MIT License -- see the [LICENSE](LICENSE) fil
 
 - **Discord**: [Join our community](https://discord.gg/3xNRbNAmYb)
 - **Slack**: [Join our workspace](https://join.slack.com/t/anyssh/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q)
-- **Issues**: [GitHub Issues](https://github.com/jincaiw/anySCP/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/jincaiw/anySCP/discussions)
+- **Issues**: [GitHub Issues](https://github.com/jincaiw/anySSH/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/jincaiw/anySSH/discussions)
 
 ---
 
 <p align="center">
-  If you find AnySSH useful, please consider giving it a <a href="https://github.com/jincaiw/anySCP">star on GitHub</a>!
+  If you find AnySSH useful, please consider giving it a <a href="https://github.com/jincaiw/anySSH">star on GitHub</a>!
 </p>
 
 <p align="center">

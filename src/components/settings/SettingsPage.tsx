@@ -43,7 +43,7 @@ const TEXT_INPUT_CLASS = [
 
 const FIELD_LABEL_CLASS = "block text-[length:var(--text-xs)] font-medium text-text-secondary mb-1";
 
-const REPO_URL = "https://github.com/jincaiw/anySCP";
+const REPO_URL = "https://github.com/jincaiw/anySSH";
 
 // ─── Sections ─────────────────────────────────────────────────────────────────
 // Each settings category is a section here. To add a new category, add an entry

@@ -5,7 +5,7 @@
   "description": "A modern desktop client for SSH, SFTP, and S3",
   "author": "Nevil Macwan <macnev2013@gmail.com>",
   "license": "MIT",
-  "repository": "https://github.com/jincaiw/anySCP",
+  "repository": "https://github.com/jincaiw/anySSH",
   "type": "module",
   "scripts": {
     "dev": "vite",
