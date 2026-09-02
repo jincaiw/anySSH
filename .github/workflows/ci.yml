@@ -115,7 +115,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: tests/e2e
-          tags: anyscp-e2e-runner:latest
+          tags: anyssh-e2e-runner:latest
           cache-from: type=gha,scope=e2e-runner
           cache-to: type=gha,mode=max,scope=e2e-runner
 
@@ -153,7 +153,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: tests/e2e
-          tags: anyscp-e2e-runner:latest
+          tags: anyssh-e2e-runner:latest
           cache-from: type=gha,scope=e2e-runner
           load: true
 

@@ -17,7 +17,7 @@ import { waitForExplorer } from "../helpers/sftp-ops.js";
 import { activeS3SessionId, s3Download } from "../helpers/transfers.js";
 
 const MINIO_ENDPOINT = process.env.MINIO_ENDPOINT ?? "http://minio:9000";
-const MINIO_BUCKET = process.env.MINIO_BUCKET ?? "anyscp-test";
+const MINIO_BUCKET = process.env.MINIO_BUCKET ?? "anyssh-test";
 const MINIO_ACCESS_KEY = process.env.MINIO_ACCESS_KEY ?? "minioadmin";
 const MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY ?? "minioadmin";
 

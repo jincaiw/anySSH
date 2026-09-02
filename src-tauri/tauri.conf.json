@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "anySCP",
+  "productName": "anySSH",
   "version": "0.0.0-dev",
-  "identifier": "com.macnev2013.anyscp",
+  "identifier": "com.jincaiw.anyssh",
   "build": {
     "beforeDevCommand": "pnpm dev",
     "devUrl": "http://localhost:1420",
@@ -21,7 +21,7 @@
     "copyright": "© 2026 Nevil Macwan",
     "category": "DeveloperTool",
     "shortDescription": "A modern desktop client for SSH, SFTP, and S3",
-    "longDescription": "anySCP is a free, open-source desktop application that combines an SSH terminal, SFTP file explorer, and S3-compatible cloud storage browser into a single, fast, privacy-first tool. Built with Tauri v2, it runs natively on macOS, Windows, and Linux.",
+    "longDescription": "anySSH is a free, open-source desktop application that combines an SSH terminal, SFTP file explorer, and S3-compatible cloud storage browser into a single, fast, privacy-first tool. Built with Tauri v2, it runs natively on macOS, Windows, and Linux.",
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",

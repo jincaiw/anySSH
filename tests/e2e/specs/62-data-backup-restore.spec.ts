@@ -35,7 +35,7 @@ const PASSWORD = "e2e-backup-pass-123";
 const createdFiles: string[] = [];
 
 function tmpBackupPath(): string {
-    const name = `anyscp-e2e-backup-${Date.now()}-${Math.random().toString(36).slice(2)}.ascpbak`;
+    const name = `anyssh-e2e-backup-${Date.now()}-${Math.random().toString(36).slice(2)}.ascpbak`;
     const p = join(tmpdir(), name);
     createdFiles.push(p);
     return p;
@@ -132,10 +132,10 @@ describe("Settings → Data: backup & restore", () => {
         expect(threw, "import with the wrong password must reject").to.equal(true);
     });
 
-    it("rejects a file that isn't an anySCP backup", async () => {
-        const path = join(tmpdir(), `anyscp-e2e-notabackup-${Date.now()}.ascpbak`);
+    it("rejects a file that isn't an anySSH backup", async () => {
+        const path = join(tmpdir(), `anyssh-e2e-notabackup-${Date.now()}.ascpbak`);
         createdFiles.push(path);
-        await writeFile(path, "this is definitely not an anySCP backup");
+        await writeFile(path, "this is definitely not an anySSH backup");
 
         let threw = false;
         try {

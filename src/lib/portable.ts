@@ -2,12 +2,12 @@
  * Portable-mode detection.
  *
  * A portable build keeps every byte of state — the SQLite database, the
- * encrypted credential vault and the WebView cache — in a single `anySCP-Data`
+ * encrypted credential vault and the WebView cache — in a single `anySSH-Data`
  * directory beside the executable, so the application can be carried on a USB
  * stick and moved between machines without leaving anything behind.
  *
  * Mode is decided by the Rust side at startup (see `src-tauri/src/portable.rs`)
- * from `ANYSCP_DATA_DIR` / `ANYSCP_PORTABLE` / a `portable.txt` marker, and is
+ * from `ANYSSH_DATA_DIR` / `ANYSSH_PORTABLE` / a `portable.txt` marker, and is
  * fixed for the lifetime of the process — hence the module-level cache.
  *
  * Outside Tauri (unit tests, `vite preview` in a plain browser) both probes fail

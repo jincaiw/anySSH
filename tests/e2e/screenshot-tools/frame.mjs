@@ -1,5 +1,5 @@
 // Frame a raw app capture into a polished marketing screenshot:
-//   synthesize a macOS-style titlebar (3 traffic lights + "anySCP")
+//   synthesize a macOS-style titlebar (3 traffic lights + "anySSH")
 //   → round the window corners → composite onto a wallpaper.
 //
 // Exposes frameCapture() so the gif builder (frame-gif.mjs) wraps every video
@@ -17,7 +17,7 @@ export const RADIUS = 12; // window corner radius (px)
 export const MARGIN = 52; // wallpaper margin around the window (px)
 export const MARGIN_BOTTOM = 72; // extra breathing room at the bottom
 const BAR_BG = "#1b1b1d";
-const TITLE = "anySCP";
+const TITLE = "anySSH";
 const WALL_TOP = "#7c3aed"; // violet — gradient fallback
 const WALL_BOT = "#1d4ed8"; // blue   — gradient fallback
 const FONT = process.env.FRAME_FONT ?? "DejaVu Sans, sans-serif";

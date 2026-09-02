@@ -31,7 +31,7 @@ export const LOCALE_LABELS: Record<Locale, string> = {
 };
 
 /** localStorage mirror of the persisted choice (see `app_language` below). */
-const STORAGE_KEY = "anyscp.locale";
+const STORAGE_KEY = "anyssh.locale";
 
 /** Backend settings key — the same store that keeps theme/accent/font. */
 export const LANGUAGE_SETTING_KEY = "app_language";
@@ -67,7 +67,7 @@ function systemLocales(): string[] {
  *      rewriting. (`process.env.VITEST` is set by the runner.)
  *   2. `data-lang` on `<html>`, injected by the Rust `setup()` hook before the
  *      first paint (mirrors how theme/accent/font avoid a startup flash). This
- *      carries both the persisted choice and the `ANYSCP_UI_LANG` override the
+ *      carries both the persisted choice and the `ANYSSH_UI_LANG` override the
  *      E2E container sets, so specs see a stable English UI.
  *   3. The user's previous choice, mirrored in localStorage.
  *   4. The OS/UI language; anything we don't ship falls through to

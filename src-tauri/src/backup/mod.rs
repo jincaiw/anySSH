@@ -1,4 +1,4 @@
-//! Encrypted backup / restore of all anySCP data.
+//! Encrypted backup / restore of all anySSH data.
 //!
 //! A backup is a compact **binary container** (not JSON): a small plaintext
 //! header — magic, KDF parameters, salt, nonce — followed directly by the raw
@@ -62,7 +62,7 @@ pub enum BackupError {
     Decrypt,
     #[error("Crypto error: {0}")]
     Crypto(String),
-    #[error("Not a valid anySCP backup file: {0}")]
+    #[error("Not a valid anySSH backup file: {0}")]
     Format(String),
     #[error("I/O error: {0}")]
     Io(String),
@@ -268,7 +268,7 @@ fn decode_frame(frame: &[u8]) -> Result<(&[u8], &[u8]), BackupError> {
 fn open(password: &str, data: &[u8]) -> Result<(Vec<u8>, u8), BackupError> {
     let mut r = Reader::new(data);
     if r.take(MAGIC.len())? != MAGIC {
-        return Err(BackupError::Format("not an anySCP backup file".into()));
+        return Err(BackupError::Format("not an anySSH backup file".into()));
     }
     let kdf_id = r.u8()?;
     if kdf_id != KDF_ARGON2ID {
@@ -494,8 +494,8 @@ mod tests {
     #[test]
     fn build_and_restore_roundtrip_is_compact() {
         use crate::db::HostDb;
-        let dir1 = std::env::temp_dir().join(format!("anyscp-bk-src-{}", uuid::Uuid::new_v4()));
-        let dir2 = std::env::temp_dir().join(format!("anyscp-bk-dst-{}", uuid::Uuid::new_v4()));
+        let dir1 = std::env::temp_dir().join(format!("anyssh-bk-src-{}", uuid::Uuid::new_v4()));
+        let dir2 = std::env::temp_dir().join(format!("anyssh-bk-dst-{}", uuid::Uuid::new_v4()));
         let src = HostDb::new(&dir1).expect("src db");
         src.save_setting("app_theme", "light")
             .expect("seed setting");

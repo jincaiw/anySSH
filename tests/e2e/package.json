@@ -1,8 +1,8 @@
 {
-  "name": "anyscp-e2e",
+  "name": "anyssh-e2e",
   "private": true,
   "version": "0.0.0",
-  "description": "End-to-end tests for anySCP (WebdriverIO + tauri-driver)",
+  "description": "End-to-end tests for anySSH (WebdriverIO + tauri-driver)",
   "type": "module",
   "scripts": {
     "test": "wdio run wdio.conf.ts"

@@ -409,7 +409,7 @@ mod tests {
     /// so the probe must short-circuit at the DNS stage with no latency reading.
     #[tokio::test]
     async fn probe_reports_dns_failed_for_unresolvable_host() {
-        let result = probe_direct("anyscp-nonexistent.invalid", 22).await;
+        let result = probe_direct("anyssh-nonexistent.invalid", 22).await;
         assert!(
             matches!(result.status, HostHealthStatus::DnsFailed),
             "expected DnsFailed, got {:?} ({})",
@@ -493,14 +493,14 @@ mod tests {
     #[tokio::test]
     async fn probe_via_jump_recurses_through_multi_hop_chain() {
         // deep (unresolvable, reserved .invalid TLD) ← mid ← target.
-        let deep = cfg("anyscp-deep-hop.invalid", 22);
+        let deep = cfg("anyssh-deep-hop.invalid", 22);
         let mid = HostConfig {
             jump_host: Some(Box::new(deep)),
-            ..cfg("anyscp-mid-hop.invalid", 22)
+            ..cfg("anyssh-mid-hop.invalid", 22)
         };
         let target = HostConfig {
             jump_host: Some(Box::new(mid.clone())),
-            ..cfg("anyscp-target.invalid", 22)
+            ..cfg("anyssh-target.invalid", 22)
         };
 
         let result = probe_via_jump(&target, &mid).await;
@@ -513,7 +513,7 @@ mod tests {
         // The deepest hop's identity in the message proves the recursion reached
         // it; the old single-hop code never would have.
         assert!(
-            result.message.contains("anyscp-deep-hop.invalid"),
+            result.message.contains("anyssh-deep-hop.invalid"),
             "message should name the deepest hop, got: {}",
             result.message,
         );

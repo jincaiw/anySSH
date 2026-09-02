@@ -44,7 +44,7 @@ const SSH_PASS = process.env.SSH_PASS ?? "testpass";
 // S3 connections point at the MinIO sidecar in the e2e stack. Saved (not
 // connected), which is enough to render the Cloud Storage cards.
 const MINIO_ENDPOINT = process.env.MINIO_ENDPOINT ?? "http://minio:9000";
-const MINIO_BUCKET = process.env.MINIO_BUCKET ?? "anyscp-test";
+const MINIO_BUCKET = process.env.MINIO_BUCKET ?? "anyssh-test";
 const MINIO_ACCESS_KEY = process.env.MINIO_ACCESS_KEY ?? "minioadmin";
 const MINIO_SECRET_KEY = process.env.MINIO_SECRET_KEY ?? "minioadmin";
 
@@ -476,9 +476,9 @@ describe("screenshots", () => {
     });
 
     // Recorded (one mp4 via the harness's per-test recording) and converted to
-    // screens/anyscp.gif by build-assets.sh. Runs last so the terminal + sftp
+    // screens/anyssh.gif by build-assets.sh. Runs last so the terminal + sftp
     // tabs opened above are present to walk through.
-    // A fluid product demo — the source for screens/anyscp.gif. The cursor
+    // A fluid product demo — the source for screens/anyssh.gif. The cursor
     // glides between targets, opens the Explorer, opens a Terminal, types a
     // command, and splits the pane (Cmd+D). Recorded as one mp4 by the harness.
     it("tours the app", async function () {
@@ -516,7 +516,7 @@ describe("screenshots", () => {
         //    menu — both paused enough to read in the gif.
         await createFileDemo("anysp.txt");
         await browser.pause(1300);
-        await renameDemo("anysp.txt", "anyscp.txt");
+        await renameDemo("anysp.txt", "anyssh.txt");
         await browser.pause(1300);
 
         // 6. Delete the file the terminal created — via the right-click menu so

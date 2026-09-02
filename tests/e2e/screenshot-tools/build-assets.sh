@@ -52,8 +52,8 @@ if [[ -n "$tour_mp4" && -f "$tour_mp4" ]]; then
     win=${win:-1200x800}
     # Frame every frame in the SAME window chrome + wallpaper as the
     # screenshots, then assemble the gif.
-    node "$here/frame-gif.mjs" "$tour_mp4" "$screens/anyscp.gif" "${win%x*}" "${win#*x}" 15
-    echo "[build-assets] wrote $screens/anyscp.gif"
+    node "$here/frame-gif.mjs" "$tour_mp4" "$screens/anyssh.gif" "${win%x*}" "${win#*x}" 15
+    echo "[build-assets] wrote $screens/anyssh.gif"
 else
     echo "[build-assets] WARNING: no tour mp4 found in $videos — skipping gif" >&2
 fi

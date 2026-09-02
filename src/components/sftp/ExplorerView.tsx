@@ -870,8 +870,8 @@ function errorMessage(
   return typeof err === "string" ? err : fallback;
 }
 
-/** Path segment of our drag-out staging dir (temp_dir/anyscp-dragout/<uuid>). */
-const DRAGOUT_STAGING_SEGMENT = "anyscp-dragout";
+/** Path segment of our drag-out staging dir (temp_dir/anyssh-dragout/<uuid>). */
+const DRAGOUT_STAGING_SEGMENT = "anyssh-dragout";
 
 /**
  * Whether the webview is running on Windows. Tauri's drag-drop event position

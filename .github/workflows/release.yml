@@ -39,7 +39,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               tag_name: tag,
-              name: `anySCP ${tag}`,
+              name: `anySSH ${tag}`,
               body: "",
               draft: true,
               prerelease: false,
@@ -238,21 +238,21 @@ jobs:
 
           **Portable builds** (\`*portable.*\`): no installation — extract and run
           the app directly. All data (hosts, settings, credentials) stays in the
-          \`anySCP-Data\` folder next to the application, so it can live on a USB
+          \`anySSH-Data\` folder next to the application, so it can live on a USB
           stick and move between machines. Keep \`portable.txt\` beside the app.
 
           便携版（文件名含 \`portable\`）：免安装，解压后直接运行。所有数据保存在
-          程序旁的 \`anySCP-Data\` 文件夹中，整个文件夹可随 U 盘携带。请保持
+          程序旁的 \`anySSH-Data\` 文件夹中，整个文件夹可随 U 盘携带。请保持
           \`portable.txt\` 与程序同目录。
 
           macOS users: If you see "app is damaged", run:
           \`\`\`bash
-          xattr -cr /Applications/anyscp.app
+          xattr -cr /Applications/anySSH.app
           \`\`\`
 
           ## Auto-Updates
 
-          Already have anySCP installed? Go to **Settings > Updates** and click **Check** to update in-app.
+          Already have anySSH installed? Go to **Settings > Updates** and click **Check** to update in-app.
           BODY
 
       - name: Update release body

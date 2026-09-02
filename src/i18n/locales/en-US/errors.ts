@@ -49,7 +49,7 @@ export default {
   db: "Database error",
   decrypt: "Incorrect password, or the backup file is corrupt",
   crypto: "Crypto error",
-  format: "Not a valid anySCP backup file",
+  format: "Not a valid anySSH backup file",
   io: "I/O error",
 
   // ─── Generic fallbacks ────────────────────────────────────────────────────

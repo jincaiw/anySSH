@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="screens/header.png" alt="AnySCP" width="100%"/>
+  <img src="screens/header.png" alt="AnySSH" width="100%"/>
 </p>
 
 <p align="center">
@@ -13,19 +13,19 @@
   <a href="#building">Building</a> &bull;
   <a href="#contributing">Contributing</a> &bull;
   <a href="https://discord.gg/3xNRbNAmYb">Discord</a> &bull;
-  <a href="https://join.slack.com/t/anyscp/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q">Slack</a> &bull;
+  <a href="https://join.slack.com/t/anyssh/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q">Slack</a> &bull;
   <a href="#license">License</a>
 </p>
 
 <p align="center">
-  <a href="https://github.com/macnev2013/anySCP/releases"><img src="https://img.shields.io/github/v/release/macnev2013/anySCP" alt="Release"/></a>
-  <a href="https://github.com/macnev2013/anySCP/releases"><img src="https://img.shields.io/github/downloads/macnev2013/anySCP/total" alt="Downloads"/></a>
+  <a href="https://github.com/macnev2013/anySSH/releases"><img src="https://img.shields.io/github/v/release/macnev2013/anySSH" alt="Release"/></a>
+  <a href="https://github.com/macnev2013/anySSH/releases"><img src="https://img.shields.io/github/downloads/macnev2013/anySSH/total" alt="Downloads"/></a>
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue" alt="Platform"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License MIT"/></a>
-  <a href="https://github.com/macnev2013/anySCP/stargazers"><img src="https://img.shields.io/github/stars/macnev2013/anySCP?style=social" alt="Stars"/></a>
-  <img src="https://visitor-badge.laobi.icu/badge?page_id=macnev2013.anySCP&label=Views&color=blue" alt="Views"/>
+  <a href="https://github.com/macnev2013/anySSH/stargazers"><img src="https://img.shields.io/github/stars/macnev2013/anySSH?style=social" alt="Stars"/></a>
+  <img src="https://visitor-badge.laobi.icu/badge?page_id=macnev2013.anySSH&label=Views&color=blue" alt="Views"/>
   <a href="https://discord.gg/3xNRbNAmYb"><img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white" alt="Discord"/></a>
-  <a href="https://join.slack.com/t/anyscp/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q"><img src="https://img.shields.io/badge/Slack-Join%20us-4A154B?logo=slack&logoColor=white" alt="Slack"/></a>
+  <a href="https://join.slack.com/t/anyssh/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q"><img src="https://img.shields.io/badge/Slack-Join%20us-4A154B?logo=slack&logoColor=white" alt="Slack"/></a>
 </p>
 
 <p align="center">
@@ -36,7 +36,7 @@
 ---
 
 <p align="center">
-  <img src="screens/anyscp.gif" alt="AnySCP Demo" width="800"/>
+  <img src="screens/anyssh.gif" alt="AnySSH Demo" width="800"/>
 </p>
 <p align="center"><em>SSH terminals, SFTP file management, and S3 cloud storage -- all in one app.</em></p>
 
@@ -44,11 +44,11 @@
 
 ## 🚀 Overview
 
-AnySCP is a free, open-source desktop application that combines an SSH terminal, SFTP file explorer, and S3-compatible cloud storage browser into a single, fast, privacy-first tool. Built with Tauri v2 (Rust backend + React frontend), it runs natively on macOS, Windows, and Linux. No cloud accounts, no subscriptions -- your credentials stay on your machine.
+AnySSH is a free, open-source desktop application that combines an SSH terminal, SFTP file explorer, and S3-compatible cloud storage browser into a single, fast, privacy-first tool. Built with Tauri v2 (Rust backend + React frontend), it runs natively on macOS, Windows, and Linux. No cloud accounts, no subscriptions -- your credentials stay on your machine.
 
-## ⚡ How AnySCP Compares
+## ⚡ How AnySSH Compares
 
-| Feature             | AnySCP              | Termius      | PuTTY   | WinSCP  | Cyberduck |
+| Feature             | AnySSH              | Termius      | PuTTY   | WinSCP  | Cyberduck |
 | ------------------- | ------------------- | ------------ | ------- | ------- | --------- |
 | SSH Terminal        | Yes                 | Yes          | Yes     | No      | No        |
 | SFTP Browser        | Yes                 | Yes          | No      | Yes     | Yes       |
@@ -146,7 +146,7 @@ AnySCP is a free, open-source desktop application that combines an SSH terminal,
 
 ### Download
 
-1. Download the latest release from the [Releases](https://github.com/macnev2013/anySCP/releases) page
+1. Download the latest release from the [Releases](https://github.com/macnev2013/anySSH/releases) page
 2. Choose the right file for your platform:
    - **macOS (Apple Silicon)**: `.dmg` (aarch64)
    - **macOS (Intel)**: `.dmg` (x64)
@@ -154,37 +154,37 @@ AnySCP is a free, open-source desktop application that combines an SSH terminal,
    - **Linux**: `.deb` or `.AppImage`
 3. Install and launch
 
-> **macOS note**: If you see "app is damaged", run: `xattr -cr /Applications/anyscp.app`
+> **macOS note**: If you see "app is damaged", run: `xattr -cr /Applications/anyssh.app`
 
 ### Portable builds
 
 Every release also ships **portable** archives (file names containing `portable`) —
 no installation required:
 
-- **Windows**: `anySCP_<version>_windows_x86_64_portable.zip`
-- **Linux**: `anySCP_<version>_linux_x86_64_portable.tar.gz`
-- **macOS**: `anySCP_<version>_macos_<arch>_portable.zip`
+- **Windows**: `anySSH_<version>_windows_x86_64_portable.zip`
+- **Linux**: `anySSH_<version>_linux_x86_64_portable.tar.gz`
+- **macOS**: `anySSH_<version>_macos_<arch>_portable.zip`
 
 Extract the archive anywhere and run the app directly. In portable mode **all
 data** — hosts, groups, history, settings, snippets, and credentials — lives in
-an `anySCP-Data` folder next to the application, so the whole folder can live on
+an `anySSH-Data` folder next to the application, so the whole folder can live on
 a USB stick and move between machines. Keep `portable.txt` beside the app: that
-marker is what switches anySCP into portable mode; without it the app behaves
+marker is what switches anySSH into portable mode; without it the app behaves
 like a normal installation.
 
 Credentials in portable mode are encrypted with AES-256-GCM into
-`anySCP-Data/vault.anyscp`, sealed by the key file `anySCP-Data/vault.key`.
-Back up or move the `anySCP-Data` folder as a whole — the vault is unreadable
+`anySSH-Data/vault.anyssh`, sealed by the key file `anySSH-Data/vault.key`.
+Back up or move the `anySSH-Data` folder as a whole — the vault is unreadable
 without its key. (The installed build instead uses the OS keychain.)
 
 便携版（文件名含 `portable`）：免安装，解压后直接运行。所有数据保存在程序旁的
-`anySCP-Data` 文件夹中，整个文件夹可随 U 盘携带、在多台电脑间使用。请保持
+`anySSH-Data` 文件夹中，整个文件夹可随 U 盘携带、在多台电脑间使用。请保持
 `portable.txt` 与程序同目录。凭据以 AES-256-GCM 加密存放于
-`anySCP-Data/vault.anyscp`，由 `anySCP-Data/vault.key` 加密封装，请整体备份。
+`anySSH-Data/vault.anyssh`，由 `anySSH-Data/vault.key` 加密封装，请整体备份。
 
 ### Updating
 
-Already have anySCP installed? Go to **Settings → About & Updates** and click **Check** to update in-app — or turn on **Automatic Updates** to install new releases automatically.
+Already have anySSH installed? Go to **Settings → About & Updates** and click **Check** to update in-app — or turn on **Automatic Updates** to install new releases automatically.
 
 ### Requirements
 
@@ -205,8 +205,8 @@ Already have anySCP installed? Go to **Settings → About & Updates** and click 
 
 ```bash
 # Clone the repository
-git clone https://github.com/macnev2013/anyscp.git
-cd anyscp
+git clone https://github.com/macnev2013/anyssh.git
+cd anyssh
 
 # Install frontend dependencies
 pnpm install
@@ -232,7 +232,7 @@ pnpm tauri build
 
 ## 🏗 Architecture
 
-AnySCP follows a strict frontend/backend separation:
+AnySSH follows a strict frontend/backend separation:
 
 - **Rust does the heavy lifting** -- all SSH, SFTP, S3, encryption, and file I/O runs in Rust
 - **React is a thin view layer** -- renders UI and manages local state via Zustand
@@ -300,7 +300,7 @@ Please open an issue first to discuss what you'd like to change.
 
 ### macOS
 
-- **"App is damaged"**: Run `xattr -cr /Applications/anyscp.app`
+- **"App is damaged"**: Run `xattr -cr /Applications/anyssh.app`
 
 ## 📄 License
 
@@ -316,14 +316,14 @@ This project is licensed under the MIT License -- see the [LICENSE](LICENSE) fil
 ## 💬 Support
 
 - **Discord**: [Join our community](https://discord.gg/3xNRbNAmYb)
-- **Slack**: [Join our workspace](https://join.slack.com/t/anyscp/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q)
-- **Issues**: [GitHub Issues](https://github.com/macnev2013/anySCP/issues)
-- **Discussions**: [GitHub Discussions](https://github.com/macnev2013/anySCP/discussions)
+- **Slack**: [Join our workspace](https://join.slack.com/t/anyssh/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q)
+- **Issues**: [GitHub Issues](https://github.com/macnev2013/anySSH/issues)
+- **Discussions**: [GitHub Discussions](https://github.com/macnev2013/anySSH/discussions)
 
 ---
 
 <p align="center">
-  If you find AnySCP useful, please consider giving it a <a href="https://github.com/macnev2013/anySCP">star on GitHub</a>!
+  If you find AnySSH useful, please consider giving it a <a href="https://github.com/macnev2013/anySSH">star on GitHub</a>!
 </p>
 
 <p align="center">

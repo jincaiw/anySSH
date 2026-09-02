@@ -174,7 +174,7 @@ pub fn convert_ppk_to_openssh(
 
     // Create a temp file for the output
     let temp_dir = std::env::temp_dir();
-    let temp_out = temp_dir.join(format!("anyscp_converted_{}", uuid::Uuid::new_v4()));
+    let temp_out = temp_dir.join(format!("anyssh_converted_{}", uuid::Uuid::new_v4()));
 
     let mut cmd = std::process::Command::new("puttygen");
     cmd.arg(ppk_path)
@@ -186,7 +186,7 @@ pub fn convert_ppk_to_openssh(
     // For passphrase-protected keys, write passphrase to a temp file
     // and pass via --old-passphrase <file>
     let passphrase_file = if let Some(pass) = passphrase {
-        let pf = temp_dir.join(format!("anyscp_pass_{}", uuid::Uuid::new_v4()));
+        let pf = temp_dir.join(format!("anyssh_pass_{}", uuid::Uuid::new_v4()));
         std::fs::write(&pf, pass)
             .map_err(|e| SshError::IoError(format!("Cannot write passphrase file: {e}")))?;
         cmd.arg("--old-passphrase").arg(&pf);

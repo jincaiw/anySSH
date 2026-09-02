@@ -508,11 +508,11 @@ pub fn resolve_default() -> Option<EditorConfig> {
 /// `key` uniquely identifies the remote file (e.g. session id + remote path or
 /// S3 bucket + key); `file_name` is the basename shown to the editor.
 ///
-/// All edits used to land in a flat `anyscp-edit/<file_name>`, so two remote
+/// All edits used to land in a flat `anyssh-edit/<file_name>`, so two remote
 /// files sharing a basename — `a/compose.yml` and `b/compose.yml` — mapped to
 /// the same local file. With both open in an editor, saving one re-uploaded its
 /// contents to the *other's* remote path (#76). We namespace each download as
-/// `anyscp-edit/<group>/<unique>/<file_name>`:
+/// `anyssh-edit/<group>/<unique>/<file_name>`:
 ///
 /// - `<group>` is a hash of `key`, so all edits of one remote file land in the
 ///   same readable group dir (useful when debugging the temp tree).
@@ -531,21 +531,21 @@ pub fn edit_temp_path(key: &str, file_name: &str) -> PathBuf {
     let group = format!("{:016x}", hasher.finish());
     let unique = uuid::Uuid::new_v4().to_string();
     std::env::temp_dir()
-        .join("anyscp-edit")
+        .join("anyssh-edit")
         .join(group)
         .join(unique)
         .join(file_name)
 }
 
 /// Remove a staged edit file and prune the now-empty directories it lived in,
-/// stopping at (and never removing) the shared `anyscp-edit` root. Best-effort:
+/// stopping at (and never removing) the shared `anyssh-edit` root. Best-effort:
 /// a non-empty dir — e.g. a concurrent edit of the same remote file still in its
 /// own sibling dir — simply halts the walk, leaving the rest in place.
 pub fn edit_temp_cleanup(local_path: &Path) {
     let _ = std::fs::remove_file(local_path);
     let mut dir = local_path.parent();
     while let Some(d) = dir {
-        if d.ends_with("anyscp-edit") || std::fs::remove_dir(d).is_err() {
+        if d.ends_with("anyssh-edit") || std::fs::remove_dir(d).is_err() {
             break;
         }
         dir = d.parent();
@@ -701,7 +701,7 @@ mod tests {
     #[test]
     fn glob_resolves_versioned_dirs() {
         // Build a temp tree: <tmp>/JetBrains/IDEA 2024.1/bin/idea64.exe
-        let root = std::env::temp_dir().join(format!("anyscp_glob_{}", uuid::Uuid::new_v4()));
+        let root = std::env::temp_dir().join(format!("anyssh_glob_{}", uuid::Uuid::new_v4()));
         let bin = root.join("JetBrains").join("IDEA 2024.1").join("bin");
         std::fs::create_dir_all(&bin).unwrap();
         let exe = bin.join("idea64.exe");
@@ -732,9 +732,9 @@ mod tests {
         let a2 = edit_temp_path("sess1\0/a/compose.yml", "compose.yml");
         assert_ne!(a, a2);
         assert_eq!(a2.file_name().unwrap(), "compose.yml");
-        // Namespaced under anyscp-edit/<group>/<unique>/<file>.
+        // Namespaced under anyssh-edit/<group>/<unique>/<file>.
         let group = a.parent().unwrap().parent().unwrap();
-        assert!(group.parent().unwrap().ends_with("anyscp-edit"));
+        assert!(group.parent().unwrap().ends_with("anyssh-edit"));
         // The two edits of the same key share a group dir but differ in <unique>.
         assert_eq!(group, a2.parent().unwrap().parent().unwrap());
         assert_ne!(a.parent().unwrap(), a2.parent().unwrap());
@@ -754,7 +754,7 @@ mod tests {
         assert!(!path.exists(), "file removed");
         assert!(!unique_dir.exists(), "per-edit dir pruned");
         assert!(!group_dir.exists(), "empty group dir pruned");
-        assert!(root.ends_with("anyscp-edit"));
+        assert!(root.ends_with("anyssh-edit"));
         // Root is never removed even once emptied.
         std::fs::create_dir_all(&root).unwrap();
         assert!(root.exists());

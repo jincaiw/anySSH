@@ -1,6 +1,6 @@
 // ─── i18n type contracts ────────────────────────────────────────────────────
 //
-// AnySCP ships a small, dependency-free i18n layer (no react-i18next): the UI
+// AnySSH ships a small, dependency-free i18n layer (no react-i18next): the UI
 // is a thin view layer and the copy is plain strings, so a ~200-line module
 // covers lookup, interpolation, CLDR pluralisation and persistence.
 

@@ -885,7 +885,7 @@ function BackupPasswordModal({ mode, open, path, onClose }: {
         const stamp = `${d.getFullYear()}${String(d.getMonth() + 1).padStart(2, "0")}${String(d.getDate()).padStart(2, "0")}`;
         const dest = await save({
           title: t("settings.backup.saveFileTitle"),
-          defaultPath: `anyscp-backup-${stamp}.ascpbak`,
+          defaultPath: `anyssh-backup-${stamp}.ascpbak`,
           filters: [{ name: t("settings.backup.fileFilter"), extensions: ["ascpbak"] }],
         });
         if (!dest) { setBusy(false); return; } // dialog cancelled — keep the modal open
@@ -1467,7 +1467,7 @@ function AboutCard() {
     <div className="px-4 py-3 rounded-xl bg-bg-surface border border-border/50">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className="text-[length:var(--text-base)] font-semibold text-text-primary">anySCP</p>
+          <p className="text-[length:var(--text-base)] font-semibold text-text-primary">anySSH</p>
           <p className={DESC_CLASS}>{t("settings.about.tagline")}</p>
         </div>
         <span className="shrink-0 text-[length:var(--text-xs)] tabular-nums text-text-muted">

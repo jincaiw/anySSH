@@ -6,7 +6,7 @@
 //   runner ──e2e──▶ sshd-bastion ──e2e-internal──▶ sshd-bastion2 ──e2e-internal2──▶ sshd-deep-target
 // The deep target and bastion2 share NO network with the runner, so the only
 // way to reach the deep target is to hop bastion1 → bastion2. A working shell on
-// it (hostname == anyscp-deep-target) can only mean both hops were traversed.
+// it (hostname == anyssh-deep-target) can only mean both hops were traversed.
 //
 // Regression value: on the pre-fix single-hop code this test FAILS — that code
 // connected directly to the immediate jump (bastion2), which the runner can't
@@ -35,7 +35,7 @@ const DEEP_TARGET_PORT = Number(process.env.SSHD_DEEP_TARGET_PORT ?? 2222);
 const SSH_USER = process.env.SSH_USER ?? "testuser";
 const SSH_PASS = process.env.SSH_PASS ?? "testpass";
 
-const DEEP_TARGET_MARKER = "anyscp-deep-target";
+const DEEP_TARGET_MARKER = "anyssh-deep-target";
 
 /** Save a password host, optionally tunnelled through `tunnelHostId`. */
 async function saveHost(

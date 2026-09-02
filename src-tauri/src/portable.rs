@@ -1,7 +1,7 @@
-//! Portable mode — run anySCP entirely from a removable folder.
+//! Portable mode — run anySSH entirely from a removable folder.
 //!
 //! In portable mode every piece of persistent state lives in a single
-//! `anySCP-Data` directory beside the application, so the whole thing — binary,
+//! `anySSH-Data` directory beside the application, so the whole thing — binary,
 //! hosts, settings and credentials — travels together on a USB stick and can be
 //! moved between machines without leaving anything behind in the user profile.
 //!
@@ -9,8 +9,8 @@
 //!
 //! | Path                          | Contents                              |
 //! |-------------------------------|---------------------------------------|
-//! | `anyscp.db`                   | SQLite: hosts, groups, history, settings, snippets, port-forward rules |
-//! | `vault.anyscp`                | encrypted credentials (AES-256-GCM)   |
+//! | `anyssh.db`                   | SQLite: hosts, groups, history, settings, snippets, port-forward rules |
+//! | `vault.anyssh`                | encrypted credentials (AES-256-GCM)   |
 //! | `vault.key`                   | 256-bit random key that seals the vault |
 //! | `device_id`                   | anonymous telemetry id                |
 //! | `webview/`                    | WebView2 / WebKit cache & local storage |
@@ -19,13 +19,13 @@
 //!
 //! Portable mode is opt-in and is decided once, during `setup()`, in this order:
 //!
-//! 1. **`ANYSCP_DATA_DIR=<path>`** — uses `<path>` directly as the data
+//! 1. **`ANYSSH_DATA_DIR=<path>`** — uses `<path>` directly as the data
 //!    directory. Intended for tests, CI and users who want the data somewhere
 //!    specific (e.g. an encrypted volume). Always wins.
-//! 2. **`ANYSCP_PORTABLE=1`** (also `true` / `yes` / `on`) — forces portable mode
-//!    with the default `anySCP-Data` directory.
+//! 2. **`ANYSSH_PORTABLE=1`** (also `true` / `yes` / `on`) — forces portable mode
+//!    with the default `anySSH-Data` directory.
 //! 3. **`portable.txt`** sitting next to the executable (or next to the
-//!    `anySCP.app` bundle on macOS) — the marker the release packaging drops
+//!    `anySSH.app` bundle on macOS) — the marker the release packaging drops
 //!    into the portable archives. The file's contents are never read; only its
 //!    presence matters.
 //!
@@ -47,16 +47,16 @@ use std::path::{Path, PathBuf};
 use std::sync::OnceLock;
 
 /// Name of the directory created beside the application in portable mode.
-pub const DATA_DIR_NAME: &str = "anySCP-Data";
+pub const DATA_DIR_NAME: &str = "anySSH-Data";
 
 /// Marker file whose presence switches the app into portable mode.
 pub const MARKER_FILE: &str = "portable.txt";
 
 /// Environment variable that forces portable mode on.
-const ENV_PORTABLE: &str = "ANYSCP_PORTABLE";
+const ENV_PORTABLE: &str = "ANYSSH_PORTABLE";
 
 /// Environment variable that pins the data directory to an explicit path.
-const ENV_DATA_DIR: &str = "ANYSCP_DATA_DIR";
+const ENV_DATA_DIR: &str = "ANYSSH_DATA_DIR";
 
 // ---------------------------------------------------------------------------
 // Paths
@@ -65,7 +65,7 @@ const ENV_DATA_DIR: &str = "ANYSCP_DATA_DIR";
 /// Resolved locations for a portable installation.
 #[derive(Debug, Clone)]
 pub struct PortablePaths {
-    /// `<root>/anySCP-Data` — the single directory that travels with the app.
+    /// `<root>/anySSH-Data` — the single directory that travels with the app.
     pub data_dir: PathBuf,
 }
 
@@ -76,13 +76,13 @@ impl PortablePaths {
         Self { data_dir }
     }
 
-    /// SQLite database — `HostDb::new` appends `anyscp.db` to the data dir, so
+    /// SQLite database — `HostDb::new` appends `anyssh.db` to the data dir, so
     /// only the directory itself is needed here (kept as a doc anchor for the
     /// layout table in the module docs).
     ///
     /// Encrypted credential vault.
     pub fn vault_path(&self) -> PathBuf {
-        self.data_dir.join("vault.anyscp")
+        self.data_dir.join("vault.anyssh")
     }
 
     /// 256-bit random key material that seals [`Self::vault_path`].
@@ -112,7 +112,7 @@ impl PortablePaths {
 /// The directory the portable data folder should sit in.
 ///
 /// Normally the directory holding the executable. On macOS the executable lives
-/// inside `anySCP.app/Contents/MacOS/`, and writing into the bundle would
+/// inside `anySSH.app/Contents/MacOS/`, and writing into the bundle would
 /// invalidate its code signature — so the data directory goes *beside* the
 /// bundle instead.
 fn portable_root(exe_dir: &Path) -> PathBuf {
@@ -254,37 +254,37 @@ mod tests {
 
     #[test]
     fn paths_are_nested_under_the_data_dir() {
-        let p = PortablePaths::new(PathBuf::from("/stick/anySCP-Data"));
+        let p = PortablePaths::new(PathBuf::from("/stick/anySSH-Data"));
         assert_eq!(
             p.vault_path(),
-            PathBuf::from("/stick/anySCP-Data/vault.anyscp")
+            PathBuf::from("/stick/anySSH-Data/vault.anyssh")
         );
-        assert_eq!(p.key_path(), PathBuf::from("/stick/anySCP-Data/vault.key"));
+        assert_eq!(p.key_path(), PathBuf::from("/stick/anySSH-Data/vault.key"));
         assert_eq!(
             p.device_id_path(),
-            PathBuf::from("/stick/anySCP-Data/device_id")
+            PathBuf::from("/stick/anySSH-Data/device_id")
         );
-        assert_eq!(p.webview_dir(), PathBuf::from("/stick/anySCP-Data/webview"));
+        assert_eq!(p.webview_dir(), PathBuf::from("/stick/anySSH-Data/webview"));
     }
 
     #[test]
     fn macos_bundle_root_is_the_bundles_parent() {
-        // The binary sits at anySCP.app/Contents/MacOS/anyscp, but writing into
+        // The binary sits at anySSH.app/Contents/MacOS/anyssh, but writing into
         // the bundle would break its signature — so the data dir goes beside it.
-        let exe_dir = Path::new("/Users/me/anySCP/anySCP.app/Contents/MacOS");
+        let exe_dir = Path::new("/Users/me/anySSH/anySSH.app/Contents/MacOS");
         assert_eq!(
             portable_root(exe_dir),
-            PathBuf::from("/Users/me/anySCP"),
+            PathBuf::from("/Users/me/anySSH"),
             "macOS: data dir must sit beside the .app bundle"
         );
     }
 
     #[test]
     fn non_bundle_root_is_the_exe_dir_itself() {
-        let exe_dir = Path::new("C:\\anySCP");
-        assert_eq!(portable_root(exe_dir), PathBuf::from("C:\\anySCP"));
+        let exe_dir = Path::new("C:\\anySSH");
+        assert_eq!(portable_root(exe_dir), PathBuf::from("C:\\anySSH"));
 
-        let exe_dir = Path::new("/opt/anyscp");
-        assert_eq!(portable_root(exe_dir), PathBuf::from("/opt/anyscp"));
+        let exe_dir = Path::new("/opt/anyssh");
+        assert_eq!(portable_root(exe_dir), PathBuf::from("/opt/anyssh"));
     }
 }

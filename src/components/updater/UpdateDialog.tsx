@@ -50,7 +50,7 @@ export function UpdateDialog() {
     >
       <div className="flex flex-col gap-3 no-select">
         <p className="text-[length:var(--text-sm)] text-text-secondary">
-          anySCP <span className="font-medium text-text-primary">v{version}</span>{" "}
+          anySSH <span className="font-medium text-text-primary">v{version}</span>{" "}
           {t("updater.dialog.available")}
           {appVersion ? <span className="text-text-muted">{t("updater.dialog.youHave", { version: appVersion })}</span> : null}.
         </p>

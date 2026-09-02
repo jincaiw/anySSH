@@ -44,7 +44,7 @@ fn is_release_build() -> bool {
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt()
-        .with_env_filter("anyscp=debug,russh=info")
+        .with_env_filter("anyssh=debug,russh=info")
         .init();
 
     tauri::Builder::default()
@@ -146,13 +146,13 @@ pub fn run() {
             // same reason as the theme: without it, a user running the app in
             // a non-default language sees the default copy flash up first.
             //
-            // `ANYSCP_UI_LANG` wins over the stored preference — the E2E
+            // `ANYSSH_UI_LANG` wins over the stored preference — the E2E
             // container sets it to `en-US` so the WebdriverIO suite can keep
             // selecting elements by their English text even though the product
             // default is now Chinese. Only known-good tags are accepted;
             // anything else falls through so the frontend can do its own
             // (browser-language based) detection.
-            let lang = ["ANYSCP_UI_LANG"]
+            let lang = ["ANYSSH_UI_LANG"]
                 .iter()
                 .filter_map(|k| std::env::var(k).ok())
                 .chain(host_db.get_setting("app_language").ok().flatten())
@@ -169,7 +169,7 @@ pub fn run() {
 
             let mut window_builder =
                 WebviewWindowBuilder::new(app.handle(), "main", WebviewUrl::App("index.html".into()))
-                    .title("anySCP")
+                    .title("anySSH")
                     .inner_size(1200.0, 800.0)
                     .min_inner_size(800.0, 500.0)
                     .initialization_script(&theme_script);

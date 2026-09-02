@@ -1,4 +1,4 @@
-# anySCP E2E tests
+# anySSH E2E tests
 
 End-to-end test suite that drives the real Tauri app through `tauri-driver` +
 WebKitWebDriver, against real SSH servers (linuxserver/openssh-server in
@@ -31,10 +31,10 @@ needs no host tooling:
    to `screenshot-tools/raw/` (gitignored). A final `tours the app` test walks
    the UI and is recorded to one mp4.
 2. **Frame** — `screenshot-tools/frame.mjs` (sharp) composites each raw capture
-   into the finished look: a macOS-style titlebar (traffic lights + `anySCP`),
+   into the finished look: a macOS-style titlebar (traffic lights + `anySSH`),
    rounded corners, drop shadow, and a violet→blue wallpaper → `screens/<view>.png`.
 3. **Gif** — `screenshot-tools/build-assets.sh` converts the tour mp4 to
-   `screens/anyscp.gif` (ffmpeg, two-pass palette).
+   `screens/anyssh.gif` (ffmpeg, two-pass palette).
 
 Seeding is *representative*, not a pixel replica of the originals — the point is
 assets that regenerate and stay current. Tunables (wallpaper colors, corner
@@ -132,7 +132,7 @@ SSH targets (all on port 2222 inside the compose network):
                 │ │   ↓ spawns           │ │
                 │ │ WebKitWebDriver      │ │
                 │ │   ↓ launches         │ │
-                │ │ anyscp (debug build) │ │
+                │ │ anyssh (debug build) │ │
                 │ │   inside xvfb        │ │
                 │ └──────────────────────┘ │
                 │                          │
@@ -144,7 +144,7 @@ SSH targets (all on port 2222 inside the compose network):
 ## Per-test isolation
 
 - Every test calls `resetApp()` in `beforeEach`, which wipes
-  `$XDG_DATA_HOME/com.macnev2013.anyscp` and calls `browser.reloadSession()`
+  `$XDG_DATA_HOME/com.macnev2013.anyssh` and calls `browser.reloadSession()`
   to relaunch the Tauri process with a clean SQLite DB.
 - The `05-persistence` spec uses `relaunchApp()` instead, which reloads the
   session without wiping the DB.
@@ -176,7 +176,7 @@ Docker volumes between runs, so:
 
 - **First run**: full build (~3 min)
 - **Same-code rerun**: skips the Tauri build entirely (~30s — the entrypoint
-  reuses the existing `anyscp` debug binary)
+  reuses the existing `anyssh` debug binary)
 - **App source changed**: incremental cargo compile against the preserved
   `target/` (typically 5–15s)
 

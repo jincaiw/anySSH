@@ -46,7 +46,7 @@ export default {
   db: "数据库错误",
   decrypt: "密码错误，或备份文件已损坏",
   crypto: "加密错误",
-  format: "不是有效的 anySCP 备份文件",
+  format: "不是有效的 anySSH 备份文件",
   io: "I/O 错误",
 
   // ─── Generic fallbacks ────────────────────────────────────────────────────

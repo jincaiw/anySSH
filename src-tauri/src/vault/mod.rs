@@ -9,7 +9,7 @@ use tracing::instrument;
 
 /// Keychain service name used as the top-level namespace for every entry.
 /// All credentials are keyed as `(SERVICE_NAME, host_id)`.
-const SERVICE_NAME: &str = "com.anyscp.credentials";
+const SERVICE_NAME: &str = "com.anyssh.credentials";
 
 // ---------------------------------------------------------------------------
 // Error type
@@ -335,7 +335,7 @@ mod tests {
     }
 
     fn unique_id(suffix: &str) -> String {
-        format!("anyscp-test-{}-{}", suffix, uuid::Uuid::new_v4())
+        format!("anyssh-test-{}-{}", suffix, uuid::Uuid::new_v4())
     }
 
     #[test]

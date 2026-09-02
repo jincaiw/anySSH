@@ -1,4 +1,4 @@
-// Keyboard helpers — anySCP shortcuts use the meta key (Cmd on macOS,
+// Keyboard helpers — anySSH shortcuts use the meta key (Cmd on macOS,
 // Ctrl on Linux/Windows). Inside the container we're on Linux, so
 // WebdriverIO's "Control" maps onto what the app sees as "meta".
 //

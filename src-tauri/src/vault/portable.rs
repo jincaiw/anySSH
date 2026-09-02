@@ -3,7 +3,7 @@
 //! The installed build keeps secrets in the OS keychain, which is bound to a
 //! single machine. A USB-stick install needs credentials to follow the folder,
 //! so in portable mode the vault is instead a single encrypted file,
-//! `vault.anyscp`, sealed with **AES-256-GCM**.
+//! `vault.anyssh`, sealed with **AES-256-GCM**.
 //!
 //! ## Key handling
 //!
@@ -21,7 +21,7 @@
 //! read by casual inspection, by backup tools, or by sync clients that copy the
 //! vault without the key — and it is the only option available, since a
 //! passphrase prompt on every connection would defeat the point of a portable
-//! build. Anyone who copies the whole `anySCP-Data` folder gets everything.
+//! build. Anyone who copies the whole `anySSH-Data` folder gets everything.
 //!
 //! ## Container layout
 //!
@@ -66,7 +66,7 @@ const HEADER_LEN: usize = MAGIC.len() + 1;
 /// Fixed, non-secret salt. The key material is already a 256-bit CSPRNG value,
 /// so Argon2 here provides domain separation (and a little extra work for an
 /// attacker who grabs the key file alone) rather than entropy.
-const KDF_SALT: &[u8; SALT_LEN] = b"anyscp-portable!";
+const KDF_SALT: &[u8; SALT_LEN] = b"anyssh-portable!";
 
 /// Deliberately light: unlike a backup passphrase, this runs on every credential
 /// read, so it has to stay well under the interactive threshold.
@@ -74,7 +74,7 @@ const ARGON2_M_KIB: u32 = 8 * 1024;
 const ARGON2_T: u32 = 2;
 const ARGON2_P: u32 = 1;
 
-const VAULT_FILE: &str = "vault.anyscp";
+const VAULT_FILE: &str = "vault.anyssh";
 const TEMP_SUFFIX: &str = ".tmp";
 
 // ─── Caches & locking ─────────────────────────────────────────────────────────
@@ -201,7 +201,7 @@ fn load(paths: &PortablePaths) -> Result<BTreeMap<String, StoredCredential>, Vau
     let bytes = std::fs::read(&path).map_err(|e| VaultError::Io(e.to_string()))?;
     if bytes.len() < HEADER_LEN + NONCE_LEN || &bytes[..MAGIC.len()] != MAGIC {
         return Err(VaultError::InvalidData(
-            "not an anySCP portable vault".into(),
+            "not an anySSH portable vault".into(),
         ));
     }
 
@@ -359,7 +359,7 @@ mod tests {
     /// process-wide, so two tests sharing a directory would share a key and
     /// stop exercising the derivation path.
     fn temp_dir(tag: &str) -> PortablePaths {
-        let d = std::env::temp_dir().join(format!("anyscp-vault-test-{tag}"));
+        let d = std::env::temp_dir().join(format!("anyssh-vault-test-{tag}"));
         let _ = std::fs::remove_dir_all(&d);
         std::fs::create_dir_all(&d).expect("temp dir");
         PortablePaths::new(d)
@@ -465,7 +465,7 @@ mod tests {
         let needle = b"top-secret-value";
         assert!(
             !raw.windows(needle.len()).any(|w| w == needle.as_slice()),
-            "plaintext password found inside vault.anyscp"
+            "plaintext password found inside vault.anyssh"
         );
         // …and not in the key file either, which is hex-encoded key material.
         let key = std::fs::read_to_string(dir.key_path()).expect("read key");
