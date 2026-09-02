@@ -574,29 +574,66 @@ fn auth_method_label(auth: &AuthMethod) -> &'static str {
     }
 }
 
-/// Resolve the AuthMethod for a saved host, pulling secrets from the keychain.
-/// An empty password / absent passphrase means the keychain entry is missing;
-/// the SSH handshake then fails with AuthenticationFailed rather than a vault
-/// error.
-fn resolve_auth_method(host_id: &str, auth_type: &str, key_path: Option<String>) -> AuthMethod {
+/// Resolve the AuthMethod for a saved host, pulling secrets from the vault.
+///
+/// Password auth is strict: a vault read failure is reported instead of
+/// silently authenticating with an empty password. Historically any vault
+/// error (missing entry, corrupt portable vault, key mismatch) was swallowed
+/// into `String::new()`, which surfaced minutes later as a baffling
+/// "server rejected credentials" even though the user's password was correct
+/// — there was no way to tell a bad password from a missing one.
+///
+/// Key passphrase stays best-effort: private-key hosts legitimately have no
+/// passphrase stored.
+fn resolve_auth_method(
+    host_id: &str,
+    auth_type: &str,
+    key_path: Option<String>,
+) -> Result<AuthMethod, SshError> {
     match auth_type {
         "privateKey" => {
             let path = key_path.unwrap_or_default();
             let passphrase = match vault::get_credential(host_id) {
                 Ok(vault::StoredCredential::KeyPassphrase { passphrase }) => Some(passphrase),
-                _ => None,
+                // Password credential or no / unreadable entry is fine — the
+                // key may simply be unencrypted. Only log it; the key parse
+                // will complain later if a passphrase was actually required.
+                Ok(vault::StoredCredential::Password { .. }) => None,
+                Err(e) => {
+                    tracing::debug!(host_id, error = %e, "no key passphrase in vault (ok if key is unencrypted)");
+                    None
+                }
             };
-            AuthMethod::PrivateKey {
+            Ok(AuthMethod::PrivateKey {
                 key_path: path,
                 passphrase,
-            }
+            })
         }
         _ => {
             let password = match vault::get_credential(host_id) {
                 Ok(vault::StoredCredential::Password { password }) => password,
-                _ => String::new(),
+                Ok(_) => {
+                    return Err(SshError::AuthenticationFailed(
+                        "saved credential for this host is not a password — edit the host and re-save the password".to_string(),
+                    ));
+                }
+                Err(vault::VaultError::NotFound(_)) => {
+                    return Err(SshError::AuthenticationFailed(
+                        "no saved password for this host — edit the host and save the password again".to_string(),
+                    ));
+                }
+                Err(e) => {
+                    return Err(SshError::AuthenticationFailed(format!(
+                        "failed to read the saved password from the credential vault: {e}"
+                    )));
+                }
             };
-            AuthMethod::Password { password }
+            if password.is_empty() {
+                return Err(SshError::AuthenticationFailed(
+                    "the saved password for this host is empty — edit the host and re-enter the password".to_string(),
+                ));
+            }
+            Ok(AuthMethod::Password { password })
         }
     }
 }
@@ -625,7 +662,7 @@ fn build_host_config_blocking(
         .map_err(|e| SshError::IoError(e.to_string()))?
         .ok_or_else(|| SshError::SessionNotFound(format!("host not found: {host_id}")))?;
 
-    let auth_method = resolve_auth_method(host_id, &saved_host.auth_type, saved_host.key_path);
+    let auth_method = resolve_auth_method(host_id, &saved_host.auth_type, saved_host.key_path)?;
 
     // Resolve the ProxyJump target (if any) into a nested HostConfig.
     let jump_host = match saved_host.proxy_jump_host_id.as_deref() {

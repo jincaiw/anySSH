@@ -48,6 +48,28 @@ pub struct SshManager {
     pending_connects: DashMap<String, CancellationToken>,
 }
 
+/// Result of one authentication pass: whether it succeeded, plus a short
+/// trail of what was attempted. The trail is user-facing — it goes into the
+/// AuthenticationFailed error message verbatim, because the server itself only
+/// reports a bare success/failure and field machines often have no `ssh -v`.
+struct AuthOutcome {
+    authenticated: bool,
+    trail: Vec<String>,
+}
+
+impl AuthOutcome {
+    fn not_authenticated() -> Self {
+        Self {
+            authenticated: false,
+            trail: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, step: impl Into<String>) {
+        self.trail.push(step.into());
+    }
+}
+
 impl SshManager {
     pub fn new() -> Self {
         Self {
@@ -305,7 +327,7 @@ impl SshManager {
         handle: &mut client::Handle<SshClientHandler>,
         config: &HostConfig,
     ) -> Result<(), SshError> {
-        let authenticated = match &config.auth_method {
+        let outcome = match &config.auth_method {
             AuthMethod::Password { password } => {
                 Self::auth_with_password(handle, &config.username, password).await?
             }
@@ -342,12 +364,40 @@ impl SshManager {
             }
         };
 
-        if !authenticated {
-            return Err(SshError::AuthenticationFailed(
-                "server rejected credentials".to_string(),
-            ));
+        if !outcome.authenticated {
+            // The server only returns a bare failure, which is indistinguishable
+            // between "wrong password" and "we never got to try the right
+            // method". Append the attempt trail so the error dialog itself
+            // carries the diagnostics — field machines often have no ssh -v.
+            let mut msg = format!(
+                "server rejected credentials [username: {}; tried: {}]",
+                config.username,
+                if outcome.trail.is_empty() {
+                    "nothing".to_string()
+                } else {
+                    outcome.trail.join("; ")
+                },
+            );
+            if let AuthMethod::Password { password } = &config.auth_method {
+                if password.is_empty() {
+                    msg.push_str(" — the password sent was EMPTY, the saved credential is missing");
+                }
+            }
+            tracing::warn!(host = %config.host, "{msg}");
+            return Err(SshError::AuthenticationFailed(msg));
         }
         Ok(())
+    }
+
+    /// Truncate a prompt string for the diagnostics trail — bastion banners can
+    /// be long, and the error dialog should stay readable.
+    fn brief(text: &str) -> String {
+        let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut s: String = one_line.chars().take(40).collect();
+        if one_line.chars().count() > 40 {
+            s.push('…');
+        }
+        s
     }
 
     /// Password authentication with a keyboard-interactive fallback.
@@ -373,8 +423,9 @@ impl SshManager {
         handle: &mut client::Handle<SshClientHandler>,
         username: &str,
         password: &str,
-    ) -> Result<bool, SshError> {
+    ) -> Result<AuthOutcome, SshError> {
         let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
+        let mut outcome = AuthOutcome::not_authenticated();
 
         // Bound every auth round-trip: a server that silently drops the
         // connection mid-authentication would otherwise hang the await
@@ -391,15 +442,33 @@ impl SshManager {
         {
             Ok(r) => r.map_err(send_err)?,
             Err(_) => {
-                return Self::auth_password_plain(handle, username, password).await;
+                outcome.push("keyboard-interactive timed out");
+                return Self::auth_password_plain(handle, username, password, outcome).await;
             }
         };
 
         for _ in 0..MAX_KI_ROUNDS {
             match response {
-                client::KeyboardInteractiveAuthResponse::Success => return Ok(true),
-                client::KeyboardInteractiveAuthResponse::Failure => break, // fall through to plain password
+                client::KeyboardInteractiveAuthResponse::Success => {
+                    outcome.authenticated = true;
+                    return Ok(outcome);
+                }
+                client::KeyboardInteractiveAuthResponse::Failure => {
+                    outcome.push("keyboard-interactive rejected");
+                    break; // fall through to plain password
+                }
                 client::KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                    let asked: Vec<String> =
+                        prompts.iter().map(|p| Self::brief(&p.prompt)).collect();
+                    outcome.push(format!(
+                        "keyboard-interactive prompts [{}] (answered {})",
+                        asked.join(", "),
+                        if password.is_empty() {
+                            "EMPTY password"
+                        } else {
+                            "saved password/username"
+                        },
+                    ));
                     let responses = prompts
                         .iter()
                         .map(|p| Self::answer_auth_prompt(&p.prompt, username, password))
@@ -411,14 +480,17 @@ impl SshManager {
                     .await
                     {
                         Ok(r) => r.map_err(send_err)?,
-                        Err(_) => return Ok(false),
+                        Err(_) => {
+                            outcome.push("keyboard-interactive timed out mid-round");
+                            return Ok(outcome);
+                        }
                     };
                 }
             }
         }
 
         // ── 2. plain password fallback ──────────────────────────────────────
-        Self::auth_password_plain(handle, username, password).await
+        Self::auth_password_plain(handle, username, password, outcome).await
     }
 
     /// Single plain `password` method attempt (bounded).
@@ -426,7 +498,8 @@ impl SshManager {
         handle: &mut client::Handle<SshClientHandler>,
         username: &str,
         password: &str,
-    ) -> Result<bool, SshError> {
+        mut outcome: AuthOutcome,
+    ) -> Result<AuthOutcome, SshError> {
         let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
         match tokio::time::timeout(
             std::time::Duration::from_secs(30),
@@ -434,8 +507,23 @@ impl SshManager {
         )
         .await
         {
-            Ok(r) => r.map_err(send_err),
-            Err(_) => Ok(false),
+            Ok(r) => {
+                if r.map_err(send_err)? {
+                    outcome.authenticated = true;
+                    Ok(outcome)
+                } else {
+                    outcome.push(if password.is_empty() {
+                        "password rejected (sent EMPTY password)"
+                    } else {
+                        "password rejected"
+                    });
+                    Ok(outcome)
+                }
+            }
+            Err(_) => {
+                outcome.push("password attempt timed out");
+                Ok(outcome)
+            }
         }
     }
 
@@ -480,12 +568,13 @@ impl SshManager {
         username: &str,
         key_data: &str,
         passphrase: Option<&str>,
-    ) -> Result<bool, SshError> {
+    ) -> Result<AuthOutcome, SshError> {
         let key_pair = russh_keys::decode_secret_key(key_data, passphrase)
             .map_err(|e| SshError::KeyParseError(e.to_string()))?;
         let key = Arc::new(key_pair);
 
         let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
+        let mut outcome = AuthOutcome::not_authenticated();
 
         // First attempt: the key as decoded. russh-keys gives RSA keys the
         // modern rsa-sha2-512 signature hash.
@@ -494,8 +583,10 @@ impl SshManager {
             .await
             .map_err(send_err)?
         {
-            return Ok(true);
+            outcome.authenticated = true;
+            return Ok(outcome);
         }
+        outcome.push("publickey rsa-sha2-512 rejected");
 
         // Legacy fallback for RSA keys: older servers commonly reject the
         // rsa-sha2-512 signature algorithm outright and only accept
@@ -504,9 +595,9 @@ impl SshManager {
         // chain. Non-RSA keys have no hash variants; `with_signature_hash`
         // returns None for them.
         if matches!(key.as_ref(), russh_keys::key::KeyPair::RSA { .. }) {
-            for hash in [
-                russh_keys::key::SignatureHash::SHA2_256,
-                russh_keys::key::SignatureHash::SHA1,
+            for (hash, label) in [
+                (russh_keys::key::SignatureHash::SHA2_256, "rsa-sha2-256"),
+                (russh_keys::key::SignatureHash::SHA1, "ssh-rsa (SHA-1)"),
             ] {
                 if let Some(rekey) = key.with_signature_hash(hash) {
                     if handle
@@ -514,13 +605,15 @@ impl SshManager {
                         .await
                         .map_err(send_err)?
                     {
-                        return Ok(true);
+                        outcome.authenticated = true;
+                        return Ok(outcome);
                     }
+                    outcome.push(format!("publickey {label} rejected"));
                 }
             }
         }
 
-        Ok(false)
+        Ok(outcome)
     }
 
     /// Return the shared Handle for an active session.  Used by the SFTP layer
