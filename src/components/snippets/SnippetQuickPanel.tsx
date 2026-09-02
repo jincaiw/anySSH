@@ -6,10 +6,12 @@ import { useSessionStore } from "../../stores/session-store";
 import { useUiStore } from "../../stores/ui-store";
 import { extractVariables } from "../../utils/snippet-resolve";
 import { VariableDialog } from "./VariableDialog";
+import { useTranslation } from "../../i18n";
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function SnippetQuickPanel() {
+  const { t } = useTranslation();
   const snippetPanelOpen = useUiStore((s) => s.snippetPanelOpen);
   const toggleSnippetPanel = useUiStore((s) => s.toggleSnippetPanel);
   const pinned = useUiStore((s) => s.snippetPanelPinned);
@@ -134,19 +136,19 @@ export function SnippetQuickPanel() {
             : "absolute top-0 right-0 bottom-0 z-30 shadow-[var(--shadow-lg)] animate-[fadeIn_120ms_var(--ease-expo-out)_both]",
         ].join(" ")}
         style={{ width: 280 }}
-        aria-label="Snippet quick panel"
+        aria-label={t("snippets.quickPanel.ariaLabel")}
         role="complementary"
       >
         {/* Header */}
         <div className="flex items-center justify-between px-4 py-3 border-b border-border shrink-0">
           <span className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted">
-            Snippets
+            {t("snippets.page.title")}
           </span>
           <div className="flex items-center gap-0.5">
             <button
               onClick={togglePinned}
-              title={pinned ? "Unpin panel (float)" : "Pin panel (dock)"}
-              aria-label={pinned ? "Unpin snippet panel" : "Pin snippet panel"}
+              title={pinned ? t("snippets.quickPanel.unpinTitle") : t("snippets.quickPanel.pinTitle")}
+              aria-label={pinned ? t("snippets.quickPanel.unpinAria") : t("snippets.quickPanel.pinAria")}
               aria-pressed={pinned}
               className={[
                 "flex items-center justify-center w-6 h-6 rounded-md",
@@ -165,8 +167,8 @@ export function SnippetQuickPanel() {
             </button>
             <button
               onClick={toggleSnippetPanel}
-              title="Close panel (Escape)"
-              aria-label="Close snippet panel"
+              title={t("snippets.quickPanel.closeTitle")}
+              aria-label={t("snippets.quickPanel.closeAria")}
               className={[
                 "flex items-center justify-center w-6 h-6 rounded-md",
                 "text-text-muted hover:text-text-primary hover:bg-bg-subtle",
@@ -204,8 +206,8 @@ export function SnippetQuickPanel() {
                   }
                 }
               }}
-              placeholder="Search snippets..."
-              aria-label="Search snippets"
+              placeholder={t("snippets.page.searchPlaceholder")}
+              aria-label={t("snippets.page.searchAria")}
               className={[
                 "w-full pl-8 pr-3 py-1.5 rounded-lg text-[length:var(--text-xs)]",
                 "bg-bg-base border border-border text-text-primary placeholder:text-text-muted",
@@ -231,7 +233,7 @@ export function SnippetQuickPanel() {
                 ))
               ) : (
                 <p className="text-[length:var(--text-xs)] text-text-muted px-4 py-6 text-center">
-                  No snippets match &ldquo;{query}&rdquo;
+                  {t("snippets.page.noMatch", { query })}
                 </p>
               )}
             </section>
@@ -244,7 +246,7 @@ export function SnippetQuickPanel() {
                     id="recent-heading"
                     className="px-4 py-1.5 text-[11px] font-semibold uppercase tracking-widest text-text-muted"
                   >
-                    Recently Used
+                    {t("snippets.quickPanel.recentlyUsed")}
                   </h3>
                   {recentlyUsed.map((s) => (
                     <QuickSnippetRow
@@ -263,7 +265,7 @@ export function SnippetQuickPanel() {
                     id="all-heading"
                     className="px-4 py-1.5 text-[11px] font-semibold uppercase tracking-widest text-text-muted"
                   >
-                    All Snippets
+                    {t("snippets.page.allSnippets")}
                   </h3>
                   {allSorted.map((s) => (
                     <QuickSnippetRow
@@ -277,7 +279,7 @@ export function SnippetQuickPanel() {
 
               {allSorted.length === 0 && (
                 <p className="text-[length:var(--text-xs)] text-text-muted px-4 py-8 text-center">
-                  No snippets saved yet.
+                  {t("snippets.quickPanel.empty")}
                 </p>
               )}
             </>

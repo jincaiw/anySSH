@@ -1,14 +1,16 @@
+import { useTranslation } from "../../i18n";
 import { useTransfers } from "../../hooks/use-transfers";
 import { TransferList } from "./TransferList";
 
 export function TransfersPage() {
+  const { t } = useTranslation();
   const { list, activeCount, queuedCount, finishedCount, onCancel, onRetry, onDismiss, onClearFinished } =
     useTransfers();
 
   const summaryParts: string[] = [];
-  if (activeCount > 0) summaryParts.push(`${activeCount} active`);
-  if (queuedCount > 0) summaryParts.push(`${queuedCount} queued`);
-  if (finishedCount > 0) summaryParts.push(`${finishedCount} done`);
+  if (activeCount > 0) summaryParts.push(t("transfers.summary.activeCount", { count: activeCount }));
+  if (queuedCount > 0) summaryParts.push(t("transfers.summary.queuedCount", { count: queuedCount }));
+  if (finishedCount > 0) summaryParts.push(t("transfers.summary.doneCount", { count: finishedCount }));
 
   return (
     <div className="flex flex-col h-full overflow-y-scroll bg-bg-base">
@@ -16,9 +18,9 @@ export function TransfersPage() {
         {/* Page title */}
         <div className="flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-[length:var(--text-lg)] font-semibold text-text-primary">Transfers</h1>
+            <h1 className="text-[length:var(--text-lg)] font-semibold text-text-primary">{t("transfers.title")}</h1>
             <p className="text-[length:var(--text-xs)] text-text-muted mt-1">
-              Active, queued, and completed file transfers across all sessions
+              {t("transfers.page.subtitle")}
             </p>
           </div>
           <div className="flex items-center gap-3 shrink-0">
@@ -32,7 +34,7 @@ export function TransfersPage() {
                 onClick={onClearFinished}
                 className="px-3 py-1.5 rounded-md text-[length:var(--text-xs)] font-medium text-text-secondary hover:text-text-primary bg-bg-subtle hover:bg-bg-muted border border-border transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                Clear completed
+                {t("transfers.clearCompleted")}
               </button>
             )}
           </div>

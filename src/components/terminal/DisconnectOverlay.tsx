@@ -3,6 +3,7 @@ import { WifiOff, AlertTriangle, RefreshCw, X } from "lucide-react";
 import type { HostConfig, SessionId } from "../../types";
 import { useSessionStore } from "../../stores/session-store";
 import { useTabStore } from "../../stores/tab-store";
+import { useTranslation } from "../../i18n";
 
 interface DisconnectOverlayProps {
   sessionId: SessionId;
@@ -20,6 +21,7 @@ export function DisconnectOverlay({
   message,
   hostConfig,
 }: DisconnectOverlayProps) {
+  const { t } = useTranslation();
   const [isReconnecting, setIsReconnecting] = useState(false);
   const [reconnectError, setReconnectError] = useState<string | null>(null);
 
@@ -55,7 +57,7 @@ export function DisconnectOverlay({
       const msg =
         err instanceof Error ? err.message
         : err && typeof err === "object" && "message" in err ? String((err as { message: string }).message)
-        : "Reconnection failed";
+        : t("terminal.disconnect.reconnectFailed");
       setReconnectError(msg);
       setIsReconnecting(false);
     }
@@ -87,7 +89,7 @@ export function DisconnectOverlay({
       className="absolute inset-0 z-10 flex items-end justify-center pb-6 pointer-events-none"
       aria-modal="true"
       role="dialog"
-      aria-label={isError ? "Connection error" : "Connection lost"}
+      aria-label={isError ? t("terminal.disconnect.connectionError") : t("terminal.disconnect.connectionLost")}
     >
       {/* Pill-shaped toast anchored to the bottom of the terminal */}
       <div
@@ -122,7 +124,7 @@ export function DisconnectOverlay({
           onClick={handleReconnect}
           disabled={isReconnecting}
           className="inline-flex items-center gap-1 h-6 px-2.5 rounded-full text-[11px] font-medium text-text-inverse bg-accent hover:bg-accent-hover disabled:opacity-50 transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring shrink-0"
-          aria-label="Reconnect"
+          aria-label={t("terminal.disconnect.reconnect")}
         >
           <RefreshCw
             size={11}
@@ -130,7 +132,7 @@ export function DisconnectOverlay({
             aria-hidden="true"
             className={isReconnecting ? "motion-safe:animate-spin" : ""}
           />
-          {isReconnecting ? "Connecting" : "Reconnect"}
+          {isReconnecting ? t("terminal.state.connecting") : t("terminal.disconnect.reconnect")}
         </button>
 
         {/* Close */}
@@ -139,7 +141,7 @@ export function DisconnectOverlay({
           onClick={handleClose}
           disabled={isReconnecting}
           className="inline-flex items-center justify-center w-6 h-6 rounded-full text-text-muted hover:text-text-primary hover:bg-bg-subtle disabled:opacity-50 transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring shrink-0"
-          aria-label="Close session"
+          aria-label={t("terminal.disconnect.closeSession")}
         >
           <X size={12} strokeWidth={2.2} aria-hidden="true" />
         </button>

@@ -226,7 +226,7 @@ pub async fn load_all_settings(
 
 /// Permanently wipe ALL local data — saved hosts, groups, connection history,
 /// snippets, port-forward rules, S3 connections, and app settings — plus their
-/// stored credentials in the OS keychain. Returns anySCP to first-launch state.
+/// stored credentials in the OS keychain. Returns anySSH to first-launch state.
 ///
 /// This is irreversible; the frontend gates it behind a typed confirmation and
 /// relaunches the app afterwards.

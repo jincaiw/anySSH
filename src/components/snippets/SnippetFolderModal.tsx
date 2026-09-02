@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { Folder } from "lucide-react";
 import { ModalShell, BTN_GHOST, BTN_PRIMARY } from "../shared/ModalShell";
+import { useTranslation } from "../../i18n";
 
 // ─── Folder colors ────────────────────────────────────────────────────────────
 
@@ -31,6 +32,7 @@ interface SnippetFolderModalProps {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function SnippetFolderModal({ open, onClose, onSave }: SnippetFolderModalProps) {
+  const { t } = useTranslation();
   const [name, setName] = useState("");
   const [color, setColor] = useState(FOLDER_COLORS[0]);
   const [error, setError] = useState<string | null>(null);
@@ -49,7 +51,7 @@ export function SnippetFolderModal({ open, onClose, onSave }: SnippetFolderModal
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) { setError("Folder name is required"); return; }
+    if (!name.trim()) { setError(t("snippets.folderModal.nameRequired")); return; }
     setSaving(true);
     setError(null);
     try {
@@ -58,11 +60,11 @@ export function SnippetFolderModal({ open, onClose, onSave }: SnippetFolderModal
       setError(
         err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
-          : "Failed to save folder",
+          : t("snippets.folderModal.saveFailed"),
       );
       setSaving(false);
     }
-  }, [name, color, onSave]);
+  }, [name, color, onSave, t]);
 
   const inputClass = [
     "w-full rounded-lg bg-bg-base border border-border px-3 py-2",
@@ -77,14 +79,14 @@ export function SnippetFolderModal({ open, onClose, onSave }: SnippetFolderModal
     <ModalShell
       open={open}
       onClose={onClose}
-      title="New Folder"
+      title={t("snippets.folderModal.create")}
       icon={Folder}
       maxWidth="sm"
       busy={saving}
       footer={
         <>
           <button type="button" onClick={onClose} disabled={saving} className={BTN_GHOST}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             form="snippet-folder-form"
@@ -92,7 +94,7 @@ export function SnippetFolderModal({ open, onClose, onSave }: SnippetFolderModal
             disabled={saving || !name.trim()}
             className={BTN_PRIMARY}
           >
-            {saving ? "Creating…" : "Create Folder"}
+            {saving ? t("snippets.folderModal.creating") : t("snippets.folderModal.create")}
           </button>
         </>
       }
@@ -100,21 +102,21 @@ export function SnippetFolderModal({ open, onClose, onSave }: SnippetFolderModal
       <form id="snippet-folder-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
         <div>
           <label className={labelClass}>
-            Name <span className="text-status-error">*</span>
+            {t("common.name")} <span className="text-status-error">*</span>
           </label>
           <input
             ref={nameRef}
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g., Web Servers, Docker, Database"
+            placeholder={t("snippets.folderModal.namePlaceholder")}
             disabled={saving}
             className={inputClass}
           />
         </div>
 
         <div>
-          <span className={labelClass}>Color</span>
+          <span className={labelClass}>{t("common.color")}</span>
           <div className="flex items-center gap-2 flex-wrap">
             {FOLDER_COLORS.map((c) => (
               <button
@@ -122,7 +124,7 @@ export function SnippetFolderModal({ open, onClose, onSave }: SnippetFolderModal
                 type="button"
                 onClick={() => setColor(c)}
                 disabled={saving}
-                aria-label={`Color ${c}`}
+                aria-label={t("snippets.folderModal.colorAria", { color: c })}
                 aria-pressed={color === c}
                 className={[
                   "w-7 h-7 rounded-full border-2",

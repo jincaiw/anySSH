@@ -1093,7 +1093,7 @@ pub async fn sftp_drag_out(
         session_ref.sftp.clone()
     };
 
-    let dragout_root = std::env::temp_dir().join("anyscp-dragout");
+    let dragout_root = std::env::temp_dir().join("anyssh-dragout");
     sweep_stale_dragout(&dragout_root).await;
 
     let stage = dragout_root.join(uuid::Uuid::new_v4().to_string());

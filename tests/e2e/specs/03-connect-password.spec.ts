@@ -48,7 +48,7 @@ describe("connect (password)", () => {
 
         // Run a deterministic command. Use a unique sentinel so the
         // assertion can't pass on shell banner text.
-        const sentinel = "anyscp_e2e_" + Date.now();
+        const sentinel = "anyssh_e2e_" + Date.now();
         await runCommand(sessionId, `echo ${sentinel}`, sentinel, 10_000);
 
         // Sanity: buffer contains both the command echo and the sentinel result.

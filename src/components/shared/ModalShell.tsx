@@ -1,6 +1,7 @@
 import { useState, useEffect, useId } from "react";
 import { X } from "lucide-react";
 import { ModalBackdrop } from "./ModalBackdrop";
+import { useTranslation } from "../../i18n";
 
 // ─── Shared button styles ─────────────────────────────────────────────────────
 // Import these in any modal footer so every button looks identical.
@@ -90,6 +91,7 @@ export function ModalShell({
 }: ModalShellProps) {
   const titleId = useId();
   const [visible, setVisible] = useState(false);
+  const { t } = useTranslation();
 
   useEffect(() => {
     if (open) requestAnimationFrame(() => setVisible(true));
@@ -169,7 +171,7 @@ export function ModalShell({
             type="button"
             onClick={onClose}
             disabled={busy}
-            aria-label="Close"
+            aria-label={t("common.close")}
             className="ml-3 p-1.5 rounded-md text-text-muted hover:text-text-primary hover:bg-bg-subtle transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50 shrink-0"
           >
             <X size={14} strokeWidth={1.8} aria-hidden="true" />

@@ -115,7 +115,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: tests/e2e
-          tags: anyscp-e2e-runner:latest
+          tags: anyssh-e2e-runner:latest
           cache-from: type=gha,scope=e2e-runner
           cache-to: type=gha,mode=max,scope=e2e-runner
 
@@ -153,7 +153,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: tests/e2e
-          tags: anyscp-e2e-runner:latest
+          tags: anyssh-e2e-runner:latest
           cache-from: type=gha,scope=e2e-runner
           load: true
 
@@ -175,6 +175,11 @@ jobs:
           key: e2e-build-${{ runner.os }}-${{ hashFiles('src-tauri/Cargo.lock', 'pnpm-lock.yaml') }}
           restore-keys: |
             e2e-build-${{ runner.os }}-
+
+      # Retry pre-pull of the SSH/MinIO target images — `up`'s implicit pull
+      # makes a transient lscr.io/ghcr.io EOF fail the whole shard otherwise.
+      - name: Pre-pull E2E service images (retries on registry flakes)
+        run: make e2e-pull
 
       # Brings up the SSH/SCP/MinIO target containers, compiles the Tauri debug
       # binary in-container (reusing the cache above), then runs this shard's

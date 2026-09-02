@@ -11,8 +11,12 @@ import { ConfirmDangerDialog } from "../shared/ConfirmDangerDialog";
 import type { ContextMenuItem } from "../shared/ContextMenu";
 import type { ConnectionHistoryEntry } from "../../types";
 import { parseSqliteUtc } from "../../utils/time";
+import { useTranslation, type TVars } from "../../i18n";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
+
+/** The reactive `t` passed down to the module-level helpers below. */
+type TFn = (key: string, vars?: TVars) => string;
 
 function formatDateTime(iso: string): string {
   const d = parseSqliteUtc(iso);
@@ -30,15 +34,15 @@ function formatTime(iso: string): string {
   return d.toLocaleTimeString(undefined, { hour: "2-digit", minute: "2-digit" });
 }
 
-function relativeTime(iso: string): string {
+function relativeTime(iso: string, t: TFn): string {
   const diff = Date.now() - parseSqliteUtc(iso).getTime();
   const mins = Math.floor(diff / 60000);
-  if (mins < 1) return "Just now";
-  if (mins < 60) return `${mins}m ago`;
+  if (mins < 1) return t("history.time.justNow");
+  if (mins < 60) return t("history.time.minutesAgo", { count: mins });
   const hours = Math.floor(mins / 60);
-  if (hours < 24) return `${hours}h ago`;
+  if (hours < 24) return t("history.time.hoursAgo", { count: hours });
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d ago`;
+  if (days < 7) return t("history.time.daysAgo", { count: days });
   return formatTime(iso);
 }
 
@@ -48,6 +52,7 @@ const PAGE_SIZE = 50;
 
 
 export function HistoryPage() {
+  const { t } = useTranslation();
   const hosts = useHostsStore((s) => s.hosts);
   const loadHosts = useHostsStore((s) => s.loadHosts);
   const [entries, setEntries] = useState<ConnectionHistoryEntry[]>([]);
@@ -103,7 +108,7 @@ export function HistoryPage() {
       })
     : entries;
 
-  const grouped = groupByDate(filtered);
+  const grouped = groupByDate(filtered, t);
 
   // Total count for display
   const totalCount = entries.length + (hasMore ? "+" : "");
@@ -168,32 +173,32 @@ export function HistoryPage() {
       offsetRef.current -= 1;
       setConfirmDeleteId(null);
     } catch {
-      toast.error("Failed to delete history entry.");
+      toast.error(t("history.toast.deleteFailed"));
     } finally {
       setMutating(false);
     }
-  }, []);
+  }, [t]);
 
   const buildContextItems = (entry: ConnectionHistoryEntry): ContextMenuItem[] => [
     {
-      label: "Terminal",
+      label: t("history.terminal"),
       icon: TerminalSquare,
       onClick: () => void handleTerminal(entry),
     },
     {
-      label: "Explorer",
+      label: t("history.explorer"),
       icon: FolderOpen,
       onClick: () => void handleExplorer(entry),
     },
     {
-      label: "Delete",
+      label: t("common.delete"),
       icon: Trash2,
       danger: true,
       disabled: mutating,
       onClick: () => setConfirmDeleteId(entry.id),
     },
     {
-      label: `Filter by ${entry.host_label || entry.host}`,
+      label: t("history.filterBy", { host: entry.host_label || entry.host }),
       separator: true,
       disabled: mutating,
       onClick: () => {
@@ -211,14 +216,14 @@ export function HistoryPage() {
           {/* Page title */}
           <div className="flex items-center justify-between">
             <div>
-              <h1 className="text-[length:var(--text-lg)] font-semibold text-text-primary">History</h1>
+              <h1 className="text-[length:var(--text-lg)] font-semibold text-text-primary">{t("history.title")}</h1>
               <p className="text-[length:var(--text-xs)] text-text-muted mt-1">
-                Audit log of all SSH connections — when you connected, to which host, and as which user
+                {t("history.subtitle")}
               </p>
             </div>
             {entries.length > 0 && (
               <span className="text-[length:var(--text-2xs)] text-text-muted tabular-nums shrink-0">
-                {totalCount} connections
+                {t("history.connectionCount", { count: totalCount })}
               </span>
             )}
           </div>
@@ -236,8 +241,8 @@ export function HistoryPage() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }}
-              placeholder="Search connections..."
-              aria-label="Search connection history"
+              placeholder={t("history.search.placeholder")}
+              aria-label={t("history.search.label")}
               className={[
                 "w-full pl-10 pr-4 py-2.5 rounded-xl text-[length:var(--text-sm)]",
                 "bg-bg-surface border border-border text-text-primary placeholder:text-text-muted",
@@ -253,9 +258,9 @@ export function HistoryPage() {
               <CustomSelect
                 value={hostFilter ?? ""}
                 onChange={(v) => setHostFilter(v || null)}
-                aria-label="Filter by host"
+                aria-label={t("history.filter.label")}
                 options={[
-                  { value: "", label: "All Hosts" },
+                  { value: "", label: t("history.allHosts") },
                   ...hosts.map((h) => ({
                     value: h.id,
                     label: h.label || `${h.username}@${h.host}`,
@@ -290,14 +295,14 @@ export function HistoryPage() {
                             "flex items-center gap-4 px-4 py-2 cursor-default",
                             "hover:bg-bg-overlay/40 transition-colors duration-[var(--duration-fast)]",
                           ].join(" ")}
-                          title="Double-click to reconnect · Right-click for options"
+                          title={t("history.entryHint")}
                         >
                           {/* Time */}
                           <span
                             className="text-[length:var(--text-2xs)] text-text-muted tabular-nums w-14 shrink-0"
                             title={formatDateTime(entry.connected_at)}
                           >
-                            {relativeTime(entry.connected_at)}
+                            {relativeTime(entry.connected_at, t)}
                           </span>
 
                           {/* Host label — clickable to filter */}
@@ -307,7 +312,7 @@ export function HistoryPage() {
                               setQuery("");
                             }}
                             className="text-[length:var(--text-sm)] font-medium text-text-primary truncate flex-1 text-left hover:text-accent transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded"
-                            title={`Filter by ${entry.host_label || entry.host}`}
+                            title={t("history.filterBy", { host: entry.host_label || entry.host })}
                           >
                             {entry.host_label || entry.host}
                           </button>
@@ -345,7 +350,7 @@ export function HistoryPage() {
                   ) : (
                     <ChevronDown size={14} strokeWidth={2} />
                   )}
-                  {loading ? "Loading..." : "Load more"}
+                  {loading ? t("history.loading") : t("history.loadMore")}
                 </button>
               )}
             </div>
@@ -355,16 +360,16 @@ export function HistoryPage() {
             </div>
           ) : entries.length > 0 && query.trim() ? (
             <p className="text-[length:var(--text-sm)] text-text-muted py-8 text-center">
-              No connections match &ldquo;{query}&rdquo;
+              {t("history.noMatch", { query })}
             </p>
           ) : (
             <div className="flex flex-col items-center justify-center py-16 gap-3">
               <Clock size={30} strokeWidth={1.2} className="text-text-muted/30" />
               <p className="text-[length:var(--text-sm)] text-text-muted">
-                No connection history
+                {t("history.empty.title")}
               </p>
               <p className="text-[length:var(--text-xs)] text-text-muted/60 text-center max-w-xs">
-                Your SSH connection log will appear here as you connect to hosts
+                {t("history.empty.hint")}
               </p>
             </div>
           )}
@@ -382,8 +387,8 @@ export function HistoryPage() {
 
       <ConfirmDangerDialog
         open={confirmDeleteId !== null}
-        title="Delete this history record?"
-        message="This record will be permanently removed."
+        title={t("history.delete.title")}
+        message={t("history.delete.message")}
         busy={mutating}
         onCancel={() => setConfirmDeleteId(null)}
         onConfirm={() => {
@@ -401,7 +406,10 @@ interface DateGroup {
   entries: ConnectionHistoryEntry[];
 }
 
-function groupByDate(entries: ConnectionHistoryEntry[]): DateGroup[] {
+function groupByDate(
+  entries: ConnectionHistoryEntry[],
+  t: (key: string, vars?: Record<string, string | number>) => string,
+): DateGroup[] {
   const groups = new Map<string, ConnectionHistoryEntry[]>();
   const today = new Date();
   const todayStr = today.toDateString();
@@ -414,9 +422,9 @@ function groupByDate(entries: ConnectionHistoryEntry[]): DateGroup[] {
     const dateStr = d.toDateString();
 
     const label = dateStr === todayStr
-      ? "Today"
+      ? t("history.group.today")
       : dateStr === yesterdayStr
-        ? "Yesterday"
+        ? t("history.group.yesterday")
         : d.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" });
 
     if (!groups.has(label)) groups.set(label, []);

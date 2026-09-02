@@ -1,6 +1,7 @@
 import { Columns2, Rows2, Maximize2, Minimize2, X } from "lucide-react";
 import { useSessionStore } from "../../stores/session-store";
 import { useTabStore } from "../../stores/tab-store";
+import { useTranslation } from "../../i18n";
 
 interface PaneHeaderProps {
   sessionId: string;
@@ -9,6 +10,7 @@ interface PaneHeaderProps {
 }
 
 export function PaneHeader({ sessionId, tabId }: PaneHeaderProps) {
+  const { t } = useTranslation();
   const session = useSessionStore((s) => s.sessions.get(sessionId));
   const isActive = useSessionStore((s) => s.activeSessionId === sessionId);
   const isZoomed = useSessionStore((s) => s.zoomedPaneId === sessionId);
@@ -105,13 +107,13 @@ export function PaneHeader({ sessionId, tabId }: PaneHeaderProps) {
       >
         {/* Split horizontal */}
         <button type="button" onClick={() => handleSplit("horizontal")} className={btnClass}
-          aria-label="Split right" title="Split right (⌘D)">
+          aria-label={t("terminal.pane.splitRight")} title={t("terminal.pane.splitRightHint")}>
           <Columns2 size={13} strokeWidth={1.8} aria-hidden="true" />
         </button>
 
         {/* Split vertical */}
         <button type="button" onClick={() => handleSplit("vertical")} className={btnClass}
-          aria-label="Split down" title="Split down (⇧⌘D)">
+          aria-label={t("terminal.pane.splitDown")} title={t("terminal.pane.splitDownHint")}>
           <Rows2 size={13} strokeWidth={1.8} aria-hidden="true" />
         </button>
 
@@ -126,8 +128,8 @@ export function PaneHeader({ sessionId, tabId }: PaneHeaderProps) {
                 ? "text-accent hover:text-accent-hover hover:bg-accent/10"
                 : "text-text-muted hover:text-text-primary hover:bg-bg-muted",
             ].join(" ")}
-            aria-label={isZoomed ? "Unzoom pane" : "Zoom pane"}
-            title={isZoomed ? "Unzoom (⇧⌘↵)" : "Zoom (⇧⌘↵)"}
+            aria-label={isZoomed ? t("terminal.pane.unzoom") : t("terminal.pane.zoom")}
+            title={isZoomed ? t("terminal.pane.unzoomHint") : t("terminal.pane.zoomHint")}
           >
             {isZoomed ? (
               <Minimize2 size={12} strokeWidth={2} aria-hidden="true" />
@@ -141,7 +143,7 @@ export function PaneHeader({ sessionId, tabId }: PaneHeaderProps) {
         {hasSplits && (
           <button type="button" onClick={handleClose}
             className="inline-flex items-center justify-center w-5 h-5 rounded text-text-muted hover:text-status-error hover:bg-status-error/10 transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-            aria-label="Close pane" title="Close pane (⌘W)">
+            aria-label={t("terminal.pane.close")} title={t("terminal.pane.closeHint")}>
             <X size={12} strokeWidth={2} aria-hidden="true" />
           </button>
         )}

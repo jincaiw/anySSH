@@ -3,6 +3,7 @@ import { Trash2 } from "lucide-react";
 import type { HostGroup } from "../../types";
 import { ContextMenu } from "../shared/ContextMenu";
 import { resolveGroupIcon } from "./GroupModal";
+import { useTranslation } from "../../i18n";
 
 interface GroupCardProps {
   group: HostGroup;
@@ -13,6 +14,7 @@ interface GroupCardProps {
 }
 
 export function GroupCard({ group, hostCount, isSelected, onSelect, onDelete }: GroupCardProps) {
+  const { t } = useTranslation();
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number } | null>(null);
 
   const handleContextMenu = (e: React.MouseEvent) => {
@@ -23,7 +25,7 @@ export function GroupCard({ group, hostCount, isSelected, onSelect, onDelete }: 
 
   const contextItems = [
     {
-      label: "Delete Group",
+      label: t("dashboard.group.delete"),
       icon: Trash2,
       danger: true,
       onClick: () => onDelete(group.id),
@@ -72,7 +74,7 @@ export function GroupCard({ group, hostCount, isSelected, onSelect, onDelete }: 
             {group.name}
           </p>
           <p className="text-[length:var(--text-xs)] text-text-muted mt-0.5">
-            {hostCount === 1 ? "1 host" : `${hostCount} hosts`}
+            {t("dashboard.group.hostCount", { count: hostCount })}
           </p>
         </div>
       </button>

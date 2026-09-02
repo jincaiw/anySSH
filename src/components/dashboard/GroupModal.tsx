@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import { HOST_COLORS } from "./HostCard";
 import { ModalShell, BTN_GHOST, BTN_PRIMARY } from "../shared/ModalShell";
+import { useTranslation } from "../../i18n";
 
 // ─── Icon registry ───────────────────────────────────────────────────────────
 
@@ -57,6 +58,7 @@ interface GroupModalProps {
 // ─── Component ───────────────────────────────────────────────────────────────
 
 export function GroupModal({ open, onClose, onSave, initial }: GroupModalProps) {
+  const { t } = useTranslation();
   const [name, setName] = useState("");
   const [color, setColor] = useState(HOST_COLORS[4]);
   const [icon, setIcon] = useState("Folder");
@@ -79,7 +81,7 @@ export function GroupModal({ open, onClose, onSave, initial }: GroupModalProps) 
 
   const handleSubmit = useCallback(async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!name.trim()) { setError("Group name is required"); return; }
+    if (!name.trim()) { setError(t("dashboard.groupModal.errorNameRequired")); return; }
     setSaving(true);
     setError(null);
     try {
@@ -88,11 +90,11 @@ export function GroupModal({ open, onClose, onSave, initial }: GroupModalProps) 
       setError(
         err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
-          : "Failed to save group",
+          : t("dashboard.groupModal.errorSaveFailed"),
       );
       setSaving(false);
     }
-  }, [name, color, icon, onSave]);
+  }, [name, color, icon, onSave, t]);
 
   const SelectedIcon = resolveGroupIcon(icon);
 
@@ -109,7 +111,7 @@ export function GroupModal({ open, onClose, onSave, initial }: GroupModalProps) 
     <ModalShell
       open={open}
       onClose={onClose}
-      title={isEdit ? "Edit Group" : "New Group"}
+      title={isEdit ? t("dashboard.groupModal.titleEdit") : t("dashboard.action.newGroup")}
       icon={SelectedIcon}
       maxWidth="sm"
       busy={saving}
@@ -117,7 +119,7 @@ export function GroupModal({ open, onClose, onSave, initial }: GroupModalProps) 
       footer={
         <>
           <button type="button" onClick={onClose} disabled={saving} className={BTN_GHOST}>
-            Cancel
+            {t("common.cancel")}
           </button>
           <button
             form="group-modal-form"
@@ -126,7 +128,11 @@ export function GroupModal({ open, onClose, onSave, initial }: GroupModalProps) 
             disabled={saving || !name.trim()}
             className={BTN_PRIMARY}
           >
-            {saving ? "Saving…" : isEdit ? "Save" : "Create Group"}
+            {saving
+              ? t("dashboard.saving")
+              : isEdit
+                ? t("common.save")
+                : t("dashboard.groupModal.create")}
           </button>
         </>
       }
@@ -134,7 +140,7 @@ export function GroupModal({ open, onClose, onSave, initial }: GroupModalProps) 
       <form id="group-modal-form" onSubmit={handleSubmit} className="flex flex-col gap-4">
         <div>
           <label className={labelClass}>
-            Name <span className="text-status-error">*</span>
+            {t("common.name")} <span className="text-status-error">*</span>
           </label>
           <input
             ref={nameRef}
@@ -142,14 +148,14 @@ export function GroupModal({ open, onClose, onSave, initial }: GroupModalProps) 
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            placeholder="e.g., Production, Staging, Home Lab"
+            placeholder={t("dashboard.groupModal.namePlaceholder")}
             disabled={saving}
             className={inputClass}
           />
         </div>
 
         <div>
-          <span className={labelClass}>Icon</span>
+          <span className={labelClass}>{t("dashboard.groupModal.icon")}</span>
           <div className="grid grid-cols-10 gap-1">
             {GROUP_ICONS.map((item) => {
               const Icon = item.icon;
@@ -180,7 +186,7 @@ export function GroupModal({ open, onClose, onSave, initial }: GroupModalProps) 
         </div>
 
         <div>
-          <span className={labelClass}>Color</span>
+          <span className={labelClass}>{t("common.color")}</span>
           <div className="flex items-center gap-2 flex-wrap">
             {HOST_COLORS.map((c) => (
               <button

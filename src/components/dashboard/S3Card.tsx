@@ -5,6 +5,7 @@ import { ContextMenu } from "../shared/ContextMenu";
 import { ConfirmDangerDialog } from "../shared/ConfirmDangerDialog";
 import { getHostColor } from "./HostCard";
 import { CardActionButton, CardActionStrip } from "./CardActionButton";
+import { useTranslation } from "../../i18n";
 
 interface S3CardProps {
   conn: S3Connection;
@@ -39,6 +40,7 @@ function isEnvironmentValue(val: string): val is EnvironmentValue {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function S3Card({ conn, onConnect, onEdit, onDuplicate, onDelete }: S3CardProps) {
+  const { t } = useTranslation();
   const displayName = conn.label;
   const accentColor = conn.color || getHostColor(conn.label);
 
@@ -65,10 +67,10 @@ export function S3Card({ conn, onConnect, onEdit, onDuplicate, onDelete }: S3Car
   };
 
   const contextItems = [
-    { label: "Explore", icon: FolderOpen, onClick: () => onConnect(conn) },
-    { label: "Edit", icon: Pencil, onClick: () => onEdit(conn) },
-    { label: "Duplicate", icon: Copy, onClick: () => onDuplicate(conn) },
-    { label: "Delete", icon: Trash2, danger: true, separator: true, onClick: () => setConfirmDelete(true) },
+    { label: t("dashboard.s3Card.explore"), icon: FolderOpen, onClick: () => onConnect(conn) },
+    { label: t("common.edit"), icon: Pencil, onClick: () => onEdit(conn) },
+    { label: t("common.duplicate"), icon: Copy, onClick: () => onDuplicate(conn) },
+    { label: t("common.delete"), icon: Trash2, danger: true, separator: true, onClick: () => setConfirmDelete(true) },
   ];
 
   return (
@@ -82,7 +84,7 @@ export function S3Card({ conn, onConnect, onEdit, onDuplicate, onDelete }: S3Car
         onClick={() => onConnect(conn)}
         onKeyDown={handleKeyDown}
         onContextMenu={handleContextMenu}
-        title={`Connect to ${displayName}`}
+        title={t("dashboard.hostCard.connectTo", { name: displayName })}
         className={[
           // grab/grabbing communicates the card is draggable; a plain click still
           // connects (drag needs a 5px move to activate first).
@@ -107,9 +109,9 @@ export function S3Card({ conn, onConnect, onEdit, onDuplicate, onDelete }: S3Car
         <CardActionStrip>
           <CardActionButton
             icon={FolderOpen}
-            label="Explore"
+            label={t("dashboard.s3Card.explore")}
             onClick={() => onConnect(conn)}
-            ariaLabel={`Open explorer for ${displayName}`}
+            ariaLabel={t("dashboard.hostCard.openExplorerFor", { name: displayName })}
             testId={`s3-card-${conn.id}-explorer`}
           />
         </CardActionStrip>
@@ -159,8 +161,8 @@ export function S3Card({ conn, onConnect, onEdit, onDuplicate, onDelete }: S3Car
 
       <ConfirmDangerDialog
         open={confirmDelete}
-        title="Delete this S3 connection?"
-        message="This connection will be permanently removed."
+        title={t("dashboard.s3Card.deleteTitle")}
+        message={t("dashboard.s3Card.deleteMessage")}
         onCancel={() => setConfirmDelete(false)}
         onConfirm={() => {
           setConfirmDelete(false);

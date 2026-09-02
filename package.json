@@ -1,11 +1,11 @@
 {
-  "name": "anyscp",
+  "name": "anyssh",
   "private": true,
   "version": "0.0.0-dev",
   "description": "A modern desktop client for SSH, SFTP, and S3",
   "author": "Nevil Macwan <macnev2013@gmail.com>",
   "license": "MIT",
-  "repository": "https://github.com/macnev2013/anySCP",
+  "repository": "https://github.com/jincaiw/anySSH",
   "type": "module",
   "scripts": {
     "dev": "vite",
@@ -13,6 +13,8 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "i18n:check": "vitest run src/i18n/__tests__/i18n-parity.test.ts",
     "tauri": "tauri"
   },
   "dependencies": {
@@ -44,6 +46,7 @@
     "@testing-library/user-event": "^14.6.1",
     "@types/react": "^19.1.8",
     "@types/react-dom": "^19.1.6",
+    "@types/node": "^22.12.0",
     "@vitejs/plugin-react": "^4.6.0",
     "jsdom": "^29.1.1",
     "tailwindcss": "^4.2.2",

@@ -11,6 +11,7 @@ import {
   Shield,
 } from "lucide-react";
 import type { FileSystemProvider } from "../../types/explorer";
+import { useTranslation } from "../../i18n";
 
 interface BreadcrumbSegment {
   label: string;
@@ -100,6 +101,7 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
 }: ExplorerToolbarProps) {
   const caps = provider.capabilities;
   const providerType = provider.type;
+  const { t } = useTranslation();
 
   const [isEditing, setIsEditing] = useState(false);
   const [draftPath, setDraftPath] = useState(currentPath);
@@ -161,8 +163,8 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
         data-testid="explorer-home"
         onClick={handleHome}
         disabled={loading || isAtRoot}
-        title={`Go to ${provider.rootLabel()}`}
-        aria-label="Go to root"
+        title={t("explorer.toolbar.goToRoot", { name: provider.rootLabel() })}
+        aria-label={t("explorer.toolbar.goToRootAria")}
         className={ICON_BTN_CLASS}
       >
         <Home size={15} strokeWidth={1.8} aria-hidden="true" />
@@ -181,7 +183,7 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
           spellCheck={false}
           autoCorrect="off"
           autoCapitalize="off"
-          aria-label="Edit current path"
+          aria-label={t("explorer.toolbar.editPathAria")}
           className={PATH_INPUT_CLASS}
         />
       ) : (
@@ -198,8 +200,8 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
               beginEdit();
             }
           }}
-          title="Click to type a path"
-          aria-label="Current path"
+          title={t("explorer.toolbar.clickToEdit")}
+          aria-label={t("explorer.toolbar.currentPathAria")}
           className={`${BREADCRUMB_BAR_CLASS} focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring`}
         >
           {segments.map((seg, index) => {
@@ -226,7 +228,9 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
                     if (!isLast) onNavigate(seg.path);
                   }}
                   disabled={isLast}
-                  title={isLast ? seg.path : `Navigate to ${seg.path}`}
+                  title={
+                    isLast ? seg.path : t("explorer.toolbar.navigateTo", { path: seg.path })
+                  }
                   className={`${SEGMENT_BTN_BASE_CLASS} ${isLast ? SEGMENT_BTN_LAST_CLASS : SEGMENT_BTN_LINK_CLASS}`}
                 >
                   {isRoot ? provider.rootLabel() : seg.label}
@@ -245,7 +249,7 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
           size={15}
           strokeWidth={2}
           className="text-accent motion-safe:animate-spin shrink-0"
-          aria-label="Operation in progress"
+          aria-label={t("explorer.toolbar.busyAria")}
         />
       )}
 
@@ -258,8 +262,8 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
           data-testid="explorer-upload"
           onClick={onUpload}
           disabled={loading}
-          title="Upload files"
-          aria-label="Upload files"
+          title={t("explorer.toolbar.uploadFiles")}
+          aria-label={t("explorer.toolbar.uploadFiles")}
           className={ICON_BTN_CLASS}
         >
           <Upload size={15} strokeWidth={1.8} aria-hidden="true" />
@@ -272,8 +276,8 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
           data-testid="explorer-upload-folder"
           onClick={onUploadFolder}
           disabled={loading}
-          title="Upload folder"
-          aria-label="Upload folder"
+          title={t("explorer.toolbar.uploadFolder")}
+          aria-label={t("explorer.toolbar.uploadFolder")}
           className={ICON_BTN_CLASS}
         >
           <FolderUp size={15} strokeWidth={1.8} aria-hidden="true" />
@@ -286,8 +290,8 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
           data-testid="explorer-new-file"
           onClick={onNewFile}
           disabled={loading}
-          title="New file"
-          aria-label="New file"
+          title={t("explorer.toolbar.newFile")}
+          aria-label={t("explorer.toolbar.newFile")}
           className={ICON_BTN_CLASS}
         >
           <FilePlus size={15} strokeWidth={1.8} aria-hidden="true" />
@@ -300,8 +304,8 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
           data-testid="explorer-new-folder"
           onClick={onNewFolder}
           disabled={loading}
-          title="New folder"
-          aria-label="New folder"
+          title={t("explorer.toolbar.newFolder")}
+          aria-label={t("explorer.toolbar.newFolder")}
           className={ICON_BTN_CLASS}
         >
           <FolderPlus size={15} strokeWidth={1.8} aria-hidden="true" />
@@ -313,8 +317,8 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
         data-testid="explorer-refresh"
         onClick={onRefresh}
         disabled={loading}
-        title="Refresh"
-        aria-label="Refresh"
+        title={t("common.refresh")}
+        aria-label={t("common.refresh")}
         className={ICON_BTN_CLASS}
       >
         <RefreshCw
@@ -331,8 +335,16 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
           onClick={onToggleSudo}
           disabled={sudoBusy}
           aria-busy={sudoBusy}
-          title={sudoMode ? "Disable sudo mode" : "Enable sudo mode"}
-          aria-label={sudoMode ? "Disable sudo mode" : "Enable sudo mode"}
+          title={
+            sudoMode
+              ? t("explorer.toolbar.sudoDisable")
+              : t("explorer.toolbar.sudoEnable")
+          }
+          aria-label={
+            sudoMode
+              ? t("explorer.toolbar.sudoDisable")
+              : t("explorer.toolbar.sudoEnable")
+          }
           aria-pressed={!!sudoMode}
           className={
             sudoMode

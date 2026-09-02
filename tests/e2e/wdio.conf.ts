@@ -1,4 +1,4 @@
-// WebdriverIO configuration for anySCP E2E tests.
+// WebdriverIO configuration for anySSH E2E tests.
 //
 // We spawn `tauri-driver` ourselves (rather than via a service) because
 // the wdio service ecosystem doesn't ship an official tauri-driver plugin.
@@ -19,8 +19,8 @@ const reportPath = path.join(__dirname, "report.md");
 const recordsPath = path.join(__dirname, ".test-records.ndjson");
 const xvfbDisplay = process.env.DISPLAY ?? ":99";
 
-const anyscpBin =
-    process.env.ANYSCP_BIN ?? path.join(repoRoot, "src-tauri/target/debug/anyscp");
+const anysshBin =
+    process.env.ANYSSH_BIN ?? path.join(repoRoot, "src-tauri/target/debug/anyssh");
 
 let driverProcess: ChildProcess | null = null;
 let recorder: { proc: ChildProcess; path: string } | null = null;
@@ -95,7 +95,7 @@ function renderReport(records: TestRecord[]): string {
     }
 
     const lines: string[] = [];
-    lines.push(`# anySCP E2E report`);
+    lines.push(`# anySSH E2E report`);
     lines.push("");
     lines.push(`- **${passed}/${total} passed** (${failed} failed) in ${(totalMs / 1000).toFixed(1)}s`);
     lines.push(`- Generated: ${new Date().toISOString()}`);
@@ -201,7 +201,7 @@ export const config: WebdriverIO.Config = {
             // unknown browserName values with "Failed to match capabilities".
             // @ts-expect-error - tauri:options isn't in WebdriverIO's types
             "tauri:options": {
-                application: anyscpBin,
+                application: anysshBin,
             },
         },
     ],

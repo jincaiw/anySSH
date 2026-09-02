@@ -1,5 +1,5 @@
 # syntax=docker/dockerfile:1.6
-# E2E test runner: builds the anySCP debug binary inside the container and drives
+# E2E test runner: builds the anySSH debug binary inside the container and drives
 # it with tauri-driver + WebKitWebDriver under xvfb.
 
 FROM ubuntu:24.04
@@ -51,7 +51,7 @@ RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
 
 WORKDIR /workspace
 
-# Pre-create a writable XDG dir for the Tauri app (anyscp.db lives under here).
+# Pre-create a writable XDG dir for the Tauri app (anyssh.db lives under here).
 RUN mkdir -p "$XDG_DATA_HOME"
 
 # Install the WDIO harness deps into /opt/e2e at build time. We can't install

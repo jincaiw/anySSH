@@ -163,7 +163,7 @@ pub struct HostDb {
 }
 
 impl HostDb {
-    /// Opens (or creates) the SQLite database at `<app_data_dir>/anyscp.db`
+    /// Opens (or creates) the SQLite database at `<app_data_dir>/anyssh.db`
     /// and runs schema migrations.
     #[instrument(skip_all, fields(dir = %app_data_dir.display()))]
     pub fn new(app_data_dir: &std::path::Path) -> Result<Self, DbError> {
@@ -174,7 +174,7 @@ impl HostDb {
             ))
         })?;
 
-        let db_path = app_data_dir.join("anyscp.db");
+        let db_path = app_data_dir.join("anyssh.db");
         let conn = Connection::open(&db_path).map_err(|e| {
             DbError::InitError(format!(
                 "could not open database at {}: {e}",
@@ -1818,7 +1818,7 @@ impl HostDb {
         // The snapshot is plaintext on disk until the caller encrypts it, so it
         // lives inside an owner-only (0700) temp dir and is removed on every
         // path, including read failures.
-        let dir = private_temp_dir("anyscp-export")?;
+        let dir = private_temp_dir("anyssh-export")?;
         let tmp = dir.join("snapshot.db");
         let result = (|| -> Result<Vec<u8>, DbError> {
             {
@@ -1861,8 +1861,8 @@ impl HostDb {
         };
 
         // Owner-only temp dir for the (plaintext) snapshot during restore.
-        let tmp_dir = private_temp_dir("anyscp-restore")?;
-        let tmp_db = tmp_dir.join("anyscp.db");
+        let tmp_dir = private_temp_dir("anyssh-restore")?;
+        let tmp_db = tmp_dir.join("anyssh.db");
 
         let result = (|| -> Result<(), DbError> {
             std::fs::write(&tmp_db, bytes)
@@ -1880,17 +1880,17 @@ impl HostDb {
                     .optional()
                     .map_err(|_| {
                         DbError::Validation(
-                            "this file is not a valid anySCP backup (no schema marker)".into(),
+                            "this file is not a valid anySSH backup (no schema marker)".into(),
                         )
                     })?
                     .ok_or_else(|| {
                         DbError::Validation(
-                            "this file is not a valid anySCP backup (no schema marker)".into(),
+                            "this file is not a valid anySSH backup (no schema marker)".into(),
                         )
                     })?;
                 if bak_ver > current {
                     return Err(DbError::Validation(format!(
-                        "backup is from a newer version of anySCP (schema {bak_ver} > {current}); update anySCP first"
+                        "backup is from a newer version of anySSH (schema {bak_ver} > {current}); update anySSH first"
                     )));
                 }
                 bak.execute_batch("PRAGMA foreign_keys = ON;")?;
@@ -2003,7 +2003,7 @@ mod tests {
     /// Create a HostDb in an isolated temp directory.  Returns the db and the
     /// path so the caller can keep the directory alive for the test duration.
     fn test_db() -> (HostDb, std::path::PathBuf) {
-        let dir = std::env::temp_dir().join(format!("anyscp_test_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("anyssh_test_{}", uuid::Uuid::new_v4()));
         let db = HostDb::new(&dir).expect("HostDb::new");
         (db, dir)
     }
@@ -2326,7 +2326,7 @@ mod tests {
 
     #[test]
     fn migrations_are_idempotent_across_reopen() {
-        let dir = std::env::temp_dir().join(format!("anyscp_test_{}", uuid::Uuid::new_v4()));
+        let dir = std::env::temp_dir().join(format!("anyssh_test_{}", uuid::Uuid::new_v4()));
         {
             let db = HostDb::new(&dir).expect("first open");
             db.save_host(&sample_host("persisted")).expect("save");

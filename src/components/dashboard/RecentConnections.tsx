@@ -1,6 +1,7 @@
 import type { RecentConnection } from "../../types";
 import { getHostColor } from "./HostCard";
 import { relativeTime } from "../../utils/time";
+import { useTranslation } from "../../i18n";
 
 // ─── Props ────────────────────────────────────────────────────────────────────
 
@@ -15,6 +16,8 @@ export function RecentConnections({
   connections,
   onConnect,
 }: RecentConnectionsProps) {
+  const { t } = useTranslation();
+
   if (connections.length === 0) return null;
 
   return (
@@ -23,7 +26,7 @@ export function RecentConnections({
         id="recent-heading"
         className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted mb-3"
       >
-        Recent
+        {t("dashboard.recent.heading")}
       </h2>
 
       {/* Horizontal scrollable chip row */}
@@ -31,7 +34,7 @@ export function RecentConnections({
         className="flex gap-2 overflow-x-auto pb-1"
         style={{ scrollbarWidth: "none" }}
         role="list"
-        aria-label="Recent connections"
+        aria-label={t("dashboard.recent.ariaLabel")}
       >
         {connections.map((conn) => {
           const displayName = conn.host_label || conn.host;
@@ -46,7 +49,12 @@ export function RecentConnections({
               data-recent-host-id={conn.host_id}
               data-recent-label={displayName}
               onClick={() => onConnect(conn)}
-              title={`Reconnect to ${displayName} (${conn.username}@${conn.host}:${conn.port})`}
+              title={t("dashboard.recent.reconnectTo", {
+                name: displayName,
+                username: conn.username,
+                host: conn.host,
+                port: conn.port,
+              })}
               className={[
                 "flex items-center gap-2 px-3 py-1.5 rounded-lg shrink-0",
                 "bg-bg-surface border border-border",

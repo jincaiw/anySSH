@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { t } from "../i18n";
 import type { PortForwardRule, TunnelStatus } from "../types";
 
 interface PortForwardState {
@@ -115,7 +116,7 @@ export const usePortForwardStore = create<PortForwardState>((set, get) => ({
     } catch (err) {
       const msg = err && typeof err === "object" && "message" in err
         ? String((err as { message: string }).message)
-        : typeof err === "string" ? err : "Tunnel failed to start";
+        : typeof err === "string" ? err : t("portforward.startFailed");
       console.error("Start tunnel failed:", msg);
       set((state) => {
         const next = new Map(state.activeTunnels);

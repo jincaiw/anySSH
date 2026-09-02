@@ -3,7 +3,7 @@
 // can't reach, bridged only by `sshd-bastion`. So:
 //   • a DIRECT connection to the target must fail (it's unreachable), and
 //   • a TUNNELLED connection (proxy_jump_host_id → bastion) must succeed and
-//     land a real shell on the target (hostname == anyscp-tunnel-target).
+//     land a real shell on the target (hostname == anyssh-tunnel-target).
 // Together these show the tunnel — not direct reachability — is what works.
 
 import { expect } from "chai";
@@ -31,7 +31,7 @@ const SSH_PASS = process.env.SSH_PASS ?? "testpass";
 
 // The target's container hostname (docker-compose `hostname:`). A shell that
 // reports this name can only have been reached through the bastion tunnel.
-const TARGET_MARKER = "anyscp-tunnel-target";
+const TARGET_MARKER = "anyssh-tunnel-target";
 
 describe("ProxyJump end-to-end", () => {
     beforeEach(async () => {

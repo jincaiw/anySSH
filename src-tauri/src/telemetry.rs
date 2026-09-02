@@ -18,10 +18,10 @@ static TX: OnceLock<mpsc::UnboundedSender<(String, Value)>> = OnceLock::new();
 /// Safe to call from `.setup()` — the worker is spawned on a background thread
 /// with its own Tokio runtime, so it does not require an active reactor.
 ///
-/// No-op when `ANYSCP_DISABLE_TELEMETRY` is set (used by the e2e container
+/// No-op when `ANYSSH_DISABLE_TELEMETRY` is set (used by the e2e container
 /// so test runs don't pollute the real analytics stream).
 pub fn init() {
-    if std::env::var_os("ANYSCP_DISABLE_TELEMETRY").is_some() {
+    if std::env::var_os("ANYSSH_DISABLE_TELEMETRY").is_some() {
         return;
     }
 
@@ -84,10 +84,16 @@ pub fn capture(event: &str, properties: Value) {
 /// The ID is a random UUID that is persisted to disk on first launch.  It is
 /// not linked to any user account, email address, or system identity.
 fn get_or_create_device_id() -> String {
-    let id_path = dirs::data_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("com.macnev2013.anyscp")
-        .join(".device_id");
+    // In portable mode the device id lives inside the portable folder, next to
+    // the rest of the data — otherwise every machine the stick is plugged into
+    // would mint a fresh anonymous id and fragment the analytics history.
+    let id_path = match crate::portable::device_id_path() {
+        Some(path) => path,
+        None => dirs::data_dir()
+            .unwrap_or_else(|| std::path::PathBuf::from("."))
+            .join("com.jincaiw.anyssh")
+            .join(".device_id"),
+    };
 
     if let Ok(id) = std::fs::read_to_string(&id_path) {
         let trimmed = id.trim().to_string();

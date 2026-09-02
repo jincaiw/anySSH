@@ -16,11 +16,11 @@ SSH_USER           := testuser
 SSH_PASSWORD       := testpass
 
 # Password-auth container
-SSH_PASS_CONTAINER := anyscp-test-sshd-pass
+SSH_PASS_CONTAINER := anyssh-test-sshd-pass
 SSH_PASS_PORT      := 2222
 
 # Key-auth container
-SSH_KEY_CONTAINER  := anyscp-test-sshd-key
+SSH_KEY_CONTAINER  := anyssh-test-sshd-key
 SSH_KEY_PORT       := 2223
 
 # Test SSH keypair — generated on demand, kept out of git.
@@ -29,23 +29,23 @@ SSH_KEY            := $(SSH_KEY_DIR)/id_ed25519
 SSH_PUB_KEY        := $(SSH_KEY).pub
 
 # SCP-only test server (extends linuxserver/openssh-server with SFTP stripped).
-SCP_IMAGE          := anyscp-test-scp-only:latest
+SCP_IMAGE          := anyssh-test-scp-only:latest
 SCP_IMAGE_STAMP    := tests/scp-server/.image-stamp
 SCP_IMAGE_SRC      := tests/scp-server/Dockerfile tests/scp-server/disable-sftp.sh
 
 # SCP-only password container
-SSH_SCP_PASS_CONTAINER := anyscp-test-scp-pass
+SSH_SCP_PASS_CONTAINER := anyssh-test-scp-pass
 SSH_SCP_PASS_PORT      := 2224
 
 # SCP-only key container
-SSH_SCP_KEY_CONTAINER  := anyscp-test-scp-key
+SSH_SCP_KEY_CONTAINER  := anyssh-test-scp-key
 SSH_SCP_KEY_PORT       := 2225
 
 # ─── Keypair ──────────────────────────────────────────────────────────────────
 
 $(SSH_KEY):
 	@mkdir -p $(SSH_KEY_DIR)
-	@ssh-keygen -t ed25519 -f $(SSH_KEY) -N "" -C "anyscp-test-key" >/dev/null
+	@ssh-keygen -t ed25519 -f $(SSH_KEY) -N "" -C "anyssh-test-key" >/dev/null
 	@echo "Generated test SSH key at $(SSH_KEY)"
 
 ssh-keygen: $(SSH_KEY)
@@ -261,7 +261,7 @@ ssh-clean-keys:
 # build-cache volumes (cargo/target/node-modules) to host bind mounts under
 # $E2E_CACHE_DIR so they can be persisted via actions/cache. Locally E2E_CI is
 # unset → plain named volumes, unchanged behaviour.
-E2E_COMPOSE := docker compose -f tests/e2e/docker-compose.yml $(if $(filter 1,$(E2E_CI)),-f tests/e2e/docker-compose.ci.yml) -p anyscp-e2e
+E2E_COMPOSE := docker compose -f tests/e2e/docker-compose.yml $(if $(filter 1,$(E2E_CI)),-f tests/e2e/docker-compose.ci.yml) -p anyssh-e2e
 # Stamp file — make rebuilds the image whenever any of its source inputs
 # change (Dockerfile, entrypoint, or harness package.json).
 E2E_IMAGE_STAMP := tests/e2e/.image-stamp
@@ -269,12 +269,25 @@ E2E_IMAGE_SRC   := tests/e2e/Dockerfile tests/e2e/entrypoint.sh tests/e2e/packag
 
 # (Re)build the runner image whenever any source input is newer than the stamp.
 $(E2E_IMAGE_STAMP): $(E2E_IMAGE_SRC)
-	@echo "  building anyscp-e2e-runner:latest (sources changed)"
-	@cd tests/e2e && docker build -t anyscp-e2e-runner:latest .
+	@echo "  building anyssh-e2e-runner:latest (sources changed)"
+	@cd tests/e2e && docker build -t anyssh-e2e-runner:latest .
 	@touch $@
 
 # Explicit rebuild target (alias).
 e2e-build: $(E2E_IMAGE_STAMP)
+
+# Pre-pull the external service images (sshd/minio/busybox...) with retries.
+# `up` does an implicit pull, so a transient registry error (EOF / timeout on
+# lscr.io or ghcr.io) would otherwise fail the whole E2E shard. Pulling up
+# front with retry turns that flake into a delay instead of a red run.
+e2e-pull:
+	@rc=1; \
+	for i in 1 2 3 4 5; do \
+		if $(E2E_COMPOSE) pull --ignore-buildable; then rc=0; break; fi; \
+		echo "  image pull attempt $$i failed; retrying in 15s"; \
+		sleep 15; \
+	done; \
+	exit $$rc
 
 # Run the full suite. Brings up the SSH targets + runner, runs WDIO, then
 # tears containers down — but KEEPS volumes (rust-target, cargo-cache,
@@ -299,7 +312,7 @@ e2e-logs:
 # Tear down everything and remove cached volumes (forces a clean next run).
 e2e-clean:
 	@$(E2E_COMPOSE) down -v --remove-orphans
-	@docker rmi anyscp-e2e-runner:latest 2>/dev/null || true
+	@docker rmi anyssh-e2e-runner:latest 2>/dev/null || true
 	@rm -f $(E2E_IMAGE_STAMP)
 
 e2e-clean-artifacts:
@@ -311,7 +324,7 @@ e2e-clean-artifacts:
 # so the whole pipeline is deterministic and needs no host tooling:
 #   1. drive the app to each view, save raw WebKit captures
 #   2. frame them (titlebar + rounded corners + shadow + wallpaper)
-#   3. convert the recorded tour to screens/anyscp.gif
+#   3. convert the recorded tour to screens/anyssh.gif
 # Note: screens/header.png is a hand-made marketing banner and is NOT regenerated.
 SCREENSHOT_SPEC := ./screenshot-tools/capture.screens.ts
 SCREENSHOT_BUILD := /workspace/tests/e2e/screenshot-tools/build-assets.sh

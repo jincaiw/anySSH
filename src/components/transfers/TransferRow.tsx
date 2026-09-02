@@ -1,8 +1,33 @@
 import { memo } from "react";
 import { ArrowDown, ArrowUp, X, RotateCw } from "lucide-react";
+import type { TVars } from "../../i18n";
+import { t as translateNow, useTranslation } from "../../i18n";
 import type { TransferEvent, TransferStatusValue } from "../../types";
 import { useTransferStore } from "../../stores/transfer-store";
 import { formatBytes, formatSpeed, formatEta, getStatusString } from "../../utils/format";
+
+/**
+ * Map a backend status discriminant ("Queued", "InProgress", …) onto display
+ * copy. The discriminants are data, not copy — only the known ones are
+ * translated; anything else falls back to the raw value so an unrecognised
+ * status still shows something meaningful instead of a dotted key.
+ *
+ * Takes the reactive `t` so the row re-renders on a locale switch; callers
+ * outside React can omit it and use the non-reactive lookup.
+ */
+export function statusLabel(
+  status: string,
+  translate: (key: string, vars?: TVars) => string = translateNow,
+): string {
+  switch (status) {
+    case "Queued": return translate("transfers.status.Queued");
+    case "InProgress": return translate("transfers.status.InProgress");
+    case "Completed": return translate("transfers.status.Completed");
+    case "Failed": return translate("transfers.status.Failed");
+    case "Cancelled": return translate("transfers.status.Cancelled");
+    default: return status;
+  }
+}
 
 // ─── Helpers (pure, no allocation) ───────────────────────────────────────────
 
@@ -109,6 +134,8 @@ export const TransferRow = memo(function TransferRow({
   onRetry,
   onDismiss,
 }: TransferRowProps) {
+  // `t` is already the transfer prop, so the translate fn is renamed.
+  const { t: tr } = useTranslation();
   const sessionId = t.sftp_session_id ?? t.scp_session_id ?? t.s3_session_id ?? "";
   const hostLabel = useTransferStore((s) => s.hostLabels.get(sessionId));
 
@@ -119,17 +146,15 @@ export const TransferRow = memo(function TransferRow({
   const isQueued = statusStr === "Queued";
   const isInProgress = statusStr === "InProgress";
   const isCompleted = statusStr === "Completed";
-  const isCancelled = statusStr === "Cancelled";
 
   const hasMultipleFiles = t.files_total > 1;
   const errorMsg = getErrorMessage(t.status);
 
-  const statusLabel =
+  // A finished transfer reads better as "Done" than as the raw discriminant.
+  const statusText =
     isInProgress ? `${pct}%` :
-    isQueued     ? "Queued" :
-    isCompleted  ? "Done" :
-    isCancelled  ? "Cancelled" :
-    failed       ? "Failed" : "";
+    isCompleted  ? tr("transfers.status.done") :
+                   statusLabel(statusStr, tr);
 
   const statusColor =
     isCompleted  ? "text-status-connected" :
@@ -137,7 +162,10 @@ export const TransferRow = memo(function TransferRow({
     isInProgress ? "text-accent" :
                    "text-text-muted";
 
-  const progressLabel = `${t.name} ${t.direction.toLowerCase()} progress`;
+  const progressLabel = tr("transfers.row.progressAria", {
+    name: t.name,
+    direction: t.direction.toLowerCase(),
+  });
 
   return (
     <div className={ROW_CLASS} role="listitem">
@@ -169,7 +197,9 @@ export const TransferRow = memo(function TransferRow({
             {hostLabel && <span>{hostLabel}</span>}
             {hostLabel && hasMultipleFiles && <span> · </span>}
             {hasMultipleFiles && (
-              <span className="tabular-nums">{t.files_done}/{t.files_total} files</span>
+              <span className="tabular-nums">
+                {tr("transfers.row.fileProgress", { done: t.files_done, total: t.files_total })}
+              </span>
             )}
           </p>
         </div>
@@ -177,7 +207,7 @@ export const TransferRow = memo(function TransferRow({
         {/* Status label — hidden for completed (tick shown in actions area instead) */}
         {!isCompleted && (
           <span className={`text-[length:var(--text-2xs)] font-medium tabular-nums shrink-0 ${statusColor}`}>
-            {statusLabel}
+            {statusText}
           </span>
         )}
 
@@ -186,8 +216,8 @@ export const TransferRow = memo(function TransferRow({
           {failed && (
             <button
               onClick={() => onRetry(t.transfer_id)}
-              title="Retry transfer"
-              aria-label={`Retry ${t.name}`}
+              title={tr("transfers.row.retry")}
+              aria-label={tr("transfers.row.retryAria", { name: t.name })}
               className={`${ACTION_BTN_CLASS} text-text-muted hover:text-accent hover:bg-accent/10`}
             >
               <RotateCw size={14} strokeWidth={2} aria-hidden="true" />
@@ -197,8 +227,8 @@ export const TransferRow = memo(function TransferRow({
           {(isInProgress || isQueued) && (
             <button
               onClick={() => onCancel(t.transfer_id)}
-              title="Cancel transfer"
-              aria-label={`Cancel ${t.name}`}
+              title={tr("transfers.row.cancel")}
+              aria-label={tr("transfers.row.cancelAria", { name: t.name })}
               className={`${ACTION_BTN_CLASS} text-text-muted hover:text-status-error hover:bg-status-error/10`}
             >
               <X size={14} strokeWidth={2} aria-hidden="true" />
@@ -208,8 +238,8 @@ export const TransferRow = memo(function TransferRow({
           {terminal && (
             <button
               onClick={() => onDismiss(t.transfer_id)}
-              title="Dismiss"
-              aria-label={`Dismiss ${t.name}`}
+              title={tr("common.dismiss")}
+              aria-label={tr("transfers.row.dismissAria", { name: t.name })}
               className={`${ACTION_BTN_CLASS} text-text-muted hover:text-text-primary hover:bg-bg-subtle`}
             >
               <X size={14} strokeWidth={2} aria-hidden="true" />
@@ -250,7 +280,7 @@ export const TransferRow = memo(function TransferRow({
           <span className="text-[length:var(--text-2xs)] text-text-muted">
             {t.total_bytes > 0 ? formatBytes(t.total_bytes) : (
               <span style={{ animation: "pulseSubtle 2s ease-in-out infinite" }}>
-                Calculating...
+                {tr("transfers.calculating")}
               </span>
             )}
           </span>

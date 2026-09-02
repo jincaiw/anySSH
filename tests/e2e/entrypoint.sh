@@ -10,7 +10,7 @@ set -euo pipefail
 
 cd /workspace
 
-ANYSCP_BIN="src-tauri/target/debug/anyscp"
+ANYSSH_BIN="src-tauri/target/debug/anyssh"
 
 # ── 1. Wait for sshd containers ───────────────────────────────────────────────
 wait_for() {
@@ -52,18 +52,18 @@ ln -sfn /opt/e2e/node_modules tests/e2e/node_modules
 # source file is newer than the binary (otherwise frontend changes silently
 # go missing because Tauri embeds dist/ at compile time).
 needs_build=0
-if [[ ! -x "$ANYSCP_BIN" ]]; then
+if [[ ! -x "$ANYSSH_BIN" ]]; then
     needs_build=1
 elif [[ -n "${E2E_FORCE_BUILD:-}" ]]; then
     needs_build=1
 elif find src src-tauri/src src-tauri/Cargo.toml src-tauri/tauri.conf.json \
         index.html vite.config.ts \
-        -newer "$ANYSCP_BIN" -print -quit 2>/dev/null | grep -q .; then
+        -newer "$ANYSSH_BIN" -print -quit 2>/dev/null | grep -q .; then
     needs_build=1
 fi
 
 if [[ $needs_build -eq 1 ]]; then
-    echo "[entrypoint] building anyscp (debug, frontend embedded)"
+    echo "[entrypoint] building anyssh (debug, frontend embedded)"
     # Use `tauri build --debug --no-bundle`, NOT `cargo build`:
     #   - `cargo build` alone produces a binary that expects the frontend at
     #     tauri.conf.json's devUrl (http://localhost:1420) — there's no Vite
@@ -74,11 +74,11 @@ if [[ $needs_build -eq 1 ]]; then
     #   - `--no-bundle` skips the installer/AppImage step we don't need.
     pnpm tauri build --debug --no-bundle
 else
-    echo "[entrypoint] reusing existing binary at $ANYSCP_BIN (sources unchanged)"
+    echo "[entrypoint] reusing existing binary at $ANYSSH_BIN (sources unchanged)"
 fi
 
 # ── 4. Start Xvfb + x11vnc, then run WDIO ─────────────────────────────────────
-# Credentials use the kernel keyring (keyutils) via ANYSCP_TEST_KEYRING set in
+# Credentials use the kernel keyring (keyutils) via ANYSSH_TEST_KEYRING set in
 # docker-compose.yml. No dbus/gnome-keyring/libsecret dance needed.
 
 # Start Xvfb on :99 manually (so x11vnc can attach to the same display).
@@ -111,5 +111,5 @@ if [[ -n "${WDIO_SPEC:-}" ]]; then
 fi
 # Wrap the test process in `keyctl session -` so the Tauri app's keyutils
 # keyring backend has a session keyring to write to. Without it, every
-# keyctl syscall returns EACCES → "PermissionDenied" from anyscp's vault.
+# keyctl syscall returns EACCES → "PermissionDenied" from anyssh's vault.
 exec keyctl session - ./node_modules/.bin/wdio run wdio.conf.ts "${wdio_args[@]}"

@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { Plus, Cloud, Search, Trash2, FolderOpen, Copy, Pencil } from "lucide-react";
+import { useTranslation } from "../../i18n";
 import type { S3Connection } from "../../types";
 import { useS3Store } from "../../stores/s3-store";
 import { S3Browser } from "./S3Browser";
@@ -10,6 +11,7 @@ import type { ContextMenuItem } from "../shared/ContextMenu";
 import type { S3Session } from "../../stores/s3-store";
 
 export function S3Page() {
+  const { t } = useTranslation();
   const sessions = useS3Store((s) => s.sessions);
   const activeS3SessionId = useS3Store((s) => s.activeS3SessionId);
   const setActiveS3Session = useS3Store((s) => s.setActiveS3Session);
@@ -104,18 +106,18 @@ export function S3Page() {
     const conn = savedConnections.find((c) => c.id === session.sessionId);
     return [
       {
-        label: "Open",
+        label: t("common.open"),
         icon: FolderOpen,
         onClick: () => setActiveS3Session(session.sessionId),
       },
       ...(conn ? [{
-        label: "Duplicate",
+        label: t("common.duplicate"),
         icon: Copy,
         separator: true as const,
         onClick: () => void handleDuplicate(conn),
       }] : []),
       {
-        label: "Disconnect",
+        label: t("common.disconnect"),
         icon: Trash2,
         separator: !conn ? true as const : undefined,
         danger: true as const,
@@ -139,9 +141,9 @@ export function S3Page() {
 
           {/* Page title */}
           <div>
-            <h1 className="text-[length:var(--text-lg)] font-semibold text-text-primary">Cloud Storage</h1>
+            <h1 className="text-[length:var(--text-lg)] font-semibold text-text-primary">{t("s3.page.title")}</h1>
             <p className="text-[length:var(--text-xs)] text-text-muted mt-1">
-              Browse and manage files in S3 buckets and S3-compatible storage services like MinIO, R2, and Wasabi
+              {t("s3.page.subtitle")}
             </p>
           </div>
 
@@ -158,8 +160,8 @@ export function S3Page() {
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               onKeyDown={(e) => { if (e.key === "Escape") setQuery(""); }}
-              placeholder="Search connections..."
-              aria-label="Search S3 connections"
+              placeholder={t("s3.page.searchPlaceholder")}
+              aria-label={t("s3.page.searchAriaLabel")}
               className={[
                 "w-full pl-10 pr-4 py-2.5 rounded-xl text-[length:var(--text-sm)]",
                 "bg-bg-surface border border-border text-text-primary placeholder:text-text-muted",
@@ -182,7 +184,7 @@ export function S3Page() {
               ].join(" ")}
             >
               <Plus size={14} strokeWidth={2.2} />
-              New Connection
+              {t("s3.page.newConnection")}
             </button>
           </div>
 
@@ -190,7 +192,7 @@ export function S3Page() {
           {savedConnections.filter((c) => !sessions.has(c.id)).length > 0 && (
             <section>
               <h2 className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted mb-3">
-                Saved
+                {t("s3.page.saved")}
               </h2>
               <div className="grid grid-cols-3 gap-2.5">
                 {savedConnections
@@ -213,9 +215,9 @@ export function S3Page() {
 
           {/* Active connections */}
           <section>
-            <h2 className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted mb-3">
-              Active
-            </h2>
+              <h2 className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted mb-3">
+                {t("s3.page.active")}
+              </h2>
 
             {filtered.length > 0 ? (
               <div className="grid grid-cols-3 gap-2.5">
@@ -268,16 +270,16 @@ export function S3Page() {
               </div>
             ) : sessionList.length > 0 && query.trim() ? (
               <p className="text-[length:var(--text-sm)] text-text-muted py-8 text-center">
-                No connections match &ldquo;{query}&rdquo;
+                {t("s3.page.noMatch", { query })}
               </p>
             ) : (
               <div className="flex flex-col items-center justify-center py-16 gap-3">
                 <Cloud size={30} strokeWidth={1.2} className="text-text-muted/30" />
                 <p className="text-[length:var(--text-sm)] text-text-muted">
-                  No S3 connections
+                  {t("s3.page.emptyTitle")}
                 </p>
                 <p className="text-[length:var(--text-xs)] text-text-muted/60 text-center max-w-xs">
-                  Connect to Amazon S3, MinIO, Cloudflare R2, or any S3-compatible storage
+                  {t("s3.page.emptyHint")}
                 </p>
               </div>
             )}
@@ -299,23 +301,23 @@ export function S3Page() {
         <ContextMenu
           items={[
             {
-              label: "Connect",
+              label: t("common.connect"),
               icon: FolderOpen,
               onClick: () => void handleReconnect(savedContextMenu.conn),
             },
             {
-              label: "Edit",
+              label: t("common.edit"),
               icon: Pencil,
               onClick: () => setEditingConnection(savedContextMenu.conn),
             },
             {
-              label: "Duplicate",
+              label: t("common.duplicate"),
               icon: Copy,
               separator: true,
               onClick: () => void handleDuplicate(savedContextMenu.conn),
             },
             {
-              label: "Delete",
+              label: t("common.delete"),
               icon: Trash2,
               danger: true,
               onClick: () => setDeletingSavedConn(savedContextMenu.conn),
@@ -341,8 +343,8 @@ export function S3Page() {
 
       <ConfirmDangerDialog
         open={deletingSavedConn !== null}
-        title="Delete this S3 connection?"
-        message="This connection will be permanently removed."
+        title={t("s3.page.deleteTitle")}
+        message={t("s3.page.deleteMessage")}
         onCancel={() => setDeletingSavedConn(null)}
         onConfirm={() => {
           const conn = deletingSavedConn;

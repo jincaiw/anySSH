@@ -49,6 +49,28 @@ pub struct SshManager {
     pending_connects: DashMap<String, CancellationToken>,
 }
 
+/// Result of one authentication pass: whether it succeeded, plus a short
+/// trail of what was attempted. The trail is user-facing — it goes into the
+/// AuthenticationFailed error message verbatim, because the server itself only
+/// reports a bare success/failure and field machines often have no `ssh -v`.
+struct AuthOutcome {
+    authenticated: bool,
+    trail: Vec<String>,
+}
+
+impl AuthOutcome {
+    fn not_authenticated() -> Self {
+        Self {
+            authenticated: false,
+            trail: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, step: impl Into<String>) {
+        self.trail.push(step.into());
+    }
+}
+
 impl SshManager {
     pub fn new() -> Self {
         Self {
@@ -124,7 +146,7 @@ impl SshManager {
                 None // No keepalive — connection stays alive until explicitly closed
             },
             keepalive_max: 3,
-            ..Default::default()
+            ..super::config::russh_client_config()
         });
 
         // Establish the connection — directly or tunnelled through a ProxyJump
@@ -192,7 +214,7 @@ impl SshManager {
 
         let russh_config = Arc::new(client::Config {
             inactivity_timeout: None, // SFTP connections stay alive indefinitely
-            ..Default::default()
+            ..super::config::russh_client_config()
         });
 
         // Establish the connection — directly or tunnelled through a ProxyJump —
@@ -308,11 +330,10 @@ impl SshManager {
         handle: &mut client::Handle<SshClientHandler>,
         config: &HostConfig,
     ) -> Result<(), SshError> {
-        let authenticated = match &config.auth_method {
-            AuthMethod::Password { password } => handle
-                .authenticate_password(&config.username, password)
-                .await
-                .map_err(|e| SshError::AuthenticationFailed(e.to_string()))?,
+        let outcome = match &config.auth_method {
+            AuthMethod::Password { password } => {
+                Self::auth_with_password(handle, &config.username, password).await?
+            }
             AuthMethod::PrivateKey {
                 key_path,
                 passphrase,
@@ -346,12 +367,265 @@ impl SshManager {
             }
         };
 
-        if !authenticated {
-            return Err(SshError::AuthenticationFailed(
-                "server rejected credentials".to_string(),
-            ));
+        if !outcome.authenticated {
+            // The server only returns a bare failure, which is indistinguishable
+            // between "wrong password" and "we never got to try the right
+            // method". Append the attempt trail so the error dialog itself
+            // carries the diagnostics — field machines often have no ssh -v.
+            let mut msg = format!(
+                "server rejected credentials [username: {}; tried: {}]",
+                config.username,
+                if outcome.trail.is_empty() {
+                    "nothing".to_string()
+                } else {
+                    outcome.trail.join("; ")
+                },
+            );
+            if let AuthMethod::Password { password } = &config.auth_method {
+                if password.is_empty() {
+                    msg.push_str(" — the password sent was EMPTY, the saved credential is missing");
+                }
+            }
+            tracing::warn!(host = %config.host, "{msg}");
+            return Err(SshError::AuthenticationFailed(msg));
         }
         Ok(())
+    }
+
+    /// Truncate a prompt string for the diagnostics trail — bastion banners can
+    /// be long, and the error dialog should stay readable.
+    fn brief(text: &str) -> String {
+        let one_line = text.split_whitespace().collect::<Vec<_>>().join(" ");
+        let mut s: String = one_line.chars().take(40).collect();
+        if one_line.chars().count() > 40 {
+            s.push('…');
+        }
+        s
+    }
+
+    /// Password authentication with a keyboard-interactive fallback.
+    ///
+    /// Attempt order mirrors PuTTY: keyboard-interactive FIRST, plain
+    /// `password` second. Network devices commonly disable the `password`
+    /// method outright and/or set a very low `MaxAuthTries` (sometimes 1), so
+    /// burning the first attempt on plain `password` can get the connection
+    /// disconnected before the working method is ever tried. On standard
+    /// OpenSSH servers that don't offer keyboard-interactive, the KI attempt
+    /// is rejected instantly and the plain-password attempt follows — only
+    /// costing one extra failure against the (generous) default MaxAuthTries.
+    ///
+    /// Prompts are answered heuristically: a prompt that asks for a
+    /// user/login name gets the username, anything else gets the password.
+    /// Devices such as H3C/Huawei present *two* prompts ("Username:" /
+    /// "Password:") over keyboard-interactive; answering both with the
+    /// password fails even with correct credentials.
+    ///
+    /// A genuinely wrong password still terminates in `Failure`, so this
+    /// cannot mask a bad credential.
+    async fn auth_with_password(
+        handle: &mut client::Handle<SshClientHandler>,
+        username: &str,
+        password: &str,
+    ) -> Result<AuthOutcome, SshError> {
+        let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
+        let mut outcome = AuthOutcome::not_authenticated();
+
+        // Bound every auth round-trip: a server that silently drops the
+        // connection mid-authentication would otherwise hang the await
+        // forever (russh's KI reply loop has no terminal None arm).
+        const AUTH_STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+        // ── 0. `none` probe — exactly what OpenSSH and PuTTY send before
+        // their first real attempt. Custom SSH servers (bastion appliances
+        // especially) often key their auth state machine off this probe, and
+        // its USERAUTH_FAILURE reply carries the methods the server is
+        // willing to continue with — the single most useful diagnostic
+        // available, since russh otherwise discards it (vendored patch
+        // exposes it via `take_last_auth_methods`).
+        outcome.push("none probe (OpenSSH-style)");
+        let server_methods: Option<Vec<String>> =
+            match tokio::time::timeout(AUTH_STEP_TIMEOUT, handle.authenticate_none(username)).await
+            {
+                Ok(Ok(true)) => {
+                    // Server authenticated us without any credential (must be a
+                    // wide-open host) — nothing else to do.
+                    outcome.authenticated = true;
+                    return Ok(outcome);
+                }
+                Ok(Ok(false)) => handle.take_last_auth_methods(),
+                Ok(Err(e)) => return Err(send_err(e)),
+                Err(_) => {
+                    outcome.push("none probe timed out");
+                    None
+                }
+            };
+        match &server_methods {
+            Some(methods) if !methods.is_empty() => {
+                outcome.push(format!("server allows [{}]", methods.join(", ")))
+            }
+            Some(_) => outcome.push("server allows no further methods"),
+            None => outcome.push("server method list unavailable"),
+        }
+        let server_allows = |method: &str| match &server_methods {
+            Some(methods) => methods.iter().any(|m| m == method),
+            None => true, // unknown — try anyway
+        };
+
+        // ── 1. keyboard-interactive (preferred by network devices) ──────────
+        const MAX_KI_ROUNDS: usize = 8;
+        let mut response = if !server_allows("keyboard-interactive") {
+            outcome.push("keyboard-interactive not offered by server, skipped");
+            None
+        } else {
+            let started = tokio::time::timeout(
+                AUTH_STEP_TIMEOUT,
+                handle.authenticate_keyboard_interactive_start(username, None),
+            )
+            .await;
+            match started {
+                Ok(r) => Some(r.map_err(send_err)?),
+                Err(_) => {
+                    outcome.push("keyboard-interactive timed out");
+                    None
+                }
+            }
+        };
+
+        // The KI round loop runs while the server keeps sending InfoRequests;
+        // a `None` response (skipped / timed-out start) falls through to the
+        // plain-password fallback below.
+        for _ in 0..MAX_KI_ROUNDS {
+            let Some(resp) = response.take() else {
+                break;
+            };
+            match resp {
+                client::KeyboardInteractiveAuthResponse::Success => {
+                    outcome.authenticated = true;
+                    return Ok(outcome);
+                }
+                client::KeyboardInteractiveAuthResponse::Failure => {
+                    outcome.push("keyboard-interactive rejected");
+                    break; // fall through to plain password
+                }
+                client::KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                    let asked: Vec<String> =
+                        prompts.iter().map(|p| Self::brief(&p.prompt)).collect();
+                    outcome.push(format!(
+                        "keyboard-interactive prompts [{}] (answered {})",
+                        asked.join(", "),
+                        if password.is_empty() {
+                            "EMPTY password"
+                        } else {
+                            "saved password/username"
+                        },
+                    ));
+                    let responses = prompts
+                        .iter()
+                        .map(|p| Self::answer_auth_prompt(&p.prompt, username, password))
+                        .collect();
+                    response = Some(
+                        match tokio::time::timeout(
+                            AUTH_STEP_TIMEOUT,
+                            handle.authenticate_keyboard_interactive_respond(responses),
+                        )
+                        .await
+                        {
+                            Ok(r) => r.map_err(send_err)?,
+                            Err(_) => {
+                                outcome.push("keyboard-interactive timed out mid-round");
+                                return Ok(outcome);
+                            }
+                        },
+                    );
+                }
+            }
+        }
+
+        // ── 2. plain password fallback ──────────────────────────────────────
+        // Let the user compare what was sent with what works in PuTTY: the
+        // length and charset fingerprint catches IME full-width characters,
+        // stale vault entries and copy-paste truncation without exposing the
+        // secret itself.
+        outcome.push(format!(
+            "password fingerprint: {} chars, ascii={}",
+            password.chars().count(),
+            password.is_ascii()
+        ));
+        if !server_allows("password") {
+            outcome.push("password not offered by server, skipped");
+            return Ok(outcome);
+        }
+        Self::auth_password_plain(handle, username, password, outcome).await
+    }
+
+    /// Single plain `password` method attempt (bounded).
+    async fn auth_password_plain(
+        handle: &mut client::Handle<SshClientHandler>,
+        username: &str,
+        password: &str,
+        mut outcome: AuthOutcome,
+    ) -> Result<AuthOutcome, SshError> {
+        let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
+        match tokio::time::timeout(
+            std::time::Duration::from_secs(30),
+            handle.authenticate_password(username, password),
+        )
+        .await
+        {
+            Ok(r) => {
+                if r.map_err(send_err)? {
+                    outcome.authenticated = true;
+                    Ok(outcome)
+                } else {
+                    outcome.push(if password.is_empty() {
+                        "password rejected (sent EMPTY password)"
+                    } else {
+                        "password rejected"
+                    });
+                    Ok(outcome)
+                }
+            }
+            Err(_) => {
+                outcome.push("password attempt timed out");
+                Ok(outcome)
+            }
+        }
+    }
+
+    /// Heuristically answer a keyboard-interactive prompt: prompts asking for
+    /// a user/login name get the username, everything else (password, passcode,
+    /// verification code, ...) gets the password.
+    ///
+    /// Chinese prompts are matched explicitly — bastion hosts (堡垒机) and
+    /// domestic network devices commonly prompt "用户名：" / "密码：", and no
+    /// latin keyword overlaps them. Password-ish keywords are checked FIRST so
+    /// a mixed prompt like "用户密码" (user password) is answered with the
+    /// password, not the username.
+    fn answer_auth_prompt(prompt: &str, username: &str, password: &str) -> String {
+        let p = prompt.to_lowercase();
+
+        let asks_pass = p.contains("pass")
+            || prompt.contains("密码")
+            || prompt.contains("口令")
+            || prompt.contains("验证码")
+            || prompt.contains("令牌");
+        if asks_pass {
+            return password.to_string();
+        }
+
+        let asks_user = p.contains("user")
+            || p.contains("login")
+            || p.contains("name")
+            || prompt.contains("用户")
+            || prompt.contains("账号")
+            || prompt.contains("帐号")
+            || prompt.contains("账户")
+            || prompt.contains("登录名");
+        if asks_user {
+            username.to_string()
+        } else {
+            password.to_string()
+        }
     }
 
     async fn auth_with_key_data(
@@ -359,14 +633,52 @@ impl SshManager {
         username: &str,
         key_data: &str,
         passphrase: Option<&str>,
-    ) -> Result<bool, SshError> {
+    ) -> Result<AuthOutcome, SshError> {
         let key_pair = russh_keys::decode_secret_key(key_data, passphrase)
             .map_err(|e| SshError::KeyParseError(e.to_string()))?;
         let key = Arc::new(key_pair);
-        handle
-            .authenticate_publickey(username, key)
+
+        let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
+        let mut outcome = AuthOutcome::not_authenticated();
+
+        // First attempt: the key as decoded. russh-keys gives RSA keys the
+        // modern rsa-sha2-512 signature hash.
+        if handle
+            .authenticate_publickey(username, Arc::clone(&key))
             .await
-            .map_err(|e| SshError::AuthenticationFailed(e.to_string()))
+            .map_err(send_err)?
+        {
+            outcome.authenticated = true;
+            return Ok(outcome);
+        }
+        outcome.push("publickey rsa-sha2-512 rejected");
+
+        // Legacy fallback for RSA keys: older servers commonly reject the
+        // rsa-sha2-512 signature algorithm outright and only accept
+        // rsa-sha2-256 — or, on vintage OpenSSH (< 7.2) and network
+        // appliances, only the original `ssh-rsa` (SHA-1). Retry down the
+        // chain. Non-RSA keys have no hash variants; `with_signature_hash`
+        // returns None for them.
+        if matches!(key.as_ref(), russh_keys::key::KeyPair::RSA { .. }) {
+            for (hash, label) in [
+                (russh_keys::key::SignatureHash::SHA2_256, "rsa-sha2-256"),
+                (russh_keys::key::SignatureHash::SHA1, "ssh-rsa (SHA-1)"),
+            ] {
+                if let Some(rekey) = key.with_signature_hash(hash) {
+                    if handle
+                        .authenticate_publickey(username, Arc::new(rekey))
+                        .await
+                        .map_err(send_err)?
+                    {
+                        outcome.authenticated = true;
+                        return Ok(outcome);
+                    }
+                    outcome.push(format!("publickey {label} rejected"));
+                }
+            }
+        }
+
+        Ok(outcome)
     }
 
     /// Return the shared Handle for an active session.  Used by the SFTP layer
@@ -499,6 +811,36 @@ impl SshManager {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Device-style prompts: username/login prompts get the username, all
+    /// other prompts (password, passcode, verification code) get the password.
+    /// Chinese prompts — the norm on bastion hosts (堡垒机) — must resolve too.
+    #[test]
+    fn answer_auth_prompt_targets_user_vs_secret() {
+        let u = "420102-7";
+        let p = "s3cret";
+
+        assert_eq!(SshManager::answer_auth_prompt("Username:", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("User Name:", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("login:", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("Password:", u, p), p);
+        assert_eq!(
+            SshManager::answer_auth_prompt("Please enter verification code", u, p),
+            p
+        );
+        assert_eq!(SshManager::answer_auth_prompt("", u, p), p);
+
+        // Chinese bastion-host prompts.
+        assert_eq!(SshManager::answer_auth_prompt("用户名：", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("请输入账号", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("登录名:", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("密码：", u, p), p);
+        assert_eq!(SshManager::answer_auth_prompt("请输入密码", u, p), p);
+        assert_eq!(SshManager::answer_auth_prompt("口令", u, p), p);
+        // A mixed prompt mentioning both user and password must resolve to the
+        // password ("用户密码" = user's password).
+        assert_eq!(SshManager::answer_auth_prompt("用户密码", u, p), p);
+    }
 
     /// Cancelling an attempt ID that was never registered (or whose attempt
     /// already settled) must report that nothing was found.

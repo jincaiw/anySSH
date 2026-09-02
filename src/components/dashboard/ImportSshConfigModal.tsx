@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Loader2, AlertCircle, Check, FileText } from "lucide-react";
 import { ModalShell, BTN_GHOST, BTN_PRIMARY } from "../shared/ModalShell";
 import type { SshConfigEntry, ImportResult } from "../../types";
+import { useTranslation } from "../../i18n";
 
 interface ImportSshConfigModalProps {
   onClose: () => void;
@@ -9,6 +10,7 @@ interface ImportSshConfigModalProps {
 }
 
 export function ImportSshConfigModal({ onClose, onImported }: ImportSshConfigModalProps) {
+  const { t } = useTranslation();
   const [entries, setEntries] = useState<SshConfigEntry[]>([]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [scanning, setScanning] = useState(true);
@@ -53,7 +55,7 @@ export function ImportSshConfigModal({ onClose, onImported }: ImportSshConfigMod
     } catch (err) {
       const msg = err && typeof err === "object" && "message" in err
         ? String((err as { message: string }).message)
-        : "Failed to parse SSH config";
+        : t("dashboard.import.errorParse");
       setScanError(msg);
     } finally {
       setScanning(false);
@@ -64,7 +66,7 @@ export function ImportSshConfigModal({ onClose, onImported }: ImportSshConfigMod
     try {
       const { open } = await import("@tauri-apps/plugin-dialog");
       const path = await open({
-        title: "Select SSH config file",
+        title: t("dashboard.import.browseTitle"),
         multiple: false,
       });
       if (path && typeof path === "string") {
@@ -98,7 +100,7 @@ export function ImportSshConfigModal({ onClose, onImported }: ImportSshConfigMod
     } catch (err) {
       const msg = err && typeof err === "object" && "message" in err
         ? String((err as { message: string }).message)
-        : "Import failed";
+        : t("dashboard.import.errorSave");
       setScanError(msg);
     } finally {
       setImporting(false);
@@ -130,16 +132,16 @@ export function ImportSshConfigModal({ onClose, onImported }: ImportSshConfigMod
     <ModalShell
       open
       onClose={onClose}
-      title="Import SSH Config"
+      title={t("dashboard.import.title")}
       maxWidth="lg"
       scrollable
       busy={importing}
       footer={
         result ? (
-          <button type="button" onClick={onClose} className={BTN_PRIMARY}>Done</button>
+          <button type="button" onClick={onClose} className={BTN_PRIMARY}>{t("dashboard.import.done")}</button>
         ) : (
           <>
-            <button type="button" onClick={onClose} disabled={importing} className={BTN_GHOST}>Cancel</button>
+            <button type="button" onClick={onClose} disabled={importing} className={BTN_GHOST}>{t("common.cancel")}</button>
             <button
               type="button"
               data-testid="import-ssh-config-submit"
@@ -147,7 +149,7 @@ export function ImportSshConfigModal({ onClose, onImported }: ImportSshConfigMod
               disabled={importing || importableCount === 0}
               className={BTN_PRIMARY}
             >
-              {importing ? "Importing…" : `Import ${importableCount} host${importableCount !== 1 ? "s" : ""}`}
+              {importing ? t("dashboard.import.importing") : t("dashboard.import.submit", { count: importableCount })}
             </button>
           </>
         )
@@ -162,11 +164,11 @@ export function ImportSshConfigModal({ onClose, onImported }: ImportSshConfigMod
               </div>
               <div className="text-center">
                 <p className="text-[length:var(--text-sm)] font-semibold text-text-primary">
-                  {result.imported} host{result.imported !== 1 ? "s" : ""} imported
+                  {t("dashboard.import.result", { count: result.imported })}
                 </p>
                 {result.skipped > 0 && (
                   <p className="text-[length:var(--text-xs)] text-text-muted mt-1">
-                    {result.skipped} skipped
+                    {t("dashboard.import.skipped", { count: result.skipped })}
                   </p>
                 )}
                 {result.errors.length > 0 && (
@@ -181,7 +183,7 @@ export function ImportSshConfigModal({ onClose, onImported }: ImportSshConfigMod
           ) : scanning ? (
             <div className="flex flex-col items-center gap-4 py-12">
               <Loader2 size={26} strokeWidth={2} className="text-accent motion-safe:animate-spin" />
-              <p className="text-[length:var(--text-sm)] text-text-muted">Scanning SSH config...</p>
+              <p className="text-[length:var(--text-sm)] text-text-muted">{t("dashboard.import.scanning")}</p>
             </div>
           ) : scanError ? (
             <div className="flex flex-col items-center gap-4 py-8">
@@ -191,18 +193,18 @@ export function ImportSshConfigModal({ onClose, onImported }: ImportSshConfigMod
                 onClick={handleBrowse}
                 className="px-4 py-2 text-[length:var(--text-sm)] font-medium text-text-inverse bg-accent hover:bg-accent-hover rounded-lg transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                Browse for config file
+                {t("dashboard.import.browse")}
               </button>
             </div>
           ) : entries.length === 0 ? (
             <div className="flex flex-col items-center gap-4 py-8">
               <FileText size={26} strokeWidth={1.5} className="text-text-muted/40" />
-              <p className="text-[length:var(--text-sm)] text-text-muted">No hosts found in SSH config</p>
+              <p className="text-[length:var(--text-sm)] text-text-muted">{t("dashboard.import.noHosts")}</p>
               <button
                 onClick={handleBrowse}
                 className="px-3 py-1.5 text-[length:var(--text-xs)] font-medium text-text-muted border border-border rounded-lg hover:text-text-primary hover:bg-bg-overlay transition-all duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
               >
-                Try a different file
+                {t("dashboard.import.tryAnother")}
               </button>
             </div>
           ) : (
@@ -216,17 +218,20 @@ export function ImportSshConfigModal({ onClose, onImported }: ImportSshConfigMod
                   onClick={() => void handleBrowse()}
                   className="text-[length:var(--text-2xs)] text-accent hover:text-accent-hover transition-colors duration-[var(--duration-fast)] shrink-0"
                 >
-                  Change
+                  {t("dashboard.import.change")}
                 </button>
               </div>
 
               {/* Select all / none */}
               <div className="flex items-center gap-3 mb-3">
                 <span className="text-[length:var(--text-xs)] text-text-muted">
-                  {importableCount} of {entries.filter((e) => !e.is_pattern).length} selected
+                  {t("dashboard.import.selected", {
+                    selected: importableCount,
+                    total: entries.filter((e) => !e.is_pattern).length,
+                  })}
                 </span>
-                <button onClick={selectAll} className="text-[length:var(--text-2xs)] text-accent hover:text-accent-hover">All</button>
-                <button onClick={selectNone} className="text-[length:var(--text-2xs)] text-accent hover:text-accent-hover">None</button>
+                <button onClick={selectAll} className="text-[length:var(--text-2xs)] text-accent hover:text-accent-hover">{t("dashboard.import.all")}</button>
+                <button onClick={selectNone} className="text-[length:var(--text-2xs)] text-accent hover:text-accent-hover">{t("common.none")}</button>
               </div>
 
               {/* Host list */}
@@ -259,12 +264,12 @@ export function ImportSshConfigModal({ onClose, onImported }: ImportSshConfigMod
                           </span>
                           {entry.is_pattern && (
                             <span className="px-1.5 py-px rounded text-[9px] uppercase tracking-wide font-semibold bg-bg-subtle text-text-muted">
-                              pattern
+                              {t("dashboard.import.badgePattern")}
                             </span>
                           )}
                           {entry.already_exists && (
                             <span className="px-1.5 py-px rounded text-[9px] uppercase tracking-wide font-semibold bg-status-connecting/10 text-status-connecting">
-                              exists
+                              {t("dashboard.import.badgeExists")}
                             </span>
                           )}
                         </div>

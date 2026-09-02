@@ -2,8 +2,22 @@ import { useState } from "react";
 import { TerminalSquare, FolderOpen, Loader2 } from "lucide-react";
 import { useSessionStore } from "../../stores/session-store";
 import { useSftpStore } from "../../stores/sftp-store";
+import { useTranslation } from "../../i18n";
+
+/**
+ * `ConnectionStatus` discriminant → translation key. Unknown values fall back
+ * to the raw string so a new backend status never renders as a bare key.
+ */
+const STATUS_KEYS: Record<string, string> = {
+  Connected: "sftp.status.Connected",
+  Connecting: "sftp.status.Connecting",
+  Disconnecting: "sftp.status.Disconnecting",
+  Disconnected: "sftp.status.Disconnected",
+  Error: "sftp.status.Error",
+};
 
 export function SftpSessionPicker() {
+  const { t } = useTranslation();
   const sessions = useSessionStore((s) => s.sessions);
   const openSession = useSftpStore((s) => s.openSession);
 
@@ -26,7 +40,7 @@ export function SftpSessionPicker() {
       const msg =
         err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
-          : "Failed to open SFTP session";
+          : t("sftp.sessionPicker.openFailed");
       setError(msg);
     } finally {
       setOpeningId(null);
@@ -57,11 +71,11 @@ export function SftpSessionPicker() {
               <FolderOpen size={22} strokeWidth={1.8} className="text-accent" aria-hidden="true" />
             </div>
             <h1 className="text-[length:var(--text-lg)] font-semibold text-text-primary">
-              File Browser
+              {t("sftp.sessionPicker.title")}
             </h1>
           </div>
           <p className="text-[length:var(--text-sm)] text-text-muted">
-            Select an active SSH session to browse its filesystem.
+            {t("sftp.sessionPicker.subtitle")}
           </p>
         </div>
 
@@ -78,7 +92,7 @@ export function SftpSessionPicker() {
         ) : (
           <div className="flex flex-col gap-2">
             <h2 className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted">
-              Active Sessions
+              {t("sftp.sessionPicker.activeSessions")}
             </h2>
 
             <div className="flex flex-col gap-1.5">
@@ -112,7 +126,9 @@ export function SftpSessionPicker() {
                           aria-hidden="true"
                         />
                         <span className="text-[length:var(--text-xs)] text-text-muted capitalize">
-                          {session.status}
+                          {STATUS_KEYS[session.status]
+                            ? t(STATUS_KEYS[session.status])
+                            : session.status}
                         </span>
                       </div>
                     </div>
@@ -121,8 +137,8 @@ export function SftpSessionPicker() {
                     <button
                       onClick={() => void handleOpenSftp(session.id, session.label, session.hostConfig.username)}
                       disabled={isOpening}
-                      title={`Open SFTP for ${session.label}`}
-                      aria-label={`Open file browser for ${session.label}`}
+                      title={t("sftp.sessionPicker.openSftpFor", { label: session.label })}
+                      aria-label={t("sftp.sessionPicker.openBrowserFor", { label: session.label })}
                       className={[
                         "flex items-center gap-1.5 px-3 py-1.5 rounded-lg shrink-0",
                         "text-[length:var(--text-xs)] font-medium uppercase tracking-wide",
@@ -136,12 +152,12 @@ export function SftpSessionPicker() {
                       {isOpening ? (
                         <>
                           <Loader2 size={13} strokeWidth={2} className="animate-spin" aria-hidden="true" />
-                          Opening…
+                          {t("sftp.sessionPicker.opening")}
                         </>
                       ) : (
                         <>
                           <FolderOpen size={13} strokeWidth={2} aria-hidden="true" />
-                          Open SFTP
+                          {t("sftp.sessionPicker.openSftp")}
                         </>
                       )}
                     </button>
@@ -159,6 +175,8 @@ export function SftpSessionPicker() {
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
 function EmptyState() {
+  const { t } = useTranslation();
+
   return (
     <div className="flex flex-col items-center gap-4 py-16 text-center">
       <div className="flex items-center justify-center w-14 h-14 rounded-xl bg-bg-surface border border-border">
@@ -166,12 +184,12 @@ function EmptyState() {
       </div>
       <div>
         <p className="text-[length:var(--text-sm)] font-medium text-text-secondary">
-          No active SSH sessions
+          {t("sftp.sessionPicker.emptyTitle")}
         </p>
         <p className="text-[length:var(--text-xs)] text-text-muted mt-1 max-w-xs">
-          Connect to a host from the{" "}
-          <span className="text-accent font-medium">Hosts</span> page first, then
-          return here to browse files.
+          {t("sftp.sessionPicker.emptyBodyBefore")}{" "}
+          <span className="text-accent font-medium">{t("sftp.sessionPicker.emptyHosts")}</span>{" "}
+          {t("sftp.sessionPicker.emptyBodyAfter")}
         </p>
       </div>
     </div>

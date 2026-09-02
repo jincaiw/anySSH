@@ -1,4 +1,10 @@
 import { create } from "zustand";
+import {
+  DEFAULT_LOCALE,
+  LANGUAGE_SETTING_KEY,
+  isLocale,
+  type Locale,
+} from "../i18n";
 
 export type CursorStyle = "block" | "bar" | "underline";
 export type ThemeMode = "dark" | "light";
@@ -56,6 +62,7 @@ export interface EditorConfig {
 
 interface SettingsState {
   // Appearance
+  language: Locale;
   themeMode: ThemeMode;
   accentHue: number;
   accentCustom: AccentCustom | null;
@@ -96,6 +103,7 @@ interface SettingsState {
   loaded: boolean;
 
   // Actions
+  setLanguage: (language: Locale) => void;
   setThemeMode: (mode: ThemeMode) => void;
   setAccentHue: (hue: number) => void;
   setAccentCustom: (custom: AccentCustom | null) => void;
@@ -124,6 +132,7 @@ interface SettingsState {
 
 // Defaults
 const DEFAULTS = {
+  language: DEFAULT_LOCALE,
   themeMode: "dark" as ThemeMode,
   accentHue: 250,
   accentCustom: null as AccentCustom | null,
@@ -213,6 +222,20 @@ function initialInterfaceMonoFont(): string {
   return DEFAULTS.interfaceMonoFont;
 }
 
+/**
+ * Seed the UI language from the `data-lang` attribute injected by the Rust
+ * setup() hook before first paint, so a non-default language doesn't flash the
+ * default copy on startup. The i18n module has already resolved the locale by
+ * the time this runs — mirror it here so the Settings picker reflects reality.
+ */
+function initialLanguage(): Locale {
+  if (typeof document !== "undefined") {
+    const v = document.documentElement.dataset.lang;
+    if (isLocale(v)) return v;
+  }
+  return DEFAULT_LOCALE;
+}
+
 /** Persist a single setting to the backend. Fire-and-forget. */
 function persist(key: string, value: string) {
   void (async () => {
@@ -250,12 +273,20 @@ let accentPersistTimer: ReturnType<typeof setTimeout> | undefined;
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   ...DEFAULTS,
+  language: initialLanguage(),
   themeMode: initialThemeMode(),
   accentHue: initialAccentHue(),
   accentCustom: initialAccentCustom(),
   interfaceFont: initialInterfaceFont(),
   interfaceMonoFont: initialInterfaceMonoFont(),
   loaded: false,
+
+  setLanguage: (language) => {
+    set({ language });
+    persist(LANGUAGE_SETTING_KEY, language);
+    // The i18n store owns <html lang>, localStorage and re-rendering.
+    void import("../i18n").then((m) => m.useI18nStore.getState().setLocale(language));
+  },
 
   setThemeMode: (mode) => {
     set({ themeMode: mode });
@@ -408,6 +439,14 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       let editorsSeeded = false;
       for (const [key, value] of pairs) {
         switch (key) {
+          case LANGUAGE_SETTING_KEY:
+            if (isLocale(value)) {
+              updates.language = value;
+              // Adopt it immediately — the pre-paint hook may not have run
+              // (first launch, or the setting was written by another window).
+              void import("../i18n").then((m) => m.applyPersistedLocale(value));
+            }
+            break;
           case "app_theme": updates.themeMode = value === "light" ? "light" : DEFAULTS.themeMode; break;
           case "app_accent_hue": updates.accentHue = Number(value) || DEFAULTS.accentHue; break;
           case "app_accent_custom": {

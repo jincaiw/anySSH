@@ -1,18 +1,18 @@
 [package]
-name = "anyscp"
+name = "anyssh"
 version = "0.0.0-dev"
 description = "A modern desktop client for SSH, SFTP, and S3"
 authors = ["Nevil Macwan <macnev2013@gmail.com>"]
 license = "MIT"
-repository = "https://github.com/macnev2013/anySCP"
-homepage = "https://github.com/macnev2013/anySCP"
+repository = "https://github.com/jincaiw/anySSH"
+homepage = "https://github.com/jincaiw/anySSH"
 edition = "2021"
 
 [lib]
 # The `_lib` suffix may seem redundant but it is necessary
 # to make the lib name unique and wouldn't conflict with the bin name.
 # This seems to be only an issue on Windows, see https://github.com/rust-lang/cargo/issues/8519
-name = "anyscp_lib"
+name = "anyssh_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]
@@ -102,3 +102,9 @@ dirs = "6"
 [dev-dependencies]
 tempfile = "3"
 
+
+# Vendored russh: exposes the server's "authentications that can continue"
+# list from USERAUTH_FAILURE via Handle::take_last_auth_methods — upstream
+# 0.46 parses the list but discards it. Needed for auth diagnostics.
+[patch.crates-io]
+russh = { path = "vendor/russh" }

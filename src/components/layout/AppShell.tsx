@@ -26,8 +26,10 @@ import { TransfersPage } from "../transfers";
 import { usePortForwardEvents } from "../../hooks/use-port-forward-events";
 import { UpdateDialog } from "../updater/UpdateDialog";
 import { Toaster } from "../shared/Toaster";
+import { useTranslation } from "../../i18n";
 
 export function AppShell() {
+  const { t } = useTranslation();
   const themeMode = useSettingsStore((s) => s.themeMode);
   const accentHue = useSettingsStore((s) => s.accentHue);
   const accentCustom = useSettingsStore((s) => s.accentCustom);
@@ -44,9 +46,9 @@ export function AppShell() {
   // Auto-open hosts tab if active tab gets removed
   useEffect(() => {
     if (!activeTabId || !allTabs.has(activeTabId)) {
-      useTabStore.getState().openPageTab("hosts", "Hosts");
+      useTabStore.getState().openPageTab("hosts", t("tabs.page.hosts"));
     }
-  }, [activeTabId, allTabs]);
+  }, [activeTabId, allTabs, t]);
 
   // Focus the terminal when its tab or pane becomes active
   useTerminalAutoFocus();
