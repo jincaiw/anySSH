@@ -109,7 +109,7 @@ for (const target of TARGETS) {
 
             // Listing comes from the flavor-specific command over SSH exec.
             await browser.waitUntil(
-                async () => (await $$("[data-entry-row='true']")).length > 0,
+                async () => (await (await $$("[data-entry-row='true']")).length) > 0,
                 { timeout: 15_000, timeoutMsg: "no entries rendered over SCP" },
             );
             expect((await $$("[data-entry-row='true']")).length).to.be.greaterThan(0);

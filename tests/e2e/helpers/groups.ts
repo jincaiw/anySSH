@@ -27,7 +27,9 @@ export async function fillGroupAndSave(name: string): Promise<void> {
 export async function findGroupCard(name: string): Promise<WebdriverIO.Element> {
     const card = await $(`[data-group-name='${name}']`);
     await card.waitForExist({ timeout: 10_000 });
-    return card;
+    // wdio ^9.31 types `await $()` as ChainablePromiseElement; at runtime the
+    // await has already resolved to a concrete element.
+    return card as unknown as WebdriverIO.Element;
 }
 
 /** Get the group's id from its rendered data attribute. */

@@ -7,7 +7,9 @@ export async function waitForRecent(
 ): Promise<WebdriverIO.Element> {
     const el = await $(`[data-recent-label='${label}']`);
     await el.waitForExist({ timeout: timeoutMs });
-    return el;
+    // wdio ^9.31 types `await $()` as ChainablePromiseElement; at runtime the
+    // await has already resolved to a concrete element.
+    return el as unknown as WebdriverIO.Element;
 }
 
 /** Count visible recent-connection chips. */

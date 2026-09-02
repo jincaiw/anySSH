@@ -40,7 +40,7 @@ describe("terminal pane zoom", () => {
 
         await cmd("d");
         await browser.waitUntil(
-            async () => (await $$("[data-testid^='terminal-']")).length >= 2,
+            async () => (await (await $$("[data-testid^='terminal-']")).length) >= 2,
             { timeout: 10_000 },
         );
 

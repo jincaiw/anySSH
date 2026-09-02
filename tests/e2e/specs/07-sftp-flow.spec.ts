@@ -49,7 +49,7 @@ describe("SFTP", () => {
         // An SFTP tab should appear and the file listing should render.
         await browser.waitUntil(
             async () =>
-                (await $("[data-tab-type='sftp']").then((el) => el.isExisting())) === true,
+                (await (await $("[data-tab-type='sftp']")).isExisting()) === true,
             { timeout: 30_000, timeoutMsg: "SFTP tab never opened" },
         );
 
@@ -60,7 +60,7 @@ describe("SFTP", () => {
         // At least one directory entry should render (the linuxserver
         // openssh-server image gives /config as home with a config/ dir).
         await browser.waitUntil(
-            async () => (await $$("[data-entry-row='true']")).length > 0,
+            async () => (await (await $$("[data-entry-row='true']")).length) > 0,
             { timeout: 15_000, timeoutMsg: "no entries rendered in explorer" },
         );
 

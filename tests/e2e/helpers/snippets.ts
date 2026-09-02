@@ -46,7 +46,9 @@ export async function fillSnippetAndSave(s: SnippetForm): Promise<void> {
 export async function findSnippetCard(name: string): Promise<WebdriverIO.Element> {
     const card = await $(`[data-snippet-name='${name}']`);
     await card.waitForExist({ timeout: 10_000 });
-    return card;
+    // wdio ^9.31 types `await $()` as ChainablePromiseElement; at runtime the
+    // await has already resolved to a concrete element.
+    return card as unknown as WebdriverIO.Element;
 }
 
 /** Read a snippet's id from its rendered data attribute. */

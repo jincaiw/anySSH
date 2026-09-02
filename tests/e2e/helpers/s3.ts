@@ -77,7 +77,9 @@ export async function clickS3Connect(): Promise<void> {
 export async function findS3Card(label: string): Promise<WebdriverIO.Element> {
     const card = await $(`[data-s3-label='${label}']`);
     await card.waitForExist({ timeout: 10_000 });
-    return card;
+    // wdio ^9.31 types `await $()` as ChainablePromiseElement; at runtime the
+    // await has already resolved to a concrete element.
+    return card as unknown as WebdriverIO.Element;
 }
 
 export async function getS3Id(label: string): Promise<string> {

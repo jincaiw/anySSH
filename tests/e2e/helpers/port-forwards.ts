@@ -55,7 +55,9 @@ export async function fillRuleAndSave(rule: RuleForm): Promise<void> {
 export async function findRuleCard(label: string): Promise<WebdriverIO.Element> {
     const card = await $(`[data-rule-label='${label}']`);
     await card.waitForExist({ timeout: 10_000 });
-    return card;
+    // wdio ^9.31 types `await $()` as ChainablePromiseElement; at runtime the
+    // await has already resolved to a concrete element.
+    return card as unknown as WebdriverIO.Element;
 }
 
 export async function getRuleId(label: string): Promise<string> {

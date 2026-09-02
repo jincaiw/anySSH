@@ -49,7 +49,7 @@ describe("terminal split pane", () => {
 
         // After split, expect one SplitContainer and two terminals.
         await browser.waitUntil(
-            async () => (await $$("[data-testid^='terminal-']")).length >= 2,
+            async () => (await (await $$("[data-testid^='terminal-']")).length) >= 2,
             { timeout: 10_000, timeoutMsg: "second pane never opened" },
         );
         const split = await $("[data-testid='split-container']");
@@ -80,7 +80,7 @@ describe("terminal split pane", () => {
         await cmd("d");
 
         await browser.waitUntil(
-            async () => (await $$("[data-testid^='terminal-']")).length >= 2,
+            async () => (await (await $$("[data-testid^='terminal-']")).length) >= 2,
             { timeout: 10_000, timeoutMsg: "second pane never opened" },
         );
 

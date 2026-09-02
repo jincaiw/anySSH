@@ -69,7 +69,7 @@ describe("SFTP sudo toggle", () => {
             await (await $("[data-testid='explorer-sudo-toggle']")).getAttribute("aria-label"),
         ).to.equal("Disable sudo mode");
         await browser.waitUntil(
-            async () => (await $$("[data-entry-row='true']")).length > 0,
+            async () => (await (await $$("[data-entry-row='true']")).length) > 0,
             { timeout: 15_000, timeoutMsg: "no entries rendered after enabling sudo" },
         );
 
@@ -77,7 +77,7 @@ describe("SFTP sudo toggle", () => {
         await toggleSudo(false);
         expect(await sudoToggleState()).to.equal("false");
         await browser.waitUntil(
-            async () => (await $$("[data-entry-row='true']")).length > 0,
+            async () => (await (await $$("[data-entry-row='true']")).length) > 0,
             { timeout: 15_000, timeoutMsg: "no entries rendered after disabling sudo" },
         );
     });

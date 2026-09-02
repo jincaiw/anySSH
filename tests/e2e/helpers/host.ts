@@ -166,7 +166,9 @@ export async function openHostEdit(hostLabel: string): Promise<void> {
 export async function findHostCardByLabel(label: string): Promise<WebdriverIO.Element> {
     const card = await $(`[data-testid^='host-card-'][data-host-label='${label}']`);
     await card.waitForExist({ timeout: 10_000 });
-    return card;
+    // wdio ^9.31 types `await $()` as ChainablePromiseElement; at runtime the
+    // await has already resolved to a concrete element.
+    return card as unknown as WebdriverIO.Element;
 }
 
 /** Assert that no host card with the given label exists. */

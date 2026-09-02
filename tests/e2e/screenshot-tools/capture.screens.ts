@@ -15,6 +15,8 @@ import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import type { ChainablePromiseElement } from "webdriverio";
+
 import { resetApp } from "../helpers/reset.js";
 import { waitForDashboard } from "../helpers/dashboard.js";
 import {
@@ -189,7 +191,13 @@ async function rippleEl(el: WebdriverIO.Element): Promise<void> {
 }
 
 /** Type into an input character-by-character so it reads like real typing. */
-async function slowTypeInput(el: WebdriverIO.Element, text: string, perChar = 95): Promise<void> {
+// wdio ^9.31 types `await $()` as ChainablePromiseElement, so accept both the
+// plain element and the chainable wrapper here.
+async function slowTypeInput(
+    el: WebdriverIO.Element | ChainablePromiseElement,
+    text: string,
+    perChar = 95,
+): Promise<void> {
     for (const ch of text) {
         await el.addValue(ch);
         await browser.pause(perChar);
