@@ -442,10 +442,32 @@ impl SshManager {
     /// Heuristically answer a keyboard-interactive prompt: prompts asking for
     /// a user/login name get the username, everything else (password, passcode,
     /// verification code, ...) gets the password.
+    ///
+    /// Chinese prompts are matched explicitly — bastion hosts (堡垒机) and
+    /// domestic network devices commonly prompt "用户名：" / "密码：", and no
+    /// latin keyword overlaps them. Password-ish keywords are checked FIRST so
+    /// a mixed prompt like "用户密码" (user password) is answered with the
+    /// password, not the username.
     fn answer_auth_prompt(prompt: &str, username: &str, password: &str) -> String {
         let p = prompt.to_lowercase();
-        let asks_user = (p.contains("user") || p.contains("login") || p.contains("name"))
-            && !p.contains("pass");
+
+        let asks_pass = p.contains("pass")
+            || prompt.contains("密码")
+            || prompt.contains("口令")
+            || prompt.contains("验证码")
+            || prompt.contains("令牌");
+        if asks_pass {
+            return password.to_string();
+        }
+
+        let asks_user = p.contains("user")
+            || p.contains("login")
+            || p.contains("name")
+            || prompt.contains("用户")
+            || prompt.contains("账号")
+            || prompt.contains("帐号")
+            || prompt.contains("账户")
+            || prompt.contains("登录名");
         if asks_user {
             username.to_string()
         } else {
@@ -632,6 +654,7 @@ mod tests {
 
     /// Device-style prompts: username/login prompts get the username, all
     /// other prompts (password, passcode, verification code) get the password.
+    /// Chinese prompts — the norm on bastion hosts (堡垒机) — must resolve too.
     #[test]
     fn answer_auth_prompt_targets_user_vs_secret() {
         let u = "420102-7";
@@ -646,6 +669,17 @@ mod tests {
             p
         );
         assert_eq!(SshManager::answer_auth_prompt("", u, p), p);
+
+        // Chinese bastion-host prompts.
+        assert_eq!(SshManager::answer_auth_prompt("用户名：", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("请输入账号", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("登录名:", u, p), u);
+        assert_eq!(SshManager::answer_auth_prompt("密码：", u, p), p);
+        assert_eq!(SshManager::answer_auth_prompt("请输入密码", u, p), p);
+        assert_eq!(SshManager::answer_auth_prompt("口令", u, p), p);
+        // A mixed prompt mentioning both user and password must resolve to the
+        // password ("用户密码" = user's password).
+        assert_eq!(SshManager::answer_auth_prompt("用户密码", u, p), p);
     }
 
     /// Cancelling an attempt ID that was never registered (or whose attempt
