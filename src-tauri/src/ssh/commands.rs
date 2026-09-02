@@ -42,7 +42,9 @@ pub async fn ssh_connect(
     // Terminal type + encoding come from the persisted app settings (a fast
     // single-row SQLite read; defaults apply when absent).
     let settings = session_settings_from_db(&db);
-    state.connect(host_config, app_handle, attempt_id, settings).await
+    state
+        .connect(host_config, app_handle, attempt_id, settings)
+        .await
 }
 
 /// Abort an in-flight connection attempt identified by the frontend-supplied
@@ -99,7 +101,9 @@ pub async fn ssh_split_session(
     app_handle: AppHandle,
 ) -> Result<SessionId, SshError> {
     let settings = session_settings_from_db(&db);
-    let result = state.split_session(&source_session_id, app_handle, settings).await;
+    let result = state
+        .split_session(&source_session_id, app_handle, settings)
+        .await;
     if result.is_ok() {
         crate::telemetry::capture("ssh_split_pane", serde_json::json!({}));
     }
@@ -561,7 +565,9 @@ pub async fn connect_saved_host(
 
     let auth_type = auth_method_label(&config.auth_method).to_string();
     let settings = session_settings_from_db(&db);
-    let session_id = state.connect(config, app_handle, attempt_id, settings).await?;
+    let session_id = state
+        .connect(config, app_handle, attempt_id, settings)
+        .await?;
 
     crate::telemetry::capture(
         "ssh_connected",

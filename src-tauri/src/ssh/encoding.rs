@@ -129,8 +129,7 @@ impl StreamConverter {
                 .max_utf8_buffer_length(src.len())
                 .unwrap_or(src.len() * 3 + 3);
             let mut buf = vec![0u8; bound];
-            let (result, read, written, _had_errors) =
-                decoder.decode_to_utf8(src, &mut buf, false);
+            let (result, read, written, _had_errors) = decoder.decode_to_utf8(src, &mut buf, false);
             out.extend_from_slice(&buf[..written]);
             let progressed = read > 0 || written > 0;
             src = &src[read..];
@@ -205,7 +204,10 @@ mod tests {
         let expected = "中文测试";
 
         let whole: Vec<u8> = encoding_rs::GBK.encode(expected).0.into_owned();
-        assert_eq!(String::from_utf8_lossy(&conv.decode_to_utf8(&whole)), expected);
+        assert_eq!(
+            String::from_utf8_lossy(&conv.decode_to_utf8(&whole)),
+            expected
+        );
 
         // Now feed the same text in two pieces that split a GBK character.
         let (a, b) = whole.split_at(3); // "中" is 2 bytes, so byte 3 is mid-"文"
@@ -225,7 +227,10 @@ mod tests {
 
         // Round-trip back through a fresh decoder yields the original text.
         let mut back = StreamConverter::new("gbk");
-        assert_eq!(String::from_utf8_lossy(&back.decode_to_utf8(&encoded)), "中文");
+        assert_eq!(
+            String::from_utf8_lossy(&back.decode_to_utf8(&encoded)),
+            "中文"
+        );
     }
 
     /// Every label offered in the settings dropdown resolves (no silent
