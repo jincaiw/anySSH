@@ -60,7 +60,27 @@ impl From<std::io::Error> for SshError {
 
 impl From<russh::Error> for SshError {
     fn from(e: russh::Error) -> Self {
-        SshError::ConnectionFailed(e.to_string())
+        let message = match &e {
+            // russh's Display for this variant is just "No common algorithm",
+            // which is useless for diagnosis. Surface the category and both
+            // sides' algorithm lists so connection failures are actionable.
+            russh::Error::NoCommonAlgo { kind, ours, theirs } => {
+                let category = match kind {
+                    russh::AlgorithmKind::Kex => "key exchange",
+                    russh::AlgorithmKind::Key => "host key",
+                    russh::AlgorithmKind::Cipher => "cipher",
+                    russh::AlgorithmKind::Mac => "MAC",
+                    russh::AlgorithmKind::Compression => "compression",
+                };
+                format!(
+                    "No common {category} algorithm (client offers: {}; server offers: {})",
+                    ours.join(", "),
+                    theirs.join(", ")
+                )
+            }
+            _ => e.to_string(),
+        };
+        SshError::ConnectionFailed(message)
     }
 }
 

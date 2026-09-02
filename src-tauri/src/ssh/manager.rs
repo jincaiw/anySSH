@@ -122,7 +122,7 @@ impl SshManager {
                 None // No keepalive — connection stays alive until explicitly closed
             },
             keepalive_max: 3,
-            ..Default::default()
+            ..super::config::russh_client_config()
         });
 
         // Establish the connection — directly or tunnelled through a ProxyJump
@@ -189,7 +189,7 @@ impl SshManager {
 
         let russh_config = Arc::new(client::Config {
             inactivity_timeout: None, // SFTP connections stay alive indefinitely
-            ..Default::default()
+            ..super::config::russh_client_config()
         });
 
         // Establish the connection — directly or tunnelled through a ProxyJump —

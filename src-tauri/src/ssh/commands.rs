@@ -174,7 +174,7 @@ async fn probe_direct(host: &str, port: u16) -> HostHealthCheckResult {
     // Reuse the already-connected TCP stream via `connect_stream` so we don't
     // open a second connection to the host. The handshake bound is the outer
     // `timeout`, so no `inactivity_timeout` is needed on the throwaway config.
-    let russh_config = Arc::new(client::Config::default());
+    let russh_config = Arc::new(super::config::russh_client_config());
     let handler = super::handler::SshClientHandler;
     match timeout(
         HEALTH_CHECK_TIMEOUT,
@@ -224,7 +224,7 @@ async fn probe_via_jump(target: &HostConfig, jump: &HostConfig) -> HostHealthChe
     let started = Instant::now();
     let elapsed_ms = || started.elapsed().as_millis() as u64;
     // Throwaway config: no keepalive/inactivity timeout needed for a one-shot probe.
-    let russh_config = Arc::new(client::Config::default());
+    let russh_config = Arc::new(super::config::russh_client_config());
 
     // ── 1. Bring up the full jump chain (connect + auth every hop) ─────────
     // Bounded so a tarpit/stalled auth on any hop can't hang the probe. The
