@@ -96,6 +96,13 @@ export default {
   "terminal.paste.right": "Right-click",
   "terminal.paste.middle": "Middle-click",
 
+  "terminal.group.session": "Session",
+  "terminal.encoding": "Encoding",
+  "terminal.encodingHint": "Affects terminal rendering; align with the server's locale (also covers Chinese filenames over SFTP)",
+  "terminal.termType": "Terminal Type",
+  "terminal.termTypeHint": "Sent to the server as the TERM environment variable; affects colours, cursor control and more",
+  "terminal.recommendedSuffix": " (recommended)",
+
   "terminal.group.history": "History",
   "terminal.scrollback": "Scrollback Buffer",
   "terminal.scrollbackHint": "Number of lines to keep in history (500–100,000)",

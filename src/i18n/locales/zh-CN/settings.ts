@@ -94,6 +94,13 @@ export default {
   "terminal.paste.right": "右键",
   "terminal.paste.middle": "中键",
 
+  "terminal.group.session": "会话",
+  "terminal.encoding": "编码",
+  "terminal.encodingHint": "编码设置影响终端回显和SFTP中文文件名，需与服务端locale对齐。",
+  "terminal.termType": "终端类型",
+  "terminal.termTypeHint": "终端类型作为TERM环境变量发送给服务器，影响颜色显示、光标控制等功能。",
+  "terminal.recommendedSuffix": "（推荐）",
+
   "terminal.group.history": "历史",
   "terminal.scrollback": "回滚缓冲区",
   "terminal.scrollbackHint": "历史中保留的行数（500–100,000）",

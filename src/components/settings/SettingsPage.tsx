@@ -698,11 +698,11 @@ function TerminalSettings() {
         </SettingRow>
       </SettingsGroup>
 
-      <SettingsGroup label="Session">
+      <SettingsGroup label={t("settings.terminal.group.session")}>
         <SettingRow>
           <div>
-            <label htmlFor="s-encoding" className={LABEL_CLASS}>Encoding</label>
-            <p className={DESC_CLASS}>编码设置影响终端回显和SFTP中文文件名，需与服务端locale对齐。</p>
+            <label htmlFor="s-encoding" className={LABEL_CLASS}>{t("settings.terminal.encoding")}</label>
+            <p className={DESC_CLASS}>{t("settings.terminal.encodingHint")}</p>
           </div>
           <CustomSelect
             id="s-encoding"
@@ -716,17 +716,17 @@ function TerminalSettings() {
 
         <SettingRow>
           <div>
-            <label htmlFor="s-termtype" className={LABEL_CLASS}>Terminal Type</label>
-            <p className={DESC_CLASS}>终端类型作为TERM环境变量发送给服务器，影响颜色显示、光标控制等功能。</p>
+            <label htmlFor="s-termtype" className={LABEL_CLASS}>{t("settings.terminal.termType")}</label>
+            <p className={DESC_CLASS}>{t("settings.terminal.termTypeHint")}</p>
           </div>
           <CustomSelect
             id="s-termtype"
             data-testid="s-termtype"
             value={terminalType}
             onChange={setTerminalType}
-            options={TERMINAL_TYPES.map((t) => ({
-              value: t.value,
-              label: t.recommended ? `${t.label}（推荐）` : t.label,
+            options={TERMINAL_TYPES.map((opt) => ({
+              value: opt.value,
+              label: opt.recommended ? `${opt.label}${t("settings.terminal.recommendedSuffix")}` : opt.label,
             }))}
             className="w-44"
             editable
