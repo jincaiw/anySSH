@@ -129,9 +129,14 @@ jobs:
       - name: Install frontend dependencies
         run: pnpm install
 
-      - uses: tauri-apps/tauri-action@v0
+      # GitHub renders missing secrets as empty strings, but the env var still
+      # exists. Tauri's macOS bundler treats a present-but-empty
+      # APPLE_CERTIFICATE as "signing configured" and fails importing an empty
+      # certificate into the keychain. So only export vars that actually have
+      # values (via $GITHUB_ENV) and let Tauri skip signing otherwise.
+      - name: Configure optional signing environment
+        shell: bash
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
@@ -140,6 +145,23 @@ jobs:
           APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+        run: |
+          for var in TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD \
+                     APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD \
+                     APPLE_SIGNING_IDENTITY APPLE_TEAM_ID APPLE_ID APPLE_PASSWORD; do
+            val="${!var:-}"
+            [ -z "$val" ] && continue
+            {
+              echo "$var<<SIGNING_ENV_EOF"
+              printf '%s\n' "$val"
+              echo "SIGNING_ENV_EOF"
+            } >> "$GITHUB_ENV"
+            echo "Exported $var for signing"
+          done
+
+      - uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           # Upload to the single release created up front (no per-job drafts).
           releaseId: ${{ needs.create-release.outputs.release_id }}
@@ -159,11 +181,18 @@ jobs:
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          FILE=$(ls src-tauri/target*/portable/*.zip src-tauri/target*/portable/*.tar.gz 2>/dev/null | head -1)
-          if [ -z "$FILE" ]; then
+          # nullglob + array: plain `ls a.zip b.tar.gz | head -1` under
+          # pipefail exits 2 when either glob has no match (Linux has no
+          # .zip, macOS/Windows no .tar.gz) and kills the step silently.
+          shopt -s nullglob
+          files=(src-tauri/target*/portable/*.zip src-tauri/target*/portable/*.tar.gz)
+          if [ ${#files[@]} -eq 0 ]; then
             echo "No portable archive produced" >&2
+            ls -la src-tauri/target/portable/ 2>/dev/null >&2 || true
             exit 1
           fi
+          FILE="${files[0]}"
+          echo "Uploading $FILE"
           gh release upload "${{ github.ref_name }}" "$FILE" --clobber
 
   update-release-notes:

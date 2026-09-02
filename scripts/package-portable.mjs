@@ -22,6 +22,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync, cpSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { execFileSync } from "node:child_process";
 
 // ─── CLI args ────────────────────────────────────────────────────────────────
@@ -36,7 +37,9 @@ function parseArgs(argv) {
 }
 
 const { target, out: outArg } = parseArgs(process.argv);
-const root = resolve(new URL("..", import.meta.url).pathname);
+// fileURLToPath (not .pathname): URL pathname on Windows yields "/D:/...",
+// which resolve() turns into a bogus "D:\D:\..." path.
+const root = resolve(fileURLToPath(new URL("..", import.meta.url)));
 const srcTauri = join(root, "src-tauri");
 
 // ─── Read product metadata ───────────────────────────────────────────────────
