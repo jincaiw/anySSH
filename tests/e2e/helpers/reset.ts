@@ -1,7 +1,7 @@
 // Reset helper — wipes the app's persisted state and relaunches the Tauri
 // process so each test starts from a clean DB.
 //
-// The Tauri app reads `$XDG_DATA_HOME/com.macnev2013.anyssh/anyssh.db`.
+// The Tauri app reads `$XDG_DATA_HOME/com.jincaiw.anyssh/anyssh.db`.
 // Deleting the directory between sessions is sufficient; the app re-creates
 // the schema on startup.
 
@@ -10,7 +10,7 @@ import { join } from "node:path";
 
 const APP_DATA_DIR = join(
     process.env.XDG_DATA_HOME ?? `${process.env.HOME}/.local/share`,
-    "com.macnev2013.anyssh",
+    "com.jincaiw.anyssh",
 );
 
 /**

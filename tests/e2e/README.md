@@ -144,7 +144,7 @@ SSH targets (all on port 2222 inside the compose network):
 ## Per-test isolation
 
 - Every test calls `resetApp()` in `beforeEach`, which wipes
-  `$XDG_DATA_HOME/com.macnev2013.anyssh` and calls `browser.reloadSession()`
+  `$XDG_DATA_HOME/com.jincaiw.anyssh` and calls `browser.reloadSession()`
   to relaunch the Tauri process with a clean SQLite DB.
 - The `05-persistence` spec uses `relaunchApp()` instead, which reloads the
   session without wiping the DB.
