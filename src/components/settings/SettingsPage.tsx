@@ -43,7 +43,7 @@ const TEXT_INPUT_CLASS = [
 
 const FIELD_LABEL_CLASS = "block text-[length:var(--text-xs)] font-medium text-text-secondary mb-1";
 
-const REPO_URL = "https://github.com/macnev2013/anySCP";
+const REPO_URL = "https://github.com/jincaiw/anySCP";
 
 // ─── Sections ─────────────────────────────────────────────────────────────────
 // Each settings category is a section here. To add a new category, add an entry
@@ -1419,19 +1419,20 @@ function AddEditorModal({ open, onClose, onAdd }: {
 }
 
 function AboutSettings() {
+  const { t } = useTranslation();
   const autoUpdate = useSettingsStore((s) => s.autoUpdate);
   const setAutoUpdate = useSettingsStore((s) => s.setAutoUpdate);
 
   return (
     <>
-      <SettingsGroup label="About">
+      <SettingsGroup label={t("settings.about.group")}>
         <AboutCard />
       </SettingsGroup>
-      <SettingsGroup label="Updates">
+      <SettingsGroup label={t("settings.about.group.updates")}>
         <SettingRow>
           <div>
-            <label htmlFor="s-auto-update" className={LABEL_CLASS}>Automatic Updates</label>
-            <p className={DESC_CLASS}>Download and install updates in the background, applied on the next launch</p>
+            <label htmlFor="s-auto-update" className={LABEL_CLASS}>{t("settings.about.autoUpdate")}</label>
+            <p className={DESC_CLASS}>{t("settings.about.autoUpdateHint")}</p>
           </div>
           <Toggle id="s-auto-update" checked={autoUpdate} onChange={setAutoUpdate} />
         </SettingRow>
@@ -1442,6 +1443,7 @@ function AboutSettings() {
 }
 
 function AboutCard() {
+  const { t } = useTranslation();
   const [appVersion, setAppVersion] = useState<string | null>(null);
 
   // Real app version (injected from git tags at build).
@@ -1466,7 +1468,7 @@ function AboutCard() {
       <div className="flex items-center justify-between gap-4">
         <div>
           <p className="text-[length:var(--text-base)] font-semibold text-text-primary">anySCP</p>
-          <p className={DESC_CLASS}>A modern desktop client for SSH, SFTP, and S3</p>
+          <p className={DESC_CLASS}>{t("settings.about.tagline")}</p>
         </div>
         <span className="shrink-0 text-[length:var(--text-xs)] tabular-nums text-text-muted">
           {appVersion ? `v${appVersion}` : ""}
@@ -1475,8 +1477,8 @@ function AboutCard() {
 
       <div className="mt-3 pt-3 border-t border-border/50 flex items-center justify-between gap-4">
         <div>
-          <p className={LABEL_CLASS}>Repository</p>
-          <p className={DESC_CLASS}>Source code, issues, and releases on GitHub</p>
+          <p className={LABEL_CLASS}>{t("settings.about.repository")}</p>
+          <p className={DESC_CLASS}>{t("settings.about.repositoryHint")}</p>
         </div>
         <button
           onClick={() => void openRepo()}
@@ -1590,6 +1592,7 @@ function SegmentedControl<T extends string>({ id, value, onChange, options }: {
 // ─── Update checker ─────────────────────────────────────────────────────────
 
 function UpdateChecker() {
+  const { t } = useTranslation();
   const status = useUpdaterStore((s) => s.status);
   const version = useUpdaterStore((s) => s.version);
   const error = useUpdaterStore((s) => s.error);
@@ -1609,14 +1612,14 @@ function UpdateChecker() {
     <div className="px-4 py-3 rounded-xl bg-bg-surface border border-border/50">
       <div className="flex items-center justify-between gap-4">
         <div>
-          <p className={LABEL_CLASS}>App Version</p>
+          <p className={LABEL_CLASS}>{t("updater.checker.appVersion")}</p>
           <p className={DESC_CLASS}>
-            {status === "up-to-date" && "You're on the latest version"}
-            {status === "available" && `v${version} is available`}
-            {status === "downloading" && `Downloading update... ${progress}%`}
-            {status === "ready" && "Update downloaded. Restart to apply."}
-            {status === "error" && (error ?? "Something went wrong")}
-            {(status === "idle" || status === "checking") && (appVersion ? `Current: v${appVersion}` : "Reading version\u2026")}
+            {status === "up-to-date" && t("updater.checker.upToDate")}
+            {status === "available" && t("updater.checker.available", { version: version ?? "" })}
+            {status === "downloading" && t("updater.checker.downloading", { progress })}
+            {status === "ready" && t("updater.checker.ready")}
+            {status === "error" && (error ?? t("updater.error.checkFailed"))}
+            {(status === "idle" || status === "checking") && (appVersion ? t("updater.checker.currentVersion", { version: appVersion }) : t("updater.checker.readingVersion"))}
           </p>
         </div>
 
@@ -1641,14 +1644,14 @@ function UpdateChecker() {
               ].join(" ")}
             >
               <RefreshCw size={13} strokeWidth={2} />
-              Check
+              {t("updater.checker.check")}
             </button>
           )}
 
           {status === "checking" && (
             <span className="flex items-center gap-1.5 px-3 py-1.5 text-[length:var(--text-sm)] font-medium text-text-muted">
               <RefreshCw size={13} strokeWidth={2} className="motion-safe:animate-spin" />
-              Checking...
+              {t("updater.checker.checking")}
             </span>
           )}
 
@@ -1673,7 +1676,7 @@ function UpdateChecker() {
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
               ].join(" ")}
             >
-              Restart Now
+              {t("updater.checker.restartNow")}
             </button>
           )}
         </div>

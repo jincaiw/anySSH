@@ -3,7 +3,7 @@ import { useUpdaterStore } from "../../stores/updater-store";
 import { useTranslation } from "../../i18n";
 import { ModalShell, BTN_GHOST, BTN_SECONDARY, BTN_PRIMARY } from "../shared/ModalShell";
 
-const REPO_URL = "https://github.com/macnev2013/anySCP";
+const REPO_URL = "https://github.com/jincaiw/anySCP";
 
 /**
  * Shown when an update is available. Lets users install now, defer, or skip.
