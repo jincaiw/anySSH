@@ -71,6 +71,22 @@ impl AuthOutcome {
     }
 }
 
+/// Terminal state of one keyboard-interactive attempt.
+enum KiAttemptResult {
+    /// Server accepted the credentials mid-challenge.
+    Authenticated,
+    /// Server explicitly rejected (USERAUTH_FAILURE) — another strategy may
+    /// still be tried on the same connection.
+    Rejected,
+    /// Start timed out, mid-round timed out, or the round budget ran out —
+    /// no point continuing keyboard-interactive on this connection.
+    Exhausted,
+}
+
+/// Max keyboard-interactive challenge rounds per attempt. Dual-factor
+/// bastions use 2-3; 8 leaves headroom for multi-prompt appliances.
+const MAX_KI_ROUNDS: usize = 8;
+
 impl SshManager {
     pub fn new() -> Self {
         Self {
@@ -420,6 +436,13 @@ impl SshManager {
     /// "Password:") over keyboard-interactive; answering both with the
     /// password fails even with correct credentials.
     ///
+    /// Dual-factor bastions (堡垒机) invert the flow: the first password-ish
+    /// prompt must be answered EMPTY to trigger the dynamic-code challenge
+    /// (SMS / OTP / 企业微信), then answered with "<static password><dynamic
+    /// code>" concatenated. When the heuristic pass is rejected, KI is
+    /// restarted once with that empty-first strategy before falling back to
+    /// plain `password`.
+    ///
     /// A genuinely wrong password still terminates in `Failure`, so this
     /// cannot mask a bad credential.
     async fn auth_with_password(
@@ -472,72 +495,49 @@ impl SshManager {
         };
 
         // ── 1. keyboard-interactive (preferred by network devices) ──────────
-        const MAX_KI_ROUNDS: usize = 8;
-        let mut response = if !server_allows("keyboard-interactive") {
+        //
+        // Two strategies, tried in order:
+        //   A. every prompt answered heuristically with the real password —
+        //      standard password KI and two-prompt devices (H3C/Huawei).
+        //   B. the FIRST password-ish prompt is answered EMPTY — dual-factor
+        //      bastions (堡垒机) treat an empty first response as the trigger
+        //      for a dynamic-code challenge (SMS / OTP / 企业微信), which the
+        //      user answers with "<static password><dynamic code>" typed as
+        //      one string. Only tried after A is rejected, and skipped when
+        //      the password is empty (B would send identical answers).
+        let ki_allowed = server_allows("keyboard-interactive");
+        if !ki_allowed {
             outcome.push("keyboard-interactive not offered by server, skipped");
-            None
         } else {
-            let started = tokio::time::timeout(
-                AUTH_STEP_TIMEOUT,
-                handle.authenticate_keyboard_interactive_start(username, None),
-            )
-            .await;
-            match started {
-                Ok(r) => Some(r.map_err(send_err)?),
-                Err(_) => {
-                    outcome.push("keyboard-interactive timed out");
-                    None
+            let mut authenticated = false;
+            for empty_first in [false, true] {
+                if empty_first && password.is_empty() {
+                    break; // strategy B would send the same answers as A
                 }
-            }
-        };
-
-        // The KI round loop runs while the server keeps sending InfoRequests;
-        // a `None` response (skipped / timed-out start) falls through to the
-        // plain-password fallback below.
-        for _ in 0..MAX_KI_ROUNDS {
-            let Some(resp) = response.take() else {
-                break;
-            };
-            match resp {
-                client::KeyboardInteractiveAuthResponse::Success => {
-                    outcome.authenticated = true;
-                    return Ok(outcome);
-                }
-                client::KeyboardInteractiveAuthResponse::Failure => {
-                    outcome.push("keyboard-interactive rejected");
-                    break; // fall through to plain password
-                }
-                client::KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
-                    let asked: Vec<String> =
-                        prompts.iter().map(|p| Self::brief(&p.prompt)).collect();
-                    outcome.push(format!(
-                        "keyboard-interactive prompts [{}] (answered {})",
-                        asked.join(", "),
-                        if password.is_empty() {
-                            "EMPTY password"
-                        } else {
-                            "saved password/username"
-                        },
-                    ));
-                    let responses = prompts
-                        .iter()
-                        .map(|p| Self::answer_auth_prompt(&p.prompt, username, password))
-                        .collect();
-                    response = Some(
-                        match tokio::time::timeout(
-                            AUTH_STEP_TIMEOUT,
-                            handle.authenticate_keyboard_interactive_respond(responses),
-                        )
-                        .await
-                        {
-                            Ok(r) => r.map_err(send_err)?,
-                            Err(_) => {
-                                outcome.push("keyboard-interactive timed out mid-round");
-                                return Ok(outcome);
-                            }
-                        },
+                if empty_first {
+                    outcome.push(
+                        "ki retry: first password prompt answered EMPTY (dual-factor trigger)",
                     );
                 }
+                match Self::ki_attempt(handle, username, password, empty_first, &mut outcome)
+                    .await?
+                {
+                    KiAttemptResult::Authenticated => {
+                        authenticated = true;
+                        break;
+                    }
+                    KiAttemptResult::Rejected => {
+                        if !empty_first {
+                            continue; // try the dual-factor strategy before giving up on KI
+                        }
+                        break; // both KI strategies rejected — plain password next
+                    }
+                    KiAttemptResult::Exhausted => break,
+                }
+            }
+            if authenticated {
+                outcome.authenticated = true;
+                return Ok(outcome);
             }
         }
 
@@ -592,6 +592,102 @@ impl SshManager {
         }
     }
 
+    /// One keyboard-interactive attempt: start the method and answer up to
+    /// `MAX_KI_ROUNDS` challenge rounds.
+    ///
+    /// With `empty_first_prompt = false` every prompt is answered
+    /// heuristically (`answer_auth_prompt`). With `true`, the FIRST
+    /// password-ish prompt of the attempt is answered with an EMPTY string —
+    /// the trigger dual-factor bastions expect before they send the
+    /// dynamic-code challenge; every later prompt gets the password (which,
+    /// for such bastions, the user types as "<static password><dynamic
+    /// code>" concatenated).
+    async fn ki_attempt(
+        handle: &mut client::Handle<SshClientHandler>,
+        username: &str,
+        password: &str,
+        empty_first_prompt: bool,
+        outcome: &mut AuthOutcome,
+    ) -> Result<KiAttemptResult, SshError> {
+        const AUTH_STEP_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+        let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
+
+        let started = tokio::time::timeout(
+            AUTH_STEP_TIMEOUT,
+            handle.authenticate_keyboard_interactive_start(username, None),
+        )
+        .await;
+        let mut response = match started {
+            Ok(r) => Some(r.map_err(send_err)?),
+            Err(_) => {
+                outcome.push("keyboard-interactive timed out");
+                return Ok(KiAttemptResult::Exhausted);
+            }
+        };
+
+        // `None` means the first password-ish prompt has already been
+        // answered (empty, under the dual-factor strategy).
+        let mut first_password_answered = false;
+        for _ in 0..MAX_KI_ROUNDS {
+            let Some(resp) = response.take() else {
+                break;
+            };
+            match resp {
+                client::KeyboardInteractiveAuthResponse::Success => {
+                    return Ok(KiAttemptResult::Authenticated);
+                }
+                client::KeyboardInteractiveAuthResponse::Failure => {
+                    outcome.push("keyboard-interactive rejected");
+                    return Ok(KiAttemptResult::Rejected);
+                }
+                client::KeyboardInteractiveAuthResponse::InfoRequest { prompts, .. } => {
+                    let asked: Vec<String> =
+                        prompts.iter().map(|p| Self::brief(&p.prompt)).collect();
+                    outcome.push(format!(
+                        "keyboard-interactive prompts [{}] (answered {})",
+                        asked.join(", "),
+                        if empty_first_prompt && !first_password_answered {
+                            "empty trigger + password"
+                        } else if password.is_empty() {
+                            "EMPTY password"
+                        } else {
+                            "saved password/username"
+                        },
+                    ));
+                    let responses = prompts
+                        .iter()
+                        .map(|p| {
+                            if empty_first_prompt
+                                && !first_password_answered
+                                && Self::prompt_asks_password(&p.prompt)
+                            {
+                                first_password_answered = true;
+                                String::new()
+                            } else {
+                                Self::answer_auth_prompt(&p.prompt, username, password)
+                            }
+                        })
+                        .collect();
+                    response = Some(
+                        match tokio::time::timeout(
+                            AUTH_STEP_TIMEOUT,
+                            handle.authenticate_keyboard_interactive_respond(responses),
+                        )
+                        .await
+                        {
+                            Ok(r) => r.map_err(send_err)?,
+                            Err(_) => {
+                                outcome.push("keyboard-interactive timed out mid-round");
+                                return Ok(KiAttemptResult::Exhausted);
+                            }
+                        },
+                    );
+                }
+            }
+        }
+        Ok(KiAttemptResult::Exhausted)
+    }
+
     /// Heuristically answer a keyboard-interactive prompt: prompts asking for
     /// a user/login name get the username, everything else (password, passcode,
     /// verification code, ...) gets the password.
@@ -602,17 +698,11 @@ impl SshManager {
     /// a mixed prompt like "用户密码" (user password) is answered with the
     /// password, not the username.
     fn answer_auth_prompt(prompt: &str, username: &str, password: &str) -> String {
-        let p = prompt.to_lowercase();
-
-        let asks_pass = p.contains("pass")
-            || prompt.contains("密码")
-            || prompt.contains("口令")
-            || prompt.contains("验证码")
-            || prompt.contains("令牌");
-        if asks_pass {
+        if Self::prompt_asks_password(prompt) {
             return password.to_string();
         }
 
+        let p = prompt.to_lowercase();
         let asks_user = p.contains("user")
             || p.contains("login")
             || p.contains("name")
@@ -626,6 +716,18 @@ impl SshManager {
         } else {
             password.to_string()
         }
+    }
+
+    /// Whether a keyboard-interactive prompt asks for a secret (password,
+    /// passcode, verification code, token). Latin and Chinese keywords —
+    /// bastion hosts and domestic devices prompt in both.
+    fn prompt_asks_password(prompt: &str) -> bool {
+        let p = prompt.to_lowercase();
+        p.contains("pass")
+            || prompt.contains("密码")
+            || prompt.contains("口令")
+            || prompt.contains("验证码")
+            || prompt.contains("令牌")
     }
 
     async fn auth_with_key_data(
@@ -857,6 +959,42 @@ mod tests {
         // A mixed prompt mentioning both user and password must resolve to the
         // password ("用户密码" = user's password).
         assert_eq!(SshManager::answer_auth_prompt("用户密码", u, p), p);
+    }
+
+    /// Dual-factor bastion strategy: the FIRST password-ish prompt of an
+    /// empty-first attempt must be answered with an empty string (the
+    /// trigger), while username prompts and every later password prompt get
+    /// the real credential (static password + dynamic code, concatenated by
+    /// the user into one string).
+    #[test]
+    fn empty_first_strategy_triggers_then_answers_password() {
+        let u = "420102-7";
+        let p = "Abc@123883921";
+
+        // Strategy B, round 1: the password prompt is the trigger -> EMPTY.
+        let mut first_password_answered = false;
+        let prompts = ["Username:", "Password:", "动态码:", "请输入动态口令"];
+        let answers: Vec<String> = prompts
+            .iter()
+            .map(|prompt| {
+                if !first_password_answered && SshManager::prompt_asks_password(prompt) {
+                    first_password_answered = true;
+                    String::new()
+                } else {
+                    SshManager::answer_auth_prompt(prompt, u, p)
+                }
+            })
+            .collect();
+
+        assert_eq!(answers[0], u); // username prompt unaffected
+        assert_eq!(answers[1], ""); // first password prompt = empty trigger
+        assert_eq!(answers[2], p); // dynamic-code round gets pw+OTP
+        assert_eq!(answers[3], p);
+        assert!(first_password_answered);
+
+        // Without the empty-first flag (strategy A) the same trigger prompt
+        // gets the real password — regular hosts keep working.
+        assert_eq!(SshManager::answer_auth_prompt("Password:", u, p), p);
     }
 
     /// Cancelling an attempt ID that was never registered (or whose attempt

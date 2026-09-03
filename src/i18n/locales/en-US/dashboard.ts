@@ -52,6 +52,7 @@ export default {
   "connect.passwordPlaceholder": "Enter your password",
   "connect.passwordRequired": "Password cannot be empty.",
   "connect.passwordRemember": "Remember password",
+  "connect.passwordDualFactorHint": "Dual-factor bastion: type static password + dynamic code (concatenated, no spaces)",
   "connect.passwordShow": "Show password",
   "connect.passwordHide": "Hide password",
   "connect.passwordSubmit": "Connect",

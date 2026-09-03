@@ -100,6 +100,9 @@ export function PasswordPromptModal(props: {
             {error}
           </p>
         )}
+        <p className="mt-2 text-[length:var(--text-xs)] text-text-muted" data-testid="password-prompt-hint">
+          {t("dashboard.connect.passwordDualFactorHint")}
+        </p>
         <label className="mt-3 flex items-center gap-2 text-[length:var(--text-sm)] text-text-secondary cursor-pointer select-none w-fit">
           <input
             type="checkbox"

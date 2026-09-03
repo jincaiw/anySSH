@@ -51,6 +51,7 @@ export default {
   "connect.passwordPlaceholder": "请输入密码",
   "connect.passwordRequired": "密码不能为空。",
   "connect.passwordRemember": "记住密码",
+  "connect.passwordDualFactorHint": "双因子堡垒机：输入 静态密码+动态码（直接拼接，无空格）",
   "connect.passwordShow": "显示密码",
   "connect.passwordHide": "隐藏密码",
   "connect.passwordSubmit": "连接",
