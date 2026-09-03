@@ -403,7 +403,14 @@ export function TerminalThemeSettings() {
         {t("settings.terminal.theme.liveHint")}
       </p>
 
-      <ThemeEditorModal editing={editorState} onClose={() => setEditorState(null)} />
+      {/* Keyed by the edit target so switching between themes (or re-opening
+          the editor) remounts the form — the name/colour useState initialisers
+          would otherwise keep the previously-edited theme's data. */}
+      <ThemeEditorModal
+        key={editorState === "new" ? "new" : editorState?.id ?? "none"}
+        editing={editorState}
+        onClose={() => setEditorState(null)}
+      />
 
       <ConfirmDangerDialog
         open={deleting !== null}
