@@ -39,6 +39,7 @@ import { SortableCard } from "./SortableCard";
 import { GroupDeleteDialog } from "./GroupDeleteDialog";
 import { GroupModal } from "./GroupModal";
 import { ConnectionDialog } from "./ConnectionDialog";
+import { PasswordPromptModal } from "./PasswordPromptModal";
 import { RecentConnections } from "./RecentConnections";
 import { toast } from "../../stores/toast-store";
 import { useTranslation } from "../../i18n";
@@ -142,9 +143,6 @@ export function HostsDashboard() {
     } catch { /* best-effort */ }
   };
 
-  // Connection dialog state
-  const [connectingHost, setConnectingHost] = useState<{ label: string; error: string | null; retry: (() => void) | null; cancel: (() => void) | null } | null>(null);
-
   // Load data on mount
   useEffect(() => {
     void loadHosts();
@@ -217,10 +215,54 @@ export function HostsDashboard() {
 
   // ─── Connect handlers ──────────────────────────────────────────────────────
 
+  // Connection dialog state
+  const [connectingHost, setConnectingHost] = useState<{ label: string; error: string | null; retry: (() => void) | null; cancel: (() => void) | null } | null>(null);
+
+  // Interactive password prompt (PuTTY/Xshell-style): opened when a
+  // password-auth host has no saved credential. Submitting resumes the
+  // original connect with the entered password, optionally saving it.
+  const [passwordPrompt, setPasswordPrompt] = useState<{
+    target: string;
+    submit: (secrets: { password: string; savePassword: boolean }) => void;
+  } | null>(null);
+
+  // Returns true when the connect can proceed from the vault alone. For
+  // password-auth hosts without a saved credential it opens the prompt and
+  // returns false — the prompt's submit re-invokes `connect` with secrets.
+  // Key-auth hosts always pass (their passphrase resolution stays separate).
+  const ensurePasswordOrPrompt = useCallback(
+    async (
+      authType: string | undefined,
+      hostId: string,
+      target: string,
+      connect: (secrets?: { password: string; savePassword: boolean }) => void | Promise<void>,
+    ): Promise<boolean> => {
+      if (authType === "privateKey" || authType === "privateKeyData") return true;
+      let has = true;
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        has = await invoke<boolean>("has_saved_password", { hostId });
+      } catch {
+        has = false;
+      }
+      if (has) return true;
+      setPasswordPrompt({ target, submit: (s) => void connect(s) });
+      return false;
+    },
+    [],
+  );
+
   // Connect directly using saved credentials from the vault.
   // If connection fails (e.g., no saved credential), the error shows in the terminal overlay.
   const connectToHost = useCallback(
-    async (host: SavedHost) => {
+    async (host: SavedHost, secrets?: { password: string; savePassword: boolean }) => {
+      if (
+        !(await ensurePasswordOrPrompt(host.auth_type, host.id, `${host.username}@${host.host}`, (s) =>
+          void connectToHost(host, s),
+        ))
+      ) {
+        return;
+      }
       const label = host.label || `${host.username}@${host.host}`;
       const attemptId = crypto.randomUUID();
       let cancelled = false;
@@ -229,11 +271,15 @@ export function HostsDashboard() {
         void cancelConnectAttempt(attemptId);
         setConnectingHost(null);
       };
-      setConnectingHost({ label, error: null, retry: () => void connectToHost(host), cancel });
+      setConnectingHost({ label, error: null, retry: () => void connectToHost(host, secrets), cancel });
       try {
         const { invoke } = await import("@tauri-apps/api/core");
         const addSession = useSessionStore.getState().addSession;
-        const sessionId = await invoke<string>("connect_saved_host", { hostId: host.id, attemptId });
+        const sessionId = await invoke<string>("connect_saved_host", {
+          hostId: host.id,
+          attemptId,
+          ...(secrets ? { password: secrets.password, savePassword: secrets.savePassword } : {}),
+        });
         if (cancelled) {
           void invoke("ssh_disconnect", { sessionId });
           return;
@@ -254,14 +300,28 @@ export function HostsDashboard() {
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
           : t("dashboard.connect.fallback");
-        setConnectingHost({ label, error: msg, retry: () => void connectToHost(host), cancel: null });
+        setConnectingHost({ label, error: msg, retry: () => void connectToHost(host, secrets), cancel: null });
       }
     },
-    [t],
+    [t, ensurePasswordOrPrompt],
   );
 
   const handleRecentConnect = useCallback(
-    async (conn: RecentConnection) => {
+    async (conn: RecentConnection, secrets?: { password: string; savePassword: boolean }) => {
+      // Recent entries don't carry auth_type — look it up from the saved host
+      // so key-auth hosts don't get a password prompt. Unknown (deleted host)
+      // falls through to the vault check, which fails into the prompt anyway.
+      const authType = hosts.find((h) => h.id === conn.host_id)?.auth_type;
+      if (
+        !(await ensurePasswordOrPrompt(
+          authType,
+          conn.host_id,
+          `${conn.username}@${conn.host}`,
+          (s) => void handleRecentConnect(conn, s),
+        ))
+      ) {
+        return;
+      }
       const label = conn.host_label || `${conn.username}@${conn.host}`;
       const attemptId = crypto.randomUUID();
       let cancelled = false;
@@ -270,11 +330,15 @@ export function HostsDashboard() {
         void cancelConnectAttempt(attemptId);
         setConnectingHost(null);
       };
-      setConnectingHost({ label, error: null, retry: () => void handleRecentConnect(conn), cancel });
+      setConnectingHost({ label, error: null, retry: () => void handleRecentConnect(conn, secrets), cancel });
       try {
         const { invoke } = await import("@tauri-apps/api/core");
         const addSession = useSessionStore.getState().addSession;
-        const sessionId = await invoke<string>("connect_saved_host", { hostId: conn.host_id, attemptId });
+        const sessionId = await invoke<string>("connect_saved_host", {
+          hostId: conn.host_id,
+          attemptId,
+          ...(secrets ? { password: secrets.password, savePassword: secrets.savePassword } : {}),
+        });
         if (cancelled) {
           void invoke("ssh_disconnect", { sessionId });
           return;
@@ -307,7 +371,14 @@ export function HostsDashboard() {
   // NOTE: We don't call addSession — the SSH connection lives in Rust's SshManager
   // but we don't need a terminal pane for file-only connections.
   const exploreHost = useCallback(
-    async (host: SavedHost) => {
+    async (host: SavedHost, secrets?: { password: string; savePassword: boolean }) => {
+      if (
+        !(await ensurePasswordOrPrompt(host.auth_type, host.id, `${host.username}@${host.host}`, (s) =>
+          void exploreHost(host, s),
+        ))
+      ) {
+        return;
+      }
       const label = host.label || `${host.username}@${host.host}`;
       const attemptId = crypto.randomUUID();
       let cancelled = false;
@@ -316,11 +387,15 @@ export function HostsDashboard() {
         void cancelConnectAttempt(attemptId);
         setConnectingHost(null);
       };
-      setConnectingHost({ label, error: null, retry: () => void exploreHost(host), cancel });
+      setConnectingHost({ label, error: null, retry: () => void exploreHost(host, secrets), cancel });
       try {
         const { invoke } = await import("@tauri-apps/api/core");
 
-        const sessionId = await invoke<string>("connect_saved_host_no_pty", { hostId: host.id, attemptId });
+        const sessionId = await invoke<string>("connect_saved_host_no_pty", {
+          hostId: host.id,
+          attemptId,
+          ...(secrets ? { password: secrets.password, savePassword: secrets.savePassword } : {}),
+        });
         if (cancelled) {
           // The handshake settled before the cancel landed — tear the bare
           // connection down, otherwise nothing ever references it again.
@@ -361,10 +436,10 @@ export function HostsDashboard() {
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
           : t("dashboard.connect.fallbackShort");
-        setConnectingHost({ label, error: msg, retry: () => void exploreHost(host), cancel: null });
+        setConnectingHost({ label, error: msg, retry: () => void exploreHost(host, secrets), cancel: null });
       }
     },
-    [t],
+    [t, ensurePasswordOrPrompt],
   );
 
   // ─── Host action handlers ──────────────────────────────────────────────────
@@ -841,6 +916,19 @@ export function HostsDashboard() {
           onClose={() => setConnectingHost(null)}
           onRetry={connectingHost.retry ?? undefined}
           onCancel={connectingHost.cancel ?? undefined}
+        />
+      )}
+
+      {/* ── Interactive password prompt (no saved credential) ── */}
+      {passwordPrompt && (
+        <PasswordPromptModal
+          target={passwordPrompt.target}
+          onSubmit={(password, remember) => {
+            const prompt = passwordPrompt;
+            setPasswordPrompt(null);
+            prompt.submit({ password, savePassword: remember });
+          }}
+          onClose={() => setPasswordPrompt(null)}
         />
       )}
     </>

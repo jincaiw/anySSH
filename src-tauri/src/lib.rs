@@ -292,6 +292,7 @@ pub fn run() {
             ssh::commands::ssh_health_check_saved_host,
             ssh::commands::connect_saved_host,
             ssh::commands::connect_saved_host_no_pty,
+            ssh::commands::has_saved_password,
             // Host persistence
             db::commands::save_host,
             db::commands::list_hosts,

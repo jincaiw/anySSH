@@ -162,7 +162,7 @@ pub async fn ssh_health_check_saved_host(
     let db_clone = Arc::clone(&db);
     let id_for_db = host_id.clone();
     let config = tokio::task::spawn_blocking(move || {
-        build_host_config_blocking(&id_for_db, &db_clone, &mut Vec::new())
+        build_host_config_blocking(&id_for_db, &db_clone, &mut Vec::new(), None)
     })
     .await
     .map_err(|e| SshError::IoError(format!("task panicked: {e}")))??;
@@ -565,6 +565,8 @@ mod tests {
 pub async fn connect_saved_host(
     host_id: String,
     attempt_id: Option<String>,
+    password: Option<String>,
+    save_password: Option<bool>,
     state: State<'_, SshManager>,
     db: State<'_, Arc<HostDb>>,
     app_handle: AppHandle,
@@ -576,7 +578,22 @@ pub async fn connect_saved_host(
     let db_clone = Arc::clone(&db);
     let id_for_db = host_id.clone();
     let config = tokio::task::spawn_blocking(move || {
-        build_host_config_blocking(&id_for_db, &db_clone, &mut Vec::new())
+        // Interactive password flow: the frontend prompted because no
+        // password was saved. Persist it first when the user ticked
+        // "remember" — best-effort; a vault write failure must not block
+        // the connection itself.
+        if let Some(pw) = password.as_deref().filter(|p| !p.is_empty()) {
+            if save_password.unwrap_or(false) {
+                if let Err(e) =
+                    vault::save_credential(&id_for_db, &vault::StoredCredential::Password {
+                        password: pw.to_string(),
+                    })
+                {
+                    tracing::warn!(host_id = %id_for_db, error = %e, "failed to save prompted password to vault (continuing without saving)");
+                }
+            }
+        }
+        build_host_config_blocking(&id_for_db, &db_clone, &mut Vec::new(), password.as_deref())
     })
     .await
     .map_err(|e| SshError::IoError(format!("task panicked: {e}")))??;
@@ -615,12 +632,19 @@ fn auth_method_label(auth: &AuthMethod) -> &'static str {
 /// "server rejected credentials" even though the user's password was correct
 /// — there was no way to tell a bad password from a missing one.
 ///
+/// `password_override` short-circuits the vault for the top-level host: the
+/// frontend prompts for the password interactively when none is saved
+/// (PuTTY/Xshell-style flow) and passes it here for this one connection. An
+/// empty override falls through to the vault. Jump hosts always resolve from
+/// the vault — the prompt targets only the host the user clicked.
+///
 /// Key passphrase stays best-effort: private-key hosts legitimately have no
 /// passphrase stored.
 fn resolve_auth_method(
     host_id: &str,
     auth_type: &str,
     key_path: Option<String>,
+    password_override: Option<&str>,
 ) -> Result<AuthMethod, SshError> {
     match auth_type {
         "privateKey" => {
@@ -642,6 +666,11 @@ fn resolve_auth_method(
             })
         }
         _ => {
+            if let Some(pw) = password_override.filter(|p| !p.is_empty()) {
+                return Ok(AuthMethod::Password {
+                    password: pw.to_string(),
+                });
+            }
             let password = match vault::get_credential(host_id) {
                 Ok(vault::StoredCredential::Password { password }) => password,
                 Ok(_) => {
@@ -681,6 +710,7 @@ fn build_host_config_blocking(
     host_id: &str,
     db: &HostDb,
     visited: &mut Vec<String>,
+    password_override: Option<&str>,
 ) -> Result<HostConfig, SshError> {
     if visited.iter().any(|v| v == host_id) {
         return Err(SshError::ConnectionFailed(
@@ -694,13 +724,18 @@ fn build_host_config_blocking(
         .map_err(|e| SshError::IoError(e.to_string()))?
         .ok_or_else(|| SshError::SessionNotFound(format!("host not found: {host_id}")))?;
 
-    let auth_method = resolve_auth_method(host_id, &saved_host.auth_type, saved_host.key_path)?;
+    let auth_method = resolve_auth_method(
+        host_id,
+        &saved_host.auth_type,
+        saved_host.key_path,
+        password_override,
+    )?;
 
     // Resolve the ProxyJump target (if any) into a nested HostConfig.
     let jump_host = match saved_host.proxy_jump_host_id.as_deref() {
         Some(jump_id) if !jump_id.is_empty() => {
             let jump_cfg =
-                build_host_config_blocking(jump_id, db, visited).map_err(|e| match e {
+                build_host_config_blocking(jump_id, db, visited, None).map_err(|e| match e {
                     SshError::SessionNotFound(_) => SshError::ConnectionFailed(format!(
                         "tunnel host not found in saved hosts (id {jump_id})"
                     )),
@@ -735,16 +770,48 @@ fn build_host_config_blocking(
 pub async fn connect_saved_host_no_pty(
     host_id: String,
     attempt_id: Option<String>,
+    password: Option<String>,
+    save_password: Option<bool>,
     state: State<'_, SshManager>,
     db: State<'_, Arc<HostDb>>,
 ) -> Result<SessionId, SshError> {
     let db_clone = Arc::clone(&db);
     let id_for_db = host_id.clone();
     let config = tokio::task::spawn_blocking(move || {
-        build_host_config_blocking(&id_for_db, &db_clone, &mut Vec::new())
+        if let Some(pw) = password.as_deref().filter(|p| !p.is_empty()) {
+            if save_password.unwrap_or(false) {
+                if let Err(e) =
+                    vault::save_credential(&id_for_db, &vault::StoredCredential::Password {
+                        password: pw.to_string(),
+                    })
+                {
+                    tracing::warn!(host_id = %id_for_db, error = %e, "failed to save prompted password to vault (continuing without saving)");
+                }
+            }
+        }
+        build_host_config_blocking(&id_for_db, &db_clone, &mut Vec::new(), password.as_deref())
     })
     .await
     .map_err(|e| SshError::IoError(format!("task panicked: {e}")))??;
 
     state.connect_no_pty(config, attempt_id).await
+}
+
+/// Whether the host has a usable saved password in the vault.
+///
+/// The frontend calls this before `connect_saved_host`: when it returns
+/// `false` for a password-auth host, the connect flow shows an interactive
+/// password prompt (PuTTY/Xshell-style) instead of failing with
+/// "no saved password". Any vault read error is reported as `false` — the
+/// prompted password bypasses the vault anyway, so prompting is always the
+/// better recovery path.
+#[tauri::command]
+pub async fn has_saved_password(host_id: String) -> Result<bool, SshError> {
+    tokio::task::spawn_blocking(move || match vault::get_credential(&host_id) {
+        Ok(vault::StoredCredential::Password { password }) => Ok(!password.is_empty()),
+        Ok(_) => Ok(false),
+        Err(_) => Ok(false),
+    })
+    .await
+    .map_err(|e| SshError::IoError(format!("task panicked: {e}")))?
 }

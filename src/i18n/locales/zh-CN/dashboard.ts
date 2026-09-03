@@ -46,6 +46,15 @@ export default {
   "connect.fallback": "连接失败。请检查主机、端口和凭据。",
   "connect.fallbackShort": "连接失败。",
   "connect.s3Fallback": "S3 连接失败",
+  "connect.passwordPromptTitle": "身份认证",
+  "connect.passwordLabel": "密码",
+  "connect.passwordPlaceholder": "请输入密码",
+  "connect.passwordRequired": "密码不能为空。",
+  "connect.passwordRemember": "记住密码",
+  "connect.passwordShow": "显示密码",
+  "connect.passwordHide": "隐藏密码",
+  "connect.passwordSubmit": "连接",
+  "connect.passwordCancel": "取消",
 
   // ─── Host card ──────────────────────────────────────────────────────────
   "hostCard.connectTo": "连接到 {name}",

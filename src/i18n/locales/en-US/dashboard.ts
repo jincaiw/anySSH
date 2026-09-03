@@ -47,6 +47,15 @@ export default {
   "connect.fallback": "Connection failed. Check host, port, and credentials.",
   "connect.fallbackShort": "Connection failed.",
   "connect.s3Fallback": "S3 connection failed",
+  "connect.passwordPromptTitle": "Authentication",
+  "connect.passwordLabel": "Password",
+  "connect.passwordPlaceholder": "Enter your password",
+  "connect.passwordRequired": "Password cannot be empty.",
+  "connect.passwordRemember": "Remember password",
+  "connect.passwordShow": "Show password",
+  "connect.passwordHide": "Hide password",
+  "connect.passwordSubmit": "Connect",
+  "connect.passwordCancel": "Cancel",
 
   // ─── Host card ──────────────────────────────────────────────────────────
   "hostCard.connectTo": "Connect to {name}",
