@@ -45,6 +45,16 @@ vi.mock("../../stores/terminal-instances", () => {
 // The SSH output subscription is irrelevant to clipboard behaviour.
 vi.mock("../../hooks/use-ssh-events", () => ({ useSshOutput: () => {} }));
 
+// The right-click session menu queries the session-log backend; mock the
+// helpers so no real Tauri invoke (dynamic import) is scheduled — otherwise
+// the microtask fires after the test environment is torn down.
+vi.mock("../../lib/session-log", () => ({
+  getSessionLogStatus: vi.fn(async () => null),
+  toggleSessionLog: vi.fn(async () => null),
+  openSessionLogViewer: vi.fn(),
+  revealLogsDirectory: vi.fn(async () => undefined),
+}));
+
 import { Terminal } from "./Terminal";
 import { useSettingsStore } from "../../stores/settings-store";
 
