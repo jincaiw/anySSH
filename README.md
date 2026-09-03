@@ -69,6 +69,10 @@ AnySSH is a free, open-source desktop application that combines an SSH terminal,
 ### 💻 SSH Terminal Client
 
 - Full-featured terminal emulator powered by xterm.js with GPU-accelerated WebGL rendering
+- Terminal color themes: 6 built-in palettes (Homebrew, One Dark Pro, Dracula, Solarized Dark, Tomorrow Night, Nord) with live switching
+- Custom themes with a color picker for all 22 color slots (background, foreground, cursor, selection, and ANSI 16 colors)
+- Import themes from iTerm2 `.itermcolors` files
+- Per-connection theme override with a global default, persisted across restarts
 - Split terminal panes (horizontal and vertical) within a single SSH session
 - In-terminal search with regex support
 - Tabbed SSH sessions with keyboard shortcuts
