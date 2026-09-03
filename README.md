@@ -7,6 +7,10 @@
 </p>
 
 <p align="center">
+  <a href="README.md">English</a> &bull; <a href="README.zh-CN.md">简体中文</a>
+</p>
+
+<p align="center">
   <a href="#features">Features</a> &bull;
   <a href="#screenshots">Screenshots</a> &bull;
   <a href="#installation">Installation</a> &bull;
@@ -23,7 +27,7 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue" alt="Platform"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License MIT"/></a>
   <a href="https://github.com/jincaiw/anySSH/stargazers"><img src="https://img.shields.io/github/stars/jincaiw/anySSH?style=social" alt="Stars"/></a>
-  <img src="https://visitor-badge.laobi.icu/badge?page_id=jincaiw.anySCP&label=Views&color=blue" alt="Views"/>
+  <img src="https://visitor-badge.laobi.icu/badge?page_id=jincaiw.anySSH&label=Views&color=blue" alt="Views"/>
   <a href="https://discord.gg/3xNRbNAmYb"><img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white" alt="Discord"/></a>
   <a href="https://join.slack.com/t/anyssh/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q"><img src="https://img.shields.io/badge/Slack-Join%20us-4A154B?logo=slack&logoColor=white" alt="Slack"/></a>
 </p>
@@ -312,8 +316,9 @@ This project is licensed under the MIT License -- see the [LICENSE](LICENSE) fil
 
 ## 🙏 Acknowledgments
 
+- **anySSH is a fork of [anySCP](https://github.com/macnev2013/anySCP) by Nevil Macwan** — heartfelt thanks for the original work. The upstream project's README states it is MIT-licensed; this fork continues under MIT and preserves the original copyright notice in the [LICENSE](LICENSE) file.
 - Built with [Tauri](https://tauri.app) by the Tauri team
-- SSH implementation powered by [russh](https://github.com/warp-tech/russh)
+- SSH implementation powered by [russh](https://github.com/warp-tech/russh) (Apache-2.0, with a small local patch under `src-tauri/vendor/russh`)
 - Terminal emulation powered by [xterm.js](https://xtermjs.org)
 - S3 support powered by [rust-s3](https://github.com/durch/rust-s3)
 
