@@ -1283,7 +1283,7 @@ mod tests {
         let _root = with_test_root();
         let logger = SessionLogger::new();
         let path = logger
-            .start(SessionLogOptions::default(), "h", "u")
+            .start(SessionLogOptions::default(), "hstop", "u")
             .unwrap();
         // Multiple rapid chunks then immediate stop — stop must flush.
         for i in 0..100 {
@@ -1320,7 +1320,7 @@ mod tests {
             format: LogFormat::Asciicast,
             ..Default::default()
         };
-        let path = logger.start(options, "h", "u").unwrap();
+        let path = logger.start(options, "hcast", "u").unwrap();
         logger.on_output("hello\n");
         logger.on_input("ls\r");
         logger.stop();
@@ -1342,7 +1342,7 @@ mod tests {
         let _root = with_test_root();
         let logger = SessionLogger::new();
         let path = logger
-            .start(SessionLogOptions::default(), "h", "u")
+            .start(SessionLogOptions::default(), "hmask", "u")
             .unwrap();
         logger.on_output("Password: ");
         logger.on_input("hunter2");
@@ -1360,7 +1360,7 @@ mod tests {
         let _root = with_test_root();
         let logger = SessionLogger::new();
         let path = logger
-            .start(SessionLogOptions::default(), "h", "u")
+            .start(SessionLogOptions::default(), "hstrip", "u")
             .unwrap();
         logger.on_output("\x1b[31mred\x1b[0m\n");
         logger.stop();
@@ -1380,7 +1380,7 @@ mod tests {
             ansi: AnsiMode::Keep,
             ..Default::default()
         };
-        let path = logger.start(options, "h", "u").unwrap();
+        let path = logger.start(options, "hkeep", "u").unwrap();
         logger.on_output("\x1b[31mred\x1b[0m\n");
         logger.stop();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -1395,7 +1395,7 @@ mod tests {
             timestamps: true,
             ..Default::default()
         };
-        let path = logger.start(options, "h", "u").unwrap();
+        let path = logger.start(options, "hts", "u").unwrap();
         logger.on_output("first\n");
         logger.on_output("second\n");
         logger.stop();
