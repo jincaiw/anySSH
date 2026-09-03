@@ -37,7 +37,7 @@ use serde_json::json;
 use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Mutex, OnceLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -48,6 +48,13 @@ use crate::db::HostDb;
 // ---------------------------------------------------------------------------
 
 static LOG_ROOT: OnceLock<PathBuf> = OnceLock::new();
+
+/// Per-process counter baked into every log file name. Millisecond timestamps
+/// alone still collide when two loggers for the same host/user start within
+/// the same millisecond (e.g. a reconnect storm) — the sequence suffix makes
+/// in-process file names collision-proof. Must be captured ONCE per `start()`
+/// and reused for every rotation of that log.
+static LOG_SEQ: AtomicU64 = AtomicU64::new(0);
 
 /// Install the session-log root directory (`<app_data_dir>/session-logs`).
 /// Called once from the app setup hook before any session can connect.
@@ -361,12 +368,14 @@ fn sanitize_component(name: &str) -> String {
     s
 }
 
-/// `host_user_YYYYMMDD_HHMMSS` from the start instant. The date is compact
-/// (no dashes) — it must not be confused with the `YYYY-MM-DD` directory.
-fn file_stem(host: &str, user: &str, started: SystemTime) -> String {
+/// `host_user_YYYYMMDD_HHMMSSmmm_NN` from the start instant. The date is
+/// compact (no dashes) — it must not be confused with the `YYYY-MM-DD`
+/// directory. `seq` (captured once per `start()`) disambiguates
+/// same-millisecond starts of two loggers for the same host/user.
+fn file_stem(host: &str, user: &str, started: SystemTime, seq: u64) -> String {
     let (date, time) = datetime_parts(started);
     format!(
-        "{}_{}_{}_{}",
+        "{}_{}_{}_{}_{seq:02}",
         sanitize_component(host),
         sanitize_component(user),
         date.replace('-', ""),
@@ -427,13 +436,14 @@ fn spawn_writer(
     host: &str,
     user: &str,
     started: SystemTime,
+    seq: u64,
 ) -> mpsc::Sender<LogEvent> {
     let host = host.to_string();
     let user = user.to_string();
     let (tx, rx) = mpsc::channel::<LogEvent>();
     std::thread::Builder::new()
         .name("session-log-writer".to_string())
-        .spawn(move || writer_loop(rx, options, &host, &user, started))
+        .spawn(move || writer_loop(rx, options, &host, &user, started, seq))
         .expect("failed to spawn session log writer thread");
     tx
 }
@@ -446,8 +456,9 @@ fn open_log_file(
     user: &str,
     started: SystemTime,
     part: u32,
+    seq: u64,
 ) -> std::io::Result<ActiveLog> {
-    let stem = file_stem(host, user, started);
+    let stem = file_stem(host, user, started, seq);
     let (date, _) = datetime_parts(started);
     let dir = log_root().join(&date);
     std::fs::create_dir_all(&dir)?;
@@ -548,11 +559,12 @@ fn writer_loop(
     host: &str,
     user: &str,
     started: SystemTime,
+    seq: u64,
 ) {
     // Retention / quota sweep runs here, off the connection path. Best-effort.
     cleanup_logs(&log_root(), options.retention_days, options.quota_mb);
 
-    let mut active = match open_log_file(&options, host, user, started, 1) {
+    let mut active = match open_log_file(&options, host, user, started, 1, seq) {
         Ok(a) => Some(a),
         Err(e) => {
             tracing::warn!(host, user, error = %e, "failed to open session log file — logging disabled for this session");
@@ -611,7 +623,16 @@ fn writer_loop(
                             }
                             text = prefixed;
                         }
-                        write_chunk(a, text.as_bytes(), max_bytes, &options, host, user, started);
+                        write_chunk(
+                            a,
+                            text.as_bytes(),
+                            max_bytes,
+                            &options,
+                            host,
+                            user,
+                            started,
+                            seq,
+                        );
                     }
                     LogFormat::Asciicast => {
                         let line = json!({
@@ -627,6 +648,7 @@ fn writer_loop(
                             host,
                             user,
                             started,
+                            seq,
                         );
                     }
                 }
@@ -647,6 +669,7 @@ fn writer_loop(
                         host,
                         user,
                         started,
+                        seq,
                     );
                 }
             }
@@ -663,6 +686,7 @@ fn elapsed_secs(started: SystemTime) -> f64 {
 }
 
 /// Write bytes, rotating first when the size cap would be exceeded.
+#[allow(clippy::too_many_arguments)]
 fn write_chunk(
     active: &mut ActiveLog,
     bytes: &[u8],
@@ -671,12 +695,13 @@ fn write_chunk(
     host: &str,
     user: &str,
     started: SystemTime,
+    seq: u64,
 ) {
     if active.size.saturating_add(bytes.len() as u64) > max_bytes {
         let next_part = active.part + 1;
         // Flush + drop the old file before opening its successor.
         let _ = active.writer.flush();
-        match open_log_file(options, host, user, started, next_part) {
+        match open_log_file(options, host, user, started, next_part, seq) {
             Ok(new_active) => {
                 *active = new_active;
             }
@@ -841,9 +866,11 @@ impl SessionLogger {
             return Ok(self.info().map(|i| i.path).unwrap_or_else(log_root));
         }
         let started = SystemTime::now();
+        // Captured once so every rotation of this log reuses the same name.
+        let seq = LOG_SEQ.fetch_add(1, Ordering::Relaxed);
         let format = options.format;
-        let tx = spawn_writer(options.clone(), host, user, started);
-        let stem = file_stem(host, user, started);
+        let tx = spawn_writer(options.clone(), host, user, started, seq);
+        let stem = file_stem(host, user, started, seq);
         let (date, _) = datetime_parts(started);
         let path = log_root()
             .join(&date)
@@ -1140,8 +1167,9 @@ mod tests {
     #[test]
     fn file_stem_has_expected_shape() {
         let t = UNIX_EPOCH + Duration::from_secs(0);
-        let stem = file_stem("prod.web", "root", t);
+        let stem = file_stem("prod.web", "root", t, 7);
         assert!(stem.starts_with("prod.web_root_19700101_"), "{stem}");
+        assert!(stem.ends_with("_07"), "{stem}");
         // No path separators can survive.
         assert!(!stem.contains('/'));
     }
@@ -1300,8 +1328,8 @@ mod tests {
         // Verify the rotation naming rule directly: part 2 gets the _part2
         // suffix in the same day directory.
         let started = SystemTime::now();
-        let a = open_log_file(&SessionLogOptions::default(), "h", "u", started, 1).unwrap();
-        let b = open_log_file(&SessionLogOptions::default(), "h", "u", started, 2).unwrap();
+        let a = open_log_file(&SessionLogOptions::default(), "hrot", "u", started, 1, 0).unwrap();
+        let b = open_log_file(&SessionLogOptions::default(), "hrot", "u", started, 2, 0).unwrap();
         assert!(a.path.to_string_lossy().ends_with(".log"));
         assert!(b
             .path
