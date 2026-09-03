@@ -1174,6 +1174,18 @@ mod tests {
         assert!(!stem.contains('/'));
     }
 
+    #[test]
+    fn file_stem_seq_disambiguates_same_instant_starts() {
+        let t = UNIX_EPOCH + Duration::from_secs(1_700_000_000);
+        let a = file_stem("h", "u", t, 0);
+        let b = file_stem("h", "u", t, 1);
+        assert_ne!(a, b, "same-ms starts must not share a file name");
+        // The stem must be a pure function of (host, user, started, seq):
+        // start() captures the seq once and every rotation reuses it, so the
+        // same inputs must reproduce the identical stem.
+        assert_eq!(a, file_stem("h", "u", t, 0));
+    }
+
     // ── Masking state machine ───────────────────────────────────────────
 
     #[test]
