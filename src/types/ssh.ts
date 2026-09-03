@@ -29,6 +29,10 @@ export interface Session {
   status: ConnectionStatus;
   statusMessage?: string;
   label: string;
+  /** Character encoding this session currently transcodes with. Initialised
+   *  from the global setting; switchable at runtime via the pane-corner
+   *  selector (runtime-only — never persisted). */
+  encoding?: string;
 }
 
 export interface SshOutputPayload {

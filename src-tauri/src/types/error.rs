@@ -25,6 +25,9 @@ pub enum SshError {
     #[error("Session already disconnected")]
     AlreadyDisconnected,
 
+    #[error("Invalid encoding: {0}")]
+    InvalidEncoding(String),
+
     #[error("Connection cancelled")]
     Cancelled,
 }
@@ -44,6 +47,7 @@ impl Serialize for SshError {
             SshError::KeyParseError(_) => "key_parse_error",
             SshError::IoError(_) => "io_error",
             SshError::AlreadyDisconnected => "already_disconnected",
+            SshError::InvalidEncoding(_) => "invalid_encoding",
             SshError::Cancelled => "cancelled",
         };
         state.serialize_field("kind", kind)?;

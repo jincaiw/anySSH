@@ -4,6 +4,7 @@ import { SplitContainer } from "./SplitContainer";
 import { DisconnectOverlay } from "./DisconnectOverlay";
 import { TerminalSearchBar } from "./TerminalSearchBar";
 import { PaneHeader } from "./PaneHeader";
+import { EncodingSwitcher } from "./EncodingSwitcher";
 import { useSessionStore } from "../../stores/session-store";
 import { useTerminalSearchStore } from "../../stores/terminal-search-store";
 
@@ -54,6 +55,8 @@ export function TerminalPane({ sessionId, tabId }: { sessionId: string; tabId: s
         <Terminal sessionId={sessionId} />
 
         {searchOpen && <TerminalSearchBar sessionId={sessionId} />}
+
+        <EncodingSwitcher sessionId={sessionId} />
 
         {showOverlay && session && (
           <DisconnectOverlay

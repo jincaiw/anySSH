@@ -43,6 +43,10 @@ export default {
   "disconnect.reconnectFailed": "Reconnection failed",
   "disconnect.closeSession": "Close session",
 
+  // ─── Per-session encoding switcher (EncodingSwitcher) ─────────────────────
+  "encoding.title": "Character encoding (this session only, not persisted)",
+  "encoding.ariaLabel": "Switch character encoding for this session",
+
   // ─── Connection states ───────────────────────────────────────────────────
   // The backend emits these as English discriminants. Callers must map the
   // known values onto these keys and fall back to the raw value — never feed

@@ -709,11 +709,14 @@ impl SshManager {
         app_handle: AppHandle,
         settings: SessionSettings,
     ) -> Result<SessionId, SshError> {
-        // Get the shared handle, host config, and the ProxyJump tunnel chain from
-        // the source session. The jump handles are shared (Arc) so the tunnel
-        // stays open as long as the parent OR any split pane is alive — closing
-        // the parent tab no longer tears the tunnel out from under its children.
-        let (handle, host_config, jump_handles) = {
+        // Get the shared handle, host config, the ProxyJump tunnel chain, and
+        // the *runtime* encoding from the source session. The jump handles are
+        // shared (Arc) so the tunnel stays open as long as the parent OR any
+        // split pane is alive — closing the parent tab no longer tears the
+        // tunnel out from under its children. The encoding overrides the
+        // global default so a split pane speaks the same encoding the user
+        // may have switched the source pane to at runtime.
+        let (handle, host_config, jump_handles, source_encoding) = {
             let entry = self
                 .sessions
                 .get(source_session_id)
@@ -722,6 +725,7 @@ impl SshManager {
                 entry.value().ssh_handle(),
                 entry.value().host_config(),
                 entry.value().jump_handles(),
+                entry.value().encoding(),
             )
         };
 
@@ -736,7 +740,10 @@ impl SshManager {
             24,
             app_handle,
             host_config.default_shell,
-            settings,
+            SessionSettings {
+                encoding: source_encoding,
+                ..settings
+            },
         )
         .await?;
 
@@ -760,6 +767,16 @@ impl SshManager {
             .get(session_id)
             .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
         entry.value().resize_pty(cols, rows).await
+    }
+
+    /// Switch a session's character encoding at runtime (per-session only —
+    /// nothing is persisted; reconnecting falls back to the global setting).
+    pub fn set_encoding(&self, session_id: &str, encoding: &str) -> Result<(), SshError> {
+        let entry = self
+            .sessions
+            .get(session_id)
+            .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
+        entry.value().set_encoding(encoding)
     }
 
     /// Disconnect and remove a session.

@@ -42,6 +42,10 @@ export default {
   "disconnect.reconnectFailed": "重连失败",
   "disconnect.closeSession": "关闭会话",
 
+  // ─── Per-session encoding switcher (EncodingSwitcher) ─────────────────────
+  "encoding.title": "字符编码（仅当前会话，不持久化）",
+  "encoding.ariaLabel": "切换此会话的字符编码",
+
   // ─── Connection states ───────────────────────────────────────────────────
   "state.connected": "已连接",
   "state.connecting": "正在连接",

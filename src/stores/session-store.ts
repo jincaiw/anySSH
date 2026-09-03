@@ -7,6 +7,7 @@ import type {
   LayoutNode,
   SplitDirection,
 } from "../types";
+import { useSettingsStore } from "./settings-store";
 
 // ─── Layout tree helpers ─────────────────────────────────────────────────────
 
@@ -119,6 +120,9 @@ interface SessionState {
   unsplitPane: (sessionId: string) => void;
   updateSplitRatio: (tabId: string, path: number[], ratio: number) => void;
   toggleZoom: (sessionId: string) => void;
+  /** Record the runtime encoding a session switched to (mirrors the backend
+   *  converter rebuild triggered by `ssh_set_session_encoding`). */
+  setSessionEncoding: (id: SessionId, encoding: string) => void;
 }
 
 // ─── Store ───────────────────────────────────────────────────────────────────
@@ -138,6 +142,9 @@ export const useSessionStore = create<SessionState>((set) => ({
         hostConfig,
         status: "Connected",
         label: `${hostConfig.username}@${hostConfig.host}`,
+        // New sessions start on the global encoding setting; the pane-corner
+        // selector can switch them at runtime (runtime-only, not persisted).
+        encoding: useSettingsStore.getState().terminalEncoding,
       });
 
       // New connection = new layout tree entry
@@ -261,6 +268,9 @@ export const useSessionStore = create<SessionState>((set) => ({
           hostConfig: sourceSession.hostConfig,
           status: "Connected",
           label: sourceSession.label,
+          // Mirrors the backend: a split pane inherits the source session's
+          // runtime encoding (which may differ from the global default).
+          encoding: sourceSession.encoding,
         });
       }
 
@@ -311,4 +321,13 @@ export const useSessionStore = create<SessionState>((set) => ({
       zoomedPaneId: state.zoomedPaneId === sessionId ? null : sessionId,
       activeSessionId: sessionId,
     })),
+
+  setSessionEncoding: (id, encoding) =>
+    set((state) => {
+      const session = state.sessions.get(id);
+      if (!session || session.encoding === encoding) return state;
+      const sessions = new Map(state.sessions);
+      sessions.set(id, { ...session, encoding });
+      return { sessions };
+    }),
 }));

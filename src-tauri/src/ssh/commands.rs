@@ -91,6 +91,26 @@ pub async fn ssh_resize_pty(
     state.resize_pty(&session_id, cols, rows).await
 }
 
+/// Switch the character encoding of a live session at runtime. Per-session
+/// and runtime-only: nothing is persisted, and a reconnect falls back to the
+/// global encoding setting. The label must be one encoding_rs recognises —
+/// the frontend only ever sends values from the same whitelist the settings
+/// page uses, but a hand-crafted IPC call is rejected here rather than being
+/// silently mapped onto UTF-8.
+#[tauri::command]
+pub async fn ssh_set_session_encoding(
+    session_id: String,
+    encoding: String,
+    state: State<'_, SshManager>,
+) -> Result<(), SshError> {
+    if encoding != "utf-8"
+        && encoding_rs::Encoding::for_label(encoding.as_bytes()).is_none()
+    {
+        return Err(SshError::InvalidEncoding(encoding));
+    }
+    state.set_encoding(&session_id, &encoding)
+}
+
 /// Open a new PTY channel on an existing SSH connection (for split panes).
 /// Returns a new session ID backed by a new channel on the same connection.
 #[tauri::command]

@@ -12,6 +12,11 @@ use super::handler::SshClientHandler;
 enum SessionCmd {
     Data(Vec<u8>),
     Resize { cols: u32, rows: u32 },
+    /// Rebuild both stream converters with a new encoding at runtime. The
+    /// switch takes effect on the next chunk in each direction; any partial
+    /// multi-byte sequence buffered in the old converter is discarded (the
+    /// user is expected to switch at a shell prompt, where nothing is pending).
+    SetEncoding { label: String },
     Eof,
 }
 
@@ -44,6 +49,11 @@ pub struct SshSession {
     /// the tunnel down. Empty for a direct (non-tunnelled) connection.
     #[allow(dead_code)]
     jump_handles: Arc<Vec<Handle<SshClientHandler>>>,
+    /// The encoding label this session is currently transcoding with. Updated
+    /// synchronously by [`SshSession::set_encoding`] (the converters themselves
+    /// are rebuilt inside the reader/writer task) so split panes can inherit
+    /// the source session's *runtime* encoding rather than the global default.
+    current_encoding: Arc<std::sync::RwLock<String>>,
 }
 
 impl SshSession {
@@ -113,6 +123,10 @@ impl SshSession {
         let mut out_conv = StreamConverter::new(&settings.encoding);
         let mut in_conv = StreamConverter::new(&settings.encoding);
 
+        // Runtime encoding record (shared with `set_encoding` so split panes
+        // can inherit the live value).
+        let current_encoding = Arc::new(std::sync::RwLock::new(settings.encoding.clone()));
+
         // The background task owns the channel exclusively. It multiplexes
         // between reading SSH output and processing frontend commands.
         let reader_task = tokio::spawn(async move {
@@ -158,6 +172,10 @@ impl SshSession {
                             Some(SessionCmd::Resize { cols, rows }) => {
                                 let _ = channel.window_change(cols, rows, 0, 0).await;
                             }
+                            Some(SessionCmd::SetEncoding { label }) => {
+                                out_conv = StreamConverter::new(&label);
+                                in_conv = StreamConverter::new(&label);
+                            }
                             Some(SessionCmd::Eof) | None => {
                                 let _ = channel.eof().await;
                                 let _ = channel.close().await;
@@ -184,6 +202,7 @@ impl SshSession {
             session_id,
             split_config: SplitConfig { default_shell },
             jump_handles,
+            current_encoding,
         })
     }
 
@@ -233,6 +252,9 @@ impl SshSession {
         let mut out_conv = StreamConverter::new(&settings.encoding);
         let mut in_conv = StreamConverter::new(&settings.encoding);
 
+        // Runtime encoding record (shared with `set_encoding`).
+        let current_encoding = Arc::new(std::sync::RwLock::new(settings.encoding.clone()));
+
         let reader_task = tokio::spawn(async move {
             let mut channel = channel;
             loop {
@@ -275,6 +297,10 @@ impl SshSession {
                             Some(SessionCmd::Resize { cols, rows }) => {
                                 let _ = channel.window_change(cols, rows, 0, 0).await;
                             }
+                            Some(SessionCmd::SetEncoding { label }) => {
+                                out_conv = StreamConverter::new(&label);
+                                in_conv = StreamConverter::new(&label);
+                            }
                             Some(SessionCmd::Eof) | None => {
                                 let _ = channel.eof().await;
                                 let _ = channel.close().await;
@@ -303,6 +329,7 @@ impl SshSession {
             // Share the parent's ProxyJump tunnel chain so it stays alive for as
             // long as this split pane lives, independent of the parent session.
             jump_handles,
+            current_encoding,
         })
     }
 
@@ -335,6 +362,30 @@ impl SshSession {
         self.cmd_tx
             .send(SessionCmd::Resize { cols, rows })
             .map_err(|_| SshError::ChannelError("session task closed".to_string()))
+    }
+
+    /// Switch the character encoding at runtime. The converters live inside
+    /// the reader/writer task, so the switch is delivered as a command and
+    /// takes effect on the next chunk in each direction. The label is also
+    /// recorded synchronously (in `current_encoding`) so a split pane created
+    /// afterwards inherits the live encoding, not the global default.
+    pub fn set_encoding(&self, label: &str) -> Result<(), SshError> {
+        if let Ok(mut cur) = self.current_encoding.write() {
+            *cur = label.to_string();
+        }
+        self.cmd_tx
+            .send(SessionCmd::SetEncoding {
+                label: label.to_string(),
+            })
+            .map_err(|_| SshError::ChannelError("session task closed".to_string()))
+    }
+
+    /// The encoding this session is currently transcoding with.
+    pub fn encoding(&self) -> String {
+        self.current_encoding
+            .read()
+            .map(|e| e.clone())
+            .unwrap_or_else(|_| "utf-8".to_string())
     }
 
     /// Gracefully disconnect: signal EOF to the background task.

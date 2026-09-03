@@ -286,6 +286,7 @@ pub fn run() {
             ssh::commands::ssh_disconnect,
             ssh::commands::ssh_send_input,
             ssh::commands::ssh_resize_pty,
+            ssh::commands::ssh_set_session_encoding,
             ssh::commands::list_ssh_keys,
             ssh::commands::inspect_ssh_key,
             ssh::commands::ssh_health_check_saved_host,
