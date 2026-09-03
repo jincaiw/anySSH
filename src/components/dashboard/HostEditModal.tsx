@@ -10,6 +10,7 @@ import type { SavedHost, HostConfig, StoredCredential } from "../../types";
 import { HOST_COLORS } from "./HostCard";
 import { CustomSelect } from "../shared/CustomSelect";
 import { LANG_PRESETS, LANG_RE, TERMINAL_ENCODINGS, useSettingsStore } from "../../stores/settings-store";
+import { BUILTIN_THEMES, SYSTEM_THEME_ID } from "../../lib/terminal-themes";
 import { useTranslation } from "../../i18n";
 
 // ─── Field types ─────────────────────────────────────────────────────────────
@@ -40,6 +41,8 @@ interface FormState {
   terminalEncoding: string;
   /** Per-host LANG override ("" = follow the global setting). */
   lang: string;
+  /** Per-host terminal colour-theme override ("" = follow the global setting). */
+  terminalTheme: string;
   // Auth credentials (only used at connect-time, never persisted)
   password: string;
   passphrase: string;
@@ -67,6 +70,7 @@ const EMPTY_FORM: FormState = {
   startDirectory: "",
   terminalEncoding: "",
   lang: "",
+  terminalTheme: "",
   password: "",
   passphrase: "",
   color: "",
@@ -103,6 +107,7 @@ function savedHostToForm(host: SavedHost): FormState {
     startDirectory: host.start_directory ?? "",
     terminalEncoding: host.terminal_encoding ?? "",
     lang: host.lang ?? "",
+    terminalTheme: host.terminal_theme ?? "",
     password: "",
     passphrase: "",
     color: host.color ?? "",
@@ -139,6 +144,8 @@ export function HostEditModal() {
   const groups = useGroupsStore((s) => s.groups);
   const loadGroups = useGroupsStore((s) => s.loadGroups);
   const addSession = useSessionStore((s) => s.addSession);
+  // Custom terminal themes for the per-host override dropdown.
+  const customThemes = useSettingsStore((s) => s.terminalCustomThemes);
 
   // Whether "Connect through SSH tunnel" is enabled for this host.
   const [tunnelEnabled, setTunnelEnabled] = useState(false);
@@ -311,6 +318,7 @@ export function HostEditModal() {
       default_shell: null,
       lang: null,
       terminal_encoding: null,
+      terminal_theme: null,
       font_size: null,
       last_connected_at: null,
       connection_count: null,
@@ -338,6 +346,7 @@ export function HostEditModal() {
       start_directory: form.startDirectory.trim() || null,
       terminal_encoding: form.terminalEncoding || null,
       lang: form.lang.trim() || null,
+      terminal_theme: form.terminalTheme || null,
       color: form.color || null,
       environment: form.environment || null,
       os_type: form.osType || null,
@@ -420,6 +429,7 @@ export function HostEditModal() {
         username: host.username,
         label: host.label || undefined,
         terminal_encoding: host.terminal_encoding || undefined,
+        terminal_theme: host.terminal_theme || undefined,
         auth_method:
           form.authType === "privateKey"
             ? { type: "privateKey", key_path: form.keyPath }
@@ -909,6 +919,32 @@ export function HostEditModal() {
               <p className="mt-1 text-[length:var(--text-xs)] text-text-muted -mt-2">
                 {t("host.field.terminalHint")}
               </p>
+
+              {/* Terminal theme override */}
+              <div>
+                <label htmlFor="hem-terminal-theme" className={labelClass}>
+                  {t("host.field.terminalTheme")}
+                </label>
+                <CustomSelect
+                  id="hem-terminal-theme"
+                  data-testid="host-modal-terminal-theme"
+                  value={form.terminalTheme}
+                  onChange={(v) => setField("terminalTheme", v)}
+                  disabled={isBusy}
+                  options={[
+                    {
+                      value: "",
+                      label: t("host.field.followGlobalNoValue"),
+                    },
+                    { value: SYSTEM_THEME_ID, label: t("settings.terminal.theme.system") },
+                    ...BUILTIN_THEMES.map((th) => ({ value: th.id, label: th.name })),
+                    ...customThemes.map((th) => ({ value: th.id, label: th.name })),
+                  ]}
+                />
+                <p className="mt-1 text-[length:var(--text-xs)] text-text-muted">
+                  {t("host.field.terminalThemeHint")}
+                </p>
+              </div>
 
               {/* ════════════════ APPEARANCE ════════════════ */}
               <SectionHeader>{t("host.section.appearance")}</SectionHeader>

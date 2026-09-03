@@ -18,6 +18,8 @@ export interface HostConfig {
   lang?: string;
   /** Per-host terminal character-encoding override (backend label). */
   terminal_encoding?: string;
+  /** Per-host terminal colour-theme override (theme id). */
+  terminal_theme?: string;
 }
 
 export type ConnectionStatus =
@@ -88,6 +90,8 @@ export interface SavedHost {
   lang: string | null;
   /** Per-host terminal encoding override (null = follow the global default). */
   terminal_encoding: string | null;
+  /** Per-host terminal colour-theme override (theme id, null = global default). */
+  terminal_theme: string | null;
   font_size: number | null;
   last_connected_at: string | null;
   connection_count: number | null;

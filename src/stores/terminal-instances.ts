@@ -3,6 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { registerSearchAddon, unregisterSearchAddon } from "./terminal-registry";
 import { useSettingsStore } from "./settings-store";
 import { useSessionStore } from "./session-store";
+import { resolveTerminalTheme, type TerminalTheme } from "../lib/terminal-themes";
 
 /**
  * Module-level registry of live xterm.js instances, keyed by sessionId.
@@ -91,8 +92,13 @@ const ANSI_PALETTE_LIGHT = {
   brightWhite: "#8c959f",
 };
 
-/** Read OKLCH CSS custom properties and convert to hex for xterm.js. */
-export function getTerminalTheme(): Record<string, string> {
+/** Read OKLCH CSS custom properties and convert to hex for xterm.js.
+ *  `explicit` (a builtin or user theme) overrides the CSS-variable palette;
+ *  without it the legacy behaviour applies — colours follow the app's
+ *  dark/light interface theme. */
+export function getTerminalTheme(explicit?: TerminalTheme | null): Record<string, string> {
+  if (explicit) return { ...explicit.colors };
+
   const styles = getComputedStyle(document.documentElement);
   const canvas = document.createElement("canvas");
   canvas.width = 1;
@@ -123,6 +129,20 @@ export function getTerminalTheme(): Record<string, string> {
   };
 }
 
+/**
+ * Effective colour theme for a session: the per-host override (carried on the
+ * session's HostConfig) wins over the global setting. Returns null for the
+ * "system" sentinel — callers then fall back to the CSS-variable palette.
+ */
+export function resolveSessionTheme(sessionId: string): TerminalTheme | null {
+  const session = useSessionStore.getState().sessions.get(sessionId);
+  const settings = useSettingsStore.getState();
+  return resolveTerminalTheme(
+    session?.hostConfig.terminal_theme ?? settings.terminalThemeId,
+    settings.terminalCustomThemes,
+  );
+}
+
 function createEntry(sessionId: string): TerminalEntry {
   const settings = useSettingsStore.getState();
 
@@ -139,7 +159,7 @@ function createEntry(sessionId: string): TerminalEntry {
     lineHeight: settings.terminalLineHeight,
     letterSpacing: 0,
     scrollback: settings.terminalScrollback,
-    theme: getTerminalTheme(),
+    theme: getTerminalTheme(resolveSessionTheme(sessionId)),
     allowProposedApi: true,
     // Open OSC 8 hyperlinks (emitted by ls --hyperlink, git, etc.) through the
     // OS browser instead of xterm's window.open() fallback, which errors in the

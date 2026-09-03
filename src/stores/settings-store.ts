@@ -5,6 +5,7 @@ import {
   isLocale,
   type Locale,
 } from "../i18n";
+import { SYSTEM_THEME_ID, sanitizeTheme, type TerminalTheme } from "../lib/terminal-themes";
 
 export type CursorStyle = "block" | "bar" | "underline";
 export type ThemeMode = "dark" | "light";
@@ -94,6 +95,11 @@ interface SettingsState {
   terminalCursorBlink: boolean;
   terminalLineHeight: number;
   terminalScrollback: number;
+  /** Global terminal colour theme. "system" follows the app theme's CSS
+   *  palette; otherwise a builtin/custom theme id. */
+  terminalThemeId: string;
+  /** User-created terminal themes (Settings editor / .itermcolors imports). */
+  terminalCustomThemes: TerminalTheme[];
 
   // Terminal clipboard
   terminalCopyOnSelect: boolean;
@@ -133,6 +139,10 @@ interface SettingsState {
   setTerminalCursorBlink: (blink: boolean) => void;
   setTerminalLineHeight: (height: number) => void;
   setTerminalScrollback: (lines: number) => void;
+  setTerminalThemeId: (id: string) => void;
+  /** Add or replace a custom theme (matched by id) and persist the list. */
+  upsertTerminalCustomTheme: (theme: TerminalTheme) => void;
+  removeTerminalCustomTheme: (id: string) => void;
   setTerminalCopyOnSelect: (enabled: boolean) => void;
   setTerminalPasteButton: (button: PasteButton) => void;
   setTerminalEncoding: (encoding: TerminalEncoding) => void;
@@ -164,6 +174,8 @@ const DEFAULTS = {
   terminalCursorBlink: true,
   terminalLineHeight: 1.2,
   terminalScrollback: 5000,
+  terminalThemeId: SYSTEM_THEME_ID,
+  terminalCustomThemes: [] as TerminalTheme[],
   terminalCopyOnSelect: false,
   terminalPasteButton: "none" as PasteButton,
   terminalEncoding: "utf-8" as TerminalEncoding,
@@ -380,6 +392,30 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     persist("terminal_scrollback", String(clamped));
   },
 
+  setTerminalThemeId: (id) => {
+    set({ terminalThemeId: id });
+    persist("terminal_theme_id", id);
+  },
+
+  upsertTerminalCustomTheme: (theme) => set((s) => {
+    const next = s.terminalCustomThemes.some((t) => t.id === theme.id)
+      ? s.terminalCustomThemes.map((t) => (t.id === theme.id ? theme : t))
+      : [...s.terminalCustomThemes, theme];
+    persist("terminal_custom_themes", JSON.stringify(next));
+    return { terminalCustomThemes: next };
+  }),
+
+  removeTerminalCustomTheme: (id) => set((s) => {
+    const next = s.terminalCustomThemes.filter((t) => t.id !== id);
+    persist("terminal_custom_themes", JSON.stringify(next));
+    // If the deleted theme was the global default, fall back to "system".
+    if (s.terminalThemeId === id) persist("terminal_theme_id", SYSTEM_THEME_ID);
+    return {
+      terminalCustomThemes: next,
+      terminalThemeId: s.terminalThemeId === id ? SYSTEM_THEME_ID : s.terminalThemeId,
+    };
+  }),
+
   setTerminalCopyOnSelect: (enabled) => {
     set({ terminalCopyOnSelect: enabled });
     persist("terminal_copy_on_select", String(enabled));
@@ -490,6 +526,18 @@ export const useSettingsStore = create<SettingsState>((set) => ({
           case "terminal_cursor_blink": updates.terminalCursorBlink = value !== "false"; break;
           case "terminal_line_height": updates.terminalLineHeight = Number(value) || DEFAULTS.terminalLineHeight; break;
           case "terminal_scrollback": updates.terminalScrollback = Number(value) || DEFAULTS.terminalScrollback; break;
+          case "terminal_theme_id": updates.terminalThemeId = value.trim() || DEFAULTS.terminalThemeId; break;
+          case "terminal_custom_themes": {
+            try {
+              const parsed = JSON.parse(value) as unknown[];
+              if (Array.isArray(parsed)) {
+                updates.terminalCustomThemes = parsed
+                  .map(sanitizeTheme)
+                  .filter((t): t is TerminalTheme => t !== null);
+              }
+            } catch { /* ignore malformed list */ }
+            break;
+          }
           case "terminal_copy_on_select": updates.terminalCopyOnSelect = value === "true"; break;
           case "terminal_paste_button": updates.terminalPasteButton = value === "right" || value === "middle" ? value : DEFAULTS.terminalPasteButton; break;
           case "terminal_encoding": {

@@ -34,6 +34,8 @@ export default {
   "field.lang": "Locale (LANG)",
   "field.environment": "Environment",
   "field.osType": "OS Type",
+  "field.terminalTheme": "Terminal Theme",
+  "field.terminalThemeHint": "Colour scheme for this connection only; empty follows the global default.",
 
   // ─── Field placeholders ─────────────────────────────────────────────────
   "field.labelPlaceholder": "e.g., Production Server",

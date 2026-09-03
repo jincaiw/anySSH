@@ -7,6 +7,8 @@ import {
   getTerminalTheme,
 } from "../../stores/terminal-instances";
 import { useSettingsStore } from "../../stores/settings-store";
+import { useSessionStore } from "../../stores/session-store";
+import { resolveTerminalTheme } from "../../lib/terminal-themes";
 import type { SessionId } from "../../types";
 
 interface TerminalProps {
@@ -22,7 +24,6 @@ interface TerminalProps {
  */
 export function Terminal({ sessionId }: TerminalProps) {
   const containerRef = useRef<HTMLDivElement>(null);
-  const themeMode = useSettingsStore((s) => s.themeMode);
   const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
   const fontSize = useSettingsStore((s) => s.terminalFontSize);
   const lineHeight = useSettingsStore((s) => s.terminalLineHeight);
@@ -31,6 +32,22 @@ export function Terminal({ sessionId }: TerminalProps) {
   const scrollback = useSettingsStore((s) => s.terminalScrollback);
   const copyOnSelect = useSettingsStore((s) => s.terminalCopyOnSelect);
   const pasteButton = useSettingsStore((s) => s.terminalPasteButton);
+  // Colour theme: the per-host override (from the session's HostConfig) wins
+  // over the global setting. Subscribing to all three keeps theme switches
+  // live — the effect below repaints the open xterm without recreating it.
+  // themeMode is also tracked so the "system" sentinel (no explicit theme)
+  // still repaints when the app switches between dark and light.
+  const globalThemeId = useSettingsStore((s) => s.terminalThemeId);
+  const customThemes = useSettingsStore((s) => s.terminalCustomThemes);
+  const themeMode = useSettingsStore((s) => s.themeMode);
+  const hostThemeId = useSessionStore(
+    (s) => s.sessions.get(sessionId)?.hostConfig.terminal_theme,
+  );
+  const effectiveTheme = resolveTerminalTheme(
+    hostThemeId ?? globalThemeId,
+    customThemes,
+  );
+  const themeBackground = effectiveTheme?.colors.background ?? null;
 
   // Read the live clipboard-behaviour settings through refs so the listeners
   // registered once below pick up toggles without being torn down and
@@ -93,10 +110,13 @@ export function Terminal({ sessionId }: TerminalProps) {
     };
   }, [sessionId]);
 
+  // Live theme switching: repaint the already-open terminal when the global
+  // theme, the custom theme list, or this host's override changes. The theme
+  // object must be replaced (not mutated) for xterm to detect the change.
   useEffect(() => {
     const term = getTerminal(sessionId)?.term;
-    if (term) term.options.theme = getTerminalTheme();
-  }, [sessionId, themeMode]);
+    if (term) term.options.theme = getTerminalTheme(effectiveTheme);
+  }, [sessionId, effectiveTheme, themeMode]);
 
   // Clipboard behaviours (#71): copy-on-select and configurable paste button.
   // Registered once per session; the current setting values are read through
@@ -181,6 +201,9 @@ export function Terminal({ sessionId }: TerminalProps) {
       data-testid={`terminal-${sessionId}`}
       data-session-id={sessionId}
       className="h-full w-full bg-bg-base p-2"
+      // Explicit themes own the pane background too — otherwise the padding
+      // around the xterm surface would stay the app's base colour.
+      style={themeBackground ? { backgroundColor: themeBackground } : undefined}
       onKeyDown={(e) => {
         if (e.metaKey && (e.key === "d" || e.key === "D")) {
           e.preventDefault();

@@ -34,6 +34,8 @@ export default {
   "field.lang": "语言环境 (LANG)",
   "field.environment": "环境",
   "field.osType": "系统类型",
+  "field.terminalTheme": "终端主题",
+  "field.terminalThemeHint": "仅对该连接生效的配色方案，留空跟随全局默认。",
 
   // ─── Field placeholders ─────────────────────────────────────────────────
   "field.labelPlaceholder": "例如：生产服务器",

@@ -33,6 +33,7 @@ function makeHost(id: string, label: string): SavedHost {
     default_shell: null,
     lang: null,
     terminal_encoding: null,
+    terminal_theme: null,
     font_size: null,
     last_connected_at: null,
     connection_count: null,

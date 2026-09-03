@@ -130,6 +130,10 @@ pub struct SavedHost {
     /// Terminal character-encoding override for this host (encoding_rs label,
     /// e.g. "gbk"). `None` falls back to the global `terminal_encoding` setting.
     pub terminal_encoding: Option<String>,
+    /// Terminal colour-theme override for this host (theme id as known by the
+    /// frontend, e.g. "dracula" or a custom theme UUID). `None` falls back to
+    /// the global `terminal_theme_id` setting.
+    pub terminal_theme: Option<String>,
     /// Terminal font-size override for this host.
     pub font_size: Option<u32>,
 
@@ -573,6 +577,22 @@ impl HostDb {
             );
         }
 
+        if version < 17 {
+            // Per-host terminal colour-theme override. Idempotent, same pattern
+            // as the migration 15→16 column additions.
+            let has_terminal_theme: bool = conn
+                .prepare("SELECT terminal_theme FROM saved_hosts LIMIT 0")
+                .is_ok();
+            if !has_terminal_theme {
+                conn.execute("ALTER TABLE saved_hosts ADD COLUMN terminal_theme TEXT", [])?;
+            }
+            conn.execute(
+                "INSERT OR REPLACE INTO _meta (key, value) VALUES ('schema_version', '17')",
+                [],
+            )?;
+            tracing::info!("migration 16→17 applied: added saved_hosts.terminal_theme");
+        }
+
         Ok(())
     }
 
@@ -682,14 +702,14 @@ impl HostDb {
                  key_path, color, notes, environment, os_type,
                  startup_command, proxy_jump, keep_alive_interval, default_shell,
                  font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                 start_directory, lang, terminal_encoding
+                 start_directory, lang, terminal_encoding, terminal_theme
              )
              VALUES (
                  ?1,  ?2,  ?3,  ?4,  ?5,  ?6,  ?7,  ?8,  ?9,
                  ?10, ?11, ?12, ?13, ?14,
                  ?15, ?16, ?17, ?18,
                  ?19, ?20, ?21, ?22,
-                 ?23, ?24, ?25
+                 ?23, ?24, ?25, ?26
              )
              ON CONFLICT(id) DO UPDATE SET
                  label                = excluded.label,
@@ -714,7 +734,8 @@ impl HostDb {
                  proxy_jump_host_id   = excluded.proxy_jump_host_id,
                  start_directory      = excluded.start_directory,
                  lang                 = excluded.lang,
-                 terminal_encoding    = excluded.terminal_encoding",
+                 terminal_encoding    = excluded.terminal_encoding,
+                 terminal_theme       = excluded.terminal_theme",
             params![
                 host.id,
                 host.label,
@@ -741,6 +762,7 @@ impl HostDb {
                 host.start_directory,
                 host.lang,
                 host.terminal_encoding,
+                host.terminal_theme,
             ],
         )?;
         Ok(())
@@ -760,7 +782,7 @@ impl HostDb {
                     key_path, color, notes, environment, os_type,
                     startup_command, proxy_jump, keep_alive_interval, default_shell,
                     font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                    start_directory, lang, terminal_encoding
+                    start_directory, lang, terminal_encoding, terminal_theme
              FROM saved_hosts
              ORDER BY sort_order ASC, label ASC",
         )?;
@@ -792,6 +814,7 @@ impl HostDb {
                 start_directory: row.get(22)?,
                 lang: row.get(23)?,
                 terminal_encoding: row.get(24)?,
+                terminal_theme: row.get(25)?,
             })
         })?;
 
@@ -853,7 +876,7 @@ impl HostDb {
                     key_path, color, notes, environment, os_type,
                     startup_command, proxy_jump, keep_alive_interval, default_shell,
                     font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                    start_directory, lang, terminal_encoding
+                    start_directory, lang, terminal_encoding, terminal_theme
              FROM saved_hosts
              WHERE id = ?1",
         )?;
@@ -885,6 +908,7 @@ impl HostDb {
                 start_directory: row.get(22)?,
                 lang: row.get(23)?,
                 terminal_encoding: row.get(24)?,
+                terminal_theme: row.get(25)?,
             })
         })?;
 
@@ -2072,6 +2096,7 @@ mod tests {
             default_shell: None,
             lang: None,
             terminal_encoding: None,
+            terminal_theme: None,
             font_size: None,
             last_connected_at: None,
             connection_count: Some(0),

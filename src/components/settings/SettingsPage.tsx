@@ -11,6 +11,7 @@ import { RefreshCw, CheckCircle2, AlertCircle, Palette, SquareTerminal, ArrowUpD
 import type { LucideIcon } from "lucide-react";
 import { TERMINAL_ENCODINGS, TERMINAL_TYPES, TERM_NAME_RE, LANG_PRESETS, LANG_RE } from "../../stores/settings-store";
 import type { CursorStyle, ThemeMode, EditorConfig, PasteButton, DoubleClickAction, TerminalEncoding } from "../../stores/settings-store";
+import { TerminalThemeSettings } from "./TerminalThemeSettings";
 
 // ─── Shared styles ───────────────────────────────────────────────────────────
 
@@ -612,6 +613,10 @@ function TerminalSettings() {
 
   return (
     <>
+      <SettingsGroup label={t("settings.terminal.group.theme")}>
+        <TerminalThemeSettings />
+      </SettingsGroup>
+
       <SettingsGroup label={t("settings.terminal.group.font")}>
         <SettingRow>
           <div>
