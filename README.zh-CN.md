@@ -16,8 +16,6 @@
   <a href="#安装">安装</a> &bull;
   <a href="#构建">构建</a> &bull;
   <a href="#参与贡献">参与贡献</a> &bull;
-  <a href="https://discord.gg/3xNRbNAmYb">Discord</a> &bull;
-  <a href="https://join.slack.com/t/anyssh/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q">Slack</a> &bull;
   <a href="#开源协议">开源协议</a>
 </p>
 
@@ -27,8 +25,6 @@
   <img src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-blue" alt="Platform"/>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green" alt="License MIT"/></a>
   <a href="https://github.com/jincaiw/anySSH/stargazers"><img src="https://img.shields.io/github/stars/jincaiw/anySSH?style=social" alt="Stars"/></a>
-  <a href="https://discord.gg/3xNRbNAmYb"><img src="https://img.shields.io/badge/Discord-Join%20us-5865F2?logo=discord&logoColor=white" alt="Discord"/></a>
-  <a href="https://join.slack.com/t/anyssh/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q"><img src="https://img.shields.io/badge/Slack-Join%20us-4A154B?logo=slack&logoColor=white" alt="Slack"/></a>
 </p>
 
 <p align="center">
@@ -313,8 +309,6 @@ src-tauri/src/                # Rust 后端
 
 ## 💬 支持
 
-- **Discord**：[加入社区](https://discord.gg/3xNRbNAmYb)
-- **Slack**：[加入工作区](https://join.slack.com/t/anyssh/shared_invite/zt-40b1jsfg4-f9rq_xRof_MVQqLXSPDE2Q)
 - **Issues**：[GitHub Issues](https://github.com/jincaiw/anySSH/issues)
 - **Discussions**：[GitHub Discussions](https://github.com/jincaiw/anySSH/discussions)
 
