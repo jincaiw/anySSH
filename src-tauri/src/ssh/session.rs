@@ -11,12 +11,17 @@ use super::handler::SshClientHandler;
 /// Commands sent from the frontend to the reader/writer task.
 enum SessionCmd {
     Data(Vec<u8>),
-    Resize { cols: u32, rows: u32 },
+    Resize {
+        cols: u32,
+        rows: u32,
+    },
     /// Rebuild both stream converters with a new encoding at runtime. The
     /// switch takes effect on the next chunk in each direction; any partial
     /// multi-byte sequence buffered in the old converter is discarded (the
     /// user is expected to switch at a shell prompt, where nothing is pending).
-    SetEncoding { label: String },
+    SetEncoding {
+        label: String,
+    },
     Eof,
 }
 

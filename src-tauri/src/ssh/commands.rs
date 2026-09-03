@@ -103,9 +103,7 @@ pub async fn ssh_set_session_encoding(
     encoding: String,
     state: State<'_, SshManager>,
 ) -> Result<(), SshError> {
-    if encoding != "utf-8"
-        && encoding_rs::Encoding::for_label(encoding.as_bytes()).is_none()
-    {
+    if encoding != "utf-8" && encoding_rs::Encoding::for_label(encoding.as_bytes()).is_none() {
         return Err(SshError::InvalidEncoding(encoding));
     }
     state.set_encoding(&session_id, &encoding)
