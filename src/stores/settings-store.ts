@@ -111,6 +111,22 @@ interface SettingsState {
   /** Global default LANG sent to servers on connect ("" = send nothing). */
   terminalLang: string;
 
+  // Session logging
+  /** Globally auto-record every terminal session to a local log file. */
+  sessionLogEnabled: boolean;
+  /** Keep ANSI escapes verbatim ("keep") or strip them ("strip"). */
+  sessionLogAnsi: "keep" | "strip";
+  /** Plain text log or Asciicast v2 (.cast, replayable with asciinema). */
+  sessionLogFormat: "text" | "asciicast";
+  /** Prefix each logged line with [HH:MM:SS]. */
+  sessionLogTimestamps: boolean;
+  /** Per-file size cap before rotation (_part2, _part3, …). */
+  sessionLogMaxSizeMb: number;
+  /** Files older than this are deleted on the next logging start (0 = keep). */
+  sessionLogRetentionDays: number;
+  /** Total log storage budget; oldest files are deleted first (0 = unlimited). */
+  sessionLogQuotaMb: number;
+
   // Explorer
   explorerDoubleClickAction: DoubleClickAction;
 
@@ -149,6 +165,13 @@ interface SettingsState {
   setTerminalType: (type: string) => void;
   /** Global default LANG; "" disables sending it. Validated against LANG_RE. */
   setTerminalLang: (lang: string) => void;
+  setSessionLogEnabled: (enabled: boolean) => void;
+  setSessionLogAnsi: (mode: "keep" | "strip") => void;
+  setSessionLogFormat: (format: "text" | "asciicast") => void;
+  setSessionLogTimestamps: (enabled: boolean) => void;
+  setSessionLogMaxSizeMb: (mb: number) => void;
+  setSessionLogRetentionDays: (days: number) => void;
+  setSessionLogQuotaMb: (mb: number) => void;
   setExplorerDoubleClickAction: (action: DoubleClickAction) => void;
   setTransferConcurrency: (n: number) => void;
   addEditor: (editor: Omit<EditorConfig, "id">) => void;
@@ -181,6 +204,13 @@ const DEFAULTS = {
   terminalEncoding: "utf-8" as TerminalEncoding,
   terminalType: "xterm-256color",
   terminalLang: "",
+  sessionLogEnabled: false,
+  sessionLogAnsi: "strip" as "keep" | "strip",
+  sessionLogFormat: "text" as "text" | "asciicast",
+  sessionLogTimestamps: false,
+  sessionLogMaxSizeMb: 10,
+  sessionLogRetentionDays: 30,
+  sessionLogQuotaMb: 500,
   explorerDoubleClickAction: "download" as DoubleClickAction,
   transferConcurrency: 3,
   editors: [] as EditorConfig[],
@@ -454,6 +484,44 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     persist("terminal_lang", value);
   },
 
+  setSessionLogEnabled: (enabled) => {
+    set({ sessionLogEnabled: enabled });
+    persist("session_log_enabled", String(enabled));
+  },
+
+  setSessionLogAnsi: (mode) => {
+    set({ sessionLogAnsi: mode });
+    persist("session_log_ansi", mode);
+  },
+
+  setSessionLogFormat: (format) => {
+    set({ sessionLogFormat: format });
+    persist("session_log_format", format);
+  },
+
+  setSessionLogTimestamps: (enabled) => {
+    set({ sessionLogTimestamps: enabled });
+    persist("session_log_timestamps", String(enabled));
+  },
+
+  setSessionLogMaxSizeMb: (mb) => {
+    const clamped = Math.max(1, Math.min(1024, Math.round(mb)));
+    set({ sessionLogMaxSizeMb: clamped });
+    persist("session_log_max_size_mb", String(clamped));
+  },
+
+  setSessionLogRetentionDays: (days) => {
+    const clamped = Math.max(0, Math.min(3650, Math.round(days)));
+    set({ sessionLogRetentionDays: clamped });
+    persist("session_log_retention_days", String(clamped));
+  },
+
+  setSessionLogQuotaMb: (mb) => {
+    const clamped = Math.max(0, Math.min(102400, Math.round(mb)));
+    set({ sessionLogQuotaMb: clamped });
+    persist("session_log_quota_mb", String(clamped));
+  },
+
   setTransferConcurrency: (n) => {
     const clamped = Math.max(1, Math.min(10, n));
     set({ transferConcurrency: clamped });
@@ -556,6 +624,13 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             break;
           }
           case "explorer_double_click_action": updates.explorerDoubleClickAction = value === "open" ? "open" : "download"; break;
+          case "session_log_enabled": updates.sessionLogEnabled = value === "true"; break;
+          case "session_log_ansi": updates.sessionLogAnsi = value === "keep" ? "keep" : "strip"; break;
+          case "session_log_format": updates.sessionLogFormat = value === "asciicast" ? "asciicast" : "text"; break;
+          case "session_log_timestamps": updates.sessionLogTimestamps = value === "true"; break;
+          case "session_log_max_size_mb": updates.sessionLogMaxSizeMb = Number(value) || DEFAULTS.sessionLogMaxSizeMb; break;
+          case "session_log_retention_days": updates.sessionLogRetentionDays = Number(value) || DEFAULTS.sessionLogRetentionDays; break;
+          case "session_log_quota_mb": updates.sessionLogQuotaMb = Number(value) || DEFAULTS.sessionLogQuotaMb; break;
           case "transfer_concurrency": updates.transferConcurrency = Number(value) || DEFAULTS.transferConcurrency; break;
           case "app_interface_font": updates.interfaceFont = value || DEFAULTS.interfaceFont; break;
           case "app_interface_mono_font": updates.interfaceMonoFont = value || DEFAULTS.interfaceMonoFont; break;

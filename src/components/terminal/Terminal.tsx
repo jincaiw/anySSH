@@ -1,5 +1,6 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
+import { ClipboardPaste, CircleDot, Square, ScrollText, FolderOpen } from "lucide-react";
 import { useSshOutput } from "../../hooks/use-ssh-events";
 import {
   ensureTerminal,
@@ -9,6 +10,14 @@ import {
 import { useSettingsStore } from "../../stores/settings-store";
 import { useSessionStore } from "../../stores/session-store";
 import { resolveTerminalTheme } from "../../lib/terminal-themes";
+import { ContextMenu, type ContextMenuItem } from "../shared/ContextMenu";
+import {
+  getSessionLogStatus,
+  openSessionLogViewer,
+  revealLogsDirectory,
+  toggleSessionLog,
+} from "../../lib/session-log";
+import { useTranslation } from "../../i18n";
 import type { SessionId } from "../../types";
 
 interface TerminalProps {
@@ -23,7 +32,12 @@ interface TerminalProps {
  * that happen whenever the surrounding layout changes shape (e.g. on split).
  */
 export function Terminal({ sessionId }: TerminalProps) {
+  const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
+  // Right-click session menu (hidden when right-button paste is configured —
+  // that gesture already pastes, and a menu would be a breaking change).
+  const [menu, setMenu] = useState<{ x: number; y: number } | null>(null);
+  const [logActive, setLogActive] = useState(false);
   const fontFamily = useSettingsStore((s) => s.terminalFontFamily);
   const fontSize = useSettingsStore((s) => s.terminalFontSize);
   const lineHeight = useSettingsStore((s) => s.terminalLineHeight);
@@ -125,7 +139,18 @@ export function Terminal({ sessionId }: TerminalProps) {
   // Clipboard I/O goes through the Tauri clipboard plugin, not
   // navigator.clipboard: the macOS WKWebView blocks navigator.clipboard.readText(),
   // which would make paste silently no-op. The native plugin reads/writes
-  // through Rust and works in every webview.
+  // through Rust and works in every webview. Shared by the middle/right-button
+  // gestures and the right-click menu.
+  const pasteFromClipboard = useCallback(() => {
+    void (async () => {
+      try {
+        const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
+        const text = await readText();
+        if (text) getTerminal(sessionId)?.term.paste(text);
+      } catch { /* clipboard read unavailable */ }
+    })();
+  }, [sessionId]);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -143,16 +168,6 @@ export function Terminal({ sessionId }: TerminalProps) {
       })();
     });
 
-    const paste = () => {
-      void (async () => {
-        try {
-          const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
-          const text = await readText();
-          if (text) term.paste(text);
-        } catch { /* clipboard read unavailable */ }
-      })();
-    };
-
     // Paste on mousedown for the middle button (pasting on auxclick is unreliable
     // in WebKit once mousedown's default is prevented), and on contextmenu for
     // the right button — replacing the native menu. Capture phase so xterm's own
@@ -160,14 +175,20 @@ export function Terminal({ sessionId }: TerminalProps) {
     const onMouseDown = (e: MouseEvent) => {
       if (e.button === 1 && pasteButtonRef.current === "middle") {
         e.preventDefault();
-        paste();
+        pasteFromClipboard();
       }
     };
     const onContextMenu = (e: MouseEvent) => {
       if (pasteButtonRef.current === "right") {
+        // Legacy behaviour: right-click pastes directly.
         e.preventDefault();
-        paste();
+        pasteFromClipboard();
+        return;
       }
+      // Session menu: paste + session-log controls.
+      e.preventDefault();
+      void getSessionLogStatus(sessionId).then((s) => setLogActive(!!s?.active));
+      setMenu({ x: e.clientX, y: e.clientY });
     };
 
     container.addEventListener("mousedown", onMouseDown, true);
@@ -177,7 +198,7 @@ export function Terminal({ sessionId }: TerminalProps) {
       container.removeEventListener("mousedown", onMouseDown, true);
       container.removeEventListener("contextmenu", onContextMenu, true);
     };
-  }, [sessionId]);
+  }, [sessionId, pasteFromClipboard]);
 
   // Apply appearance changes to the already-open terminal (not just new ones).
   useEffect(() => {
@@ -195,6 +216,23 @@ export function Terminal({ sessionId }: TerminalProps) {
     term.refresh(0, term.rows - 1);
   }, [sessionId, fontFamily, fontSize, lineHeight, cursorStyle, cursorBlink, scrollback]);
 
+  const menuItems: ContextMenuItem[] = [
+    { label: t("terminal.menu.paste"), icon: ClipboardPaste, onClick: pasteFromClipboard },
+    {
+      label: logActive ? t("terminal.menu.stopLog") : t("terminal.menu.startLog"),
+      icon: logActive ? Square : CircleDot,
+      onClick: () => {
+        void toggleSessionLog(sessionId).then((s) => setLogActive(!!s?.active));
+      },
+    },
+    {
+      label: t("terminal.menu.viewLog"),
+      icon: ScrollText,
+      onClick: () => openSessionLogViewer(sessionId),
+    },
+    { label: t("terminal.menu.openLogDir"), icon: FolderOpen, onClick: () => void revealLogsDirectory() },
+  ];
+
   return (
     <div
       ref={containerRef}
@@ -210,6 +248,10 @@ export function Terminal({ sessionId }: TerminalProps) {
           e.stopPropagation();
         }
       }}
-    />
+    >
+      {menu && (
+        <ContextMenu position={menu} onClose={() => setMenu(null)} items={menuItems} />
+      )}
+    </div>
   );
 }

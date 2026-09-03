@@ -134,6 +134,9 @@ pub struct SavedHost {
     /// frontend, e.g. "dracula" or a custom theme UUID). `None` falls back to
     /// the global `terminal_theme_id` setting.
     pub terminal_theme: Option<String>,
+    /// Bookmark preset: force terminal session logging on for this host,
+    /// regardless of the global auto-record setting (e.g. production hosts).
+    pub force_session_log: Option<bool>,
     /// Terminal font-size override for this host.
     pub font_size: Option<u32>,
 
@@ -593,6 +596,26 @@ impl HostDb {
             tracing::info!("migration 16→17 applied: added saved_hosts.terminal_theme");
         }
 
+        if version < 18 {
+            // Bookmark preset: force terminal session logging on for this host
+            // (e.g. production hosts). Idempotent column add; existing rows
+            // default to 0 (follow the global auto-record setting only).
+            let has_force_session_log: bool = conn
+                .prepare("SELECT force_session_log FROM saved_hosts LIMIT 0")
+                .is_ok();
+            if !has_force_session_log {
+                conn.execute(
+                    "ALTER TABLE saved_hosts ADD COLUMN force_session_log INTEGER NOT NULL DEFAULT 0",
+                    [],
+                )?;
+            }
+            conn.execute(
+                "INSERT OR REPLACE INTO _meta (key, value) VALUES ('schema_version', '18')",
+                [],
+            )?;
+            tracing::info!("migration 17→18 applied: added saved_hosts.force_session_log");
+        }
+
         Ok(())
     }
 
@@ -702,14 +725,14 @@ impl HostDb {
                  key_path, color, notes, environment, os_type,
                  startup_command, proxy_jump, keep_alive_interval, default_shell,
                  font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                 start_directory, lang, terminal_encoding, terminal_theme
+                 start_directory, lang, terminal_encoding, terminal_theme, force_session_log
              )
              VALUES (
                  ?1,  ?2,  ?3,  ?4,  ?5,  ?6,  ?7,  ?8,  ?9,
                  ?10, ?11, ?12, ?13, ?14,
                  ?15, ?16, ?17, ?18,
                  ?19, ?20, ?21, ?22,
-                 ?23, ?24, ?25, ?26
+                 ?23, ?24, ?25, ?26, ?27
              )
              ON CONFLICT(id) DO UPDATE SET
                  label                = excluded.label,
@@ -735,7 +758,8 @@ impl HostDb {
                  start_directory      = excluded.start_directory,
                  lang                 = excluded.lang,
                  terminal_encoding    = excluded.terminal_encoding,
-                 terminal_theme       = excluded.terminal_theme",
+                 terminal_theme       = excluded.terminal_theme,
+                 force_session_log    = excluded.force_session_log",
             params![
                 host.id,
                 host.label,
@@ -763,6 +787,7 @@ impl HostDb {
                 host.lang,
                 host.terminal_encoding,
                 host.terminal_theme,
+                host.force_session_log,
             ],
         )?;
         Ok(())
@@ -782,7 +807,7 @@ impl HostDb {
                     key_path, color, notes, environment, os_type,
                     startup_command, proxy_jump, keep_alive_interval, default_shell,
                     font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                    start_directory, lang, terminal_encoding, terminal_theme
+                    start_directory, lang, terminal_encoding, terminal_theme, force_session_log
              FROM saved_hosts
              ORDER BY sort_order ASC, label ASC",
         )?;
@@ -815,6 +840,7 @@ impl HostDb {
                 lang: row.get(23)?,
                 terminal_encoding: row.get(24)?,
                 terminal_theme: row.get(25)?,
+                force_session_log: row.get(26)?,
             })
         })?;
 
@@ -876,7 +902,7 @@ impl HostDb {
                     key_path, color, notes, environment, os_type,
                     startup_command, proxy_jump, keep_alive_interval, default_shell,
                     font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                    start_directory, lang, terminal_encoding, terminal_theme
+                    start_directory, lang, terminal_encoding, terminal_theme, force_session_log
              FROM saved_hosts
              WHERE id = ?1",
         )?;
@@ -909,6 +935,7 @@ impl HostDb {
                 lang: row.get(23)?,
                 terminal_encoding: row.get(24)?,
                 terminal_theme: row.get(25)?,
+                force_session_log: row.get(26)?,
             })
         })?;
 
@@ -2081,6 +2108,7 @@ mod tests {
             username: "alice".to_string(),
             auth_type: "password".to_string(),
             group_id: None,
+            force_session_log: Some(false),
             created_at: "2026-01-01T00:00:00".to_string(),
             updated_at: "2026-01-01T00:00:00".to_string(),
             key_path: None,

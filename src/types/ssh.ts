@@ -95,6 +95,9 @@ export interface SavedHost {
   font_size: number | null;
   last_connected_at: string | null;
   connection_count: number | null;
+  /** Force session logging on every connection to this host (null = follow
+   *  the global session-log settings). E.g. production hosts. */
+  force_session_log: boolean | null;
 }
 
 export interface RecentConnection {

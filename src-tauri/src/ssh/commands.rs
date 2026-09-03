@@ -2,6 +2,7 @@ use crate::db::HostDb;
 use crate::ssh::encoding::session_settings_from_db;
 use crate::ssh::keys::SshKeyInfo;
 use crate::ssh::manager::SshManager;
+use crate::ssh::sessionlog::{self, SessionLogOptions};
 use crate::types::{AuthMethod, HostConfig, SessionId, SshError};
 use crate::vault;
 use russh::client;
@@ -42,9 +43,22 @@ pub async fn ssh_connect(
     // Terminal type + encoding come from the persisted app settings (a fast
     // single-row SQLite read; defaults apply when absent).
     let settings = session_settings_from_db(&db);
+    // Session-log auto-record: the global setting, OR this connection's
+    // bookmark preset forcing it on (e.g. production hosts).
+    let log_options = resolve_auto_log_options(&host_config.force_session_log, &db);
     state
-        .connect(host_config, app_handle, attempt_id, settings)
+        .connect(host_config, app_handle, attempt_id, settings, log_options)
         .await
+}
+
+/// Resolve the auto-start log options for a connection: `Some` when either
+/// the global auto-record setting or the host-level preset enables logging.
+fn resolve_auto_log_options(force: &bool, db: &HostDb) -> Option<SessionLogOptions> {
+    if *force || sessionlog::session_log_enabled_from_db(db) {
+        Some(sessionlog::session_log_options_from_db(db))
+    } else {
+        None
+    }
 }
 
 /// Abort an in-flight connection attempt identified by the frontend-supplied
@@ -484,6 +498,8 @@ mod tests {
             lang: None,
             terminal_encoding: None,
             jump_host: None,
+            // Probes never open a PTY, so there is no session log to record.
+            force_session_log: false,
         }
     }
 
@@ -602,8 +618,11 @@ pub async fn connect_saved_host(
 
     let auth_type = auth_method_label(&config.auth_method).to_string();
     let settings = session_settings_from_db(&db);
+    // The saved host's force flag was copied into the HostConfig by
+    // `build_host_config_blocking`; combine with the global setting.
+    let log_options = resolve_auto_log_options(&config.force_session_log, &db);
     let session_id = state
-        .connect(config, app_handle, attempt_id, settings)
+        .connect(config, app_handle, attempt_id, settings, log_options)
         .await?;
 
     crate::telemetry::capture(
@@ -626,7 +645,6 @@ fn auth_method_label(auth: &AuthMethod) -> &'static str {
 }
 
 /// Resolve the AuthMethod for a saved host, pulling secrets from the vault.
-///
 /// Password auth is strict: a vault read failure is reported instead of
 /// silently authenticating with an empty password. Historically any vault
 /// error (missing entry, corrupt portable vault, key mismatch) was swallowed
@@ -763,6 +781,7 @@ fn build_host_config_blocking(
         startup_command: saved_host.startup_command,
         lang: saved_host.lang,
         terminal_encoding: saved_host.terminal_encoding,
+        force_session_log: saved_host.force_session_log.unwrap_or(false),
         jump_host,
     })
 }
@@ -818,4 +837,117 @@ pub async fn has_saved_password(host_id: String) -> Result<bool, SshError> {
     })
     .await
     .map_err(|e| SshError::IoError(format!("task panicked: {e}")))?
+}
+
+// ---------------------------------------------------------------------------
+// Terminal session logging
+// ---------------------------------------------------------------------------
+
+/// Runtime status of a session's log (for the right-click menu / pane UI).
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionLogStatus {
+    pub active: bool,
+    pub path: Option<String>,
+    pub host: String,
+    pub user: String,
+}
+
+/// Start logging for a live session (manual toggle). Options default to the
+/// persisted app settings when omitted.
+#[tauri::command]
+pub async fn ssh_start_session_log(
+    session_id: String,
+    options: Option<SessionLogOptions>,
+    state: State<'_, SshManager>,
+    db: State<'_, Arc<HostDb>>,
+) -> Result<String, SshError> {
+    let entry = state
+        .session_log_context(&session_id)
+        .ok_or_else(|| SshError::SessionNotFound(session_id.clone()))?;
+    let resolved = options.unwrap_or_else(|| sessionlog::session_log_options_from_db(&db));
+    entry
+        .logger
+        .start(resolved, &entry.host, &entry.user)
+        .map(|p| p.display().to_string())
+        .map_err(SshError::IoError)
+}
+
+/// Stop logging for a live session (manual toggle). The file is flushed
+/// before the call returns.
+#[tauri::command]
+pub async fn ssh_stop_session_log(
+    session_id: String,
+    state: State<'_, SshManager>,
+) -> Result<(), SshError> {
+    let entry = state
+        .session_log_context(&session_id)
+        .ok_or(SshError::SessionNotFound(session_id))?;
+    entry.logger.stop();
+    Ok(())
+}
+
+/// Query whether a session currently logs, and where.
+#[tauri::command]
+pub async fn ssh_session_log_status(
+    session_id: String,
+    state: State<'_, SshManager>,
+) -> Result<SessionLogStatus, SshError> {
+    let entry = state
+        .session_log_context(&session_id)
+        .ok_or(SshError::SessionNotFound(session_id))?;
+    Ok(SessionLogStatus {
+        active: entry.logger.is_active(),
+        path: entry
+            .logger
+            .info()
+            .map(|i| i.path.to_string_lossy().to_string()),
+        host: entry.host,
+        user: entry.user,
+    })
+}
+
+/// List all session log files on disk, newest first.
+#[tauri::command]
+pub async fn ssh_list_session_logs() -> Result<Vec<sessionlog::LogFileInfo>, SshError> {
+    tokio::task::spawn_blocking(sessionlog::list_logs)
+        .await
+        .map_err(|e| SshError::IoError(format!("task panicked: {e}")))
+}
+
+/// Read (the tail of) a log file for the built-in viewer. The path must be
+/// relative to the session-log directory — traversal is rejected.
+#[tauri::command]
+pub async fn ssh_read_log(
+    relative: String,
+    max_bytes: Option<u64>,
+) -> Result<sessionlog::LogReadResult, SshError> {
+    let max_bytes = max_bytes.unwrap_or(512 * 1024).min(4 * 1024 * 1024);
+    tokio::task::spawn_blocking(move || {
+        let (content, truncated) = sessionlog::read_log(&relative, max_bytes)?;
+        Ok(sessionlog::LogReadResult { content, truncated })
+    })
+    .await
+    .map_err(|e| SshError::IoError(format!("task panicked: {e}")))?
+    .map_err(SshError::IoError)
+}
+
+/// Export a log file to an arbitrary user-chosen destination, optionally
+/// stripping ANSI escape sequences for a clean text copy.
+#[tauri::command]
+pub async fn ssh_export_log(
+    relative: String,
+    dest: String,
+    strip_ansi: bool,
+) -> Result<(), SshError> {
+    tokio::task::spawn_blocking(move || sessionlog::export_log(&relative, &dest, strip_ansi))
+        .await
+        .map_err(|e| SshError::IoError(format!("task panicked: {e}")))?
+        .map_err(SshError::IoError)
+}
+
+/// The absolute session-log root directory (for "reveal in Finder/Explorer").
+#[tauri::command]
+pub async fn ssh_logs_dir() -> Result<String, SshError> {
+    Ok(sessionlog::logs_dir_string())
 }

@@ -606,6 +606,20 @@ function TerminalSettings() {
   const setTerminalType = useSettingsStore((s) => s.setTerminalType);
   const terminalLang = useSettingsStore((s) => s.terminalLang);
   const setTerminalLang = useSettingsStore((s) => s.setTerminalLang);
+  const sessionLogEnabled = useSettingsStore((s) => s.sessionLogEnabled);
+  const setSessionLogEnabled = useSettingsStore((s) => s.setSessionLogEnabled);
+  const sessionLogAnsi = useSettingsStore((s) => s.sessionLogAnsi);
+  const setSessionLogAnsi = useSettingsStore((s) => s.setSessionLogAnsi);
+  const sessionLogFormat = useSettingsStore((s) => s.sessionLogFormat);
+  const setSessionLogFormat = useSettingsStore((s) => s.setSessionLogFormat);
+  const sessionLogTimestamps = useSettingsStore((s) => s.sessionLogTimestamps);
+  const setSessionLogTimestamps = useSettingsStore((s) => s.setSessionLogTimestamps);
+  const sessionLogMaxSizeMb = useSettingsStore((s) => s.sessionLogMaxSizeMb);
+  const setSessionLogMaxSizeMb = useSettingsStore((s) => s.setSessionLogMaxSizeMb);
+  const sessionLogRetentionDays = useSettingsStore((s) => s.sessionLogRetentionDays);
+  const setSessionLogRetentionDays = useSettingsStore((s) => s.setSessionLogRetentionDays);
+  const sessionLogQuotaMb = useSettingsStore((s) => s.sessionLogQuotaMb);
+  const setSessionLogQuotaMb = useSettingsStore((s) => s.setSessionLogQuotaMb);
 
   const { t } = useTranslation();
 
@@ -760,6 +774,84 @@ function TerminalSettings() {
             editableValidate={(v) => TERM_NAME_RE.test(v)}
           />
         </SettingRow>
+      </SettingsGroup>
+
+      <SettingsGroup label={t("settings.terminal.group.sessionLog")}>
+        <SettingRow>
+          <div>
+            <label htmlFor="s-log-enabled" className={LABEL_CLASS}>{t("settings.terminal.sessionLog.enabled")}</label>
+            <p className={DESC_CLASS}>{t("settings.terminal.sessionLog.enabledHint")}</p>
+          </div>
+          <Toggle id="s-log-enabled" checked={sessionLogEnabled} onChange={setSessionLogEnabled} />
+        </SettingRow>
+
+        <SettingRow>
+          <div>
+            <p className={LABEL_CLASS}>{t("settings.terminal.sessionLog.ansi")}</p>
+            <p className={DESC_CLASS}>{t("settings.terminal.sessionLog.ansiHint")}</p>
+          </div>
+          <SegmentedControl<"strip" | "keep">
+            id="s-log-ansi"
+            value={sessionLogAnsi}
+            onChange={setSessionLogAnsi}
+            options={[
+              { value: "strip", label: t("settings.terminal.sessionLog.ansiStrip") },
+              { value: "keep", label: t("settings.terminal.sessionLog.ansiKeep") },
+            ]}
+          />
+        </SettingRow>
+
+        <SettingRow>
+          <div>
+            <p className={LABEL_CLASS}>{t("settings.terminal.sessionLog.format")}</p>
+            <p className={DESC_CLASS}>{t("settings.terminal.sessionLog.formatHint")}</p>
+          </div>
+          <SegmentedControl<"text" | "asciicast">
+            id="s-log-format"
+            value={sessionLogFormat}
+            onChange={setSessionLogFormat}
+            options={[
+              { value: "text", label: t("settings.terminal.sessionLog.formatText") },
+              { value: "asciicast", label: "Asciicast v2" },
+            ]}
+          />
+        </SettingRow>
+
+        <SettingRow>
+          <div>
+            <label htmlFor="s-log-timestamps" className={LABEL_CLASS}>{t("settings.terminal.sessionLog.timestamps")}</label>
+            <p className={DESC_CLASS}>{t("settings.terminal.sessionLog.timestampsHint")}</p>
+          </div>
+          <Toggle id="s-log-timestamps" checked={sessionLogTimestamps} onChange={setSessionLogTimestamps} />
+        </SettingRow>
+
+        <SettingRow>
+          <div>
+            <label htmlFor="s-log-maxsize" className={LABEL_CLASS}>{t("settings.terminal.sessionLog.maxSize")}</label>
+            <p className={DESC_CLASS}>{t("settings.terminal.sessionLog.maxSizeHint")}</p>
+          </div>
+          <NumberSetting id="s-log-maxsize" value={sessionLogMaxSizeMb} min={1} max={1024} step={1} onChange={setSessionLogMaxSizeMb} />
+        </SettingRow>
+
+        <SettingRow>
+          <div>
+            <label htmlFor="s-log-retention" className={LABEL_CLASS}>{t("settings.terminal.sessionLog.retention")}</label>
+            <p className={DESC_CLASS}>{t("settings.terminal.sessionLog.retentionHint")}</p>
+          </div>
+          <NumberSetting id="s-log-retention" value={sessionLogRetentionDays} min={0} max={3650} step={1} onChange={setSessionLogRetentionDays} />
+        </SettingRow>
+
+        <SettingRow>
+          <div>
+            <label htmlFor="s-log-quota" className={LABEL_CLASS}>{t("settings.terminal.sessionLog.quota")}</label>
+            <p className={DESC_CLASS}>{t("settings.terminal.sessionLog.quotaHint")}</p>
+          </div>
+          <NumberSetting id="s-log-quota" value={sessionLogQuotaMb} min={0} max={102400} step={50} onChange={setSessionLogQuotaMb} />
+        </SettingRow>
+
+        <p className="px-1 text-[length:var(--text-xs)] text-text-muted">
+          {t("settings.terminal.sessionLog.privacyHint")}
+        </p>
       </SettingsGroup>
 
       <SettingsGroup label={t("settings.terminal.group.history")}>

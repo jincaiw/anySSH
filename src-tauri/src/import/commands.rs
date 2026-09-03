@@ -87,6 +87,7 @@ pub async fn import_save_ssh_hosts(
                 font_size: None,
                 last_connected_at: None,
                 connection_count: None,
+                force_session_log: Some(false),
                 created_at: now.clone(),
                 updated_at: now,
             };
@@ -225,6 +226,7 @@ mod tests {
             username: "u".to_string(),
             auth_type: "password".to_string(),
             group_id: None,
+            force_session_log: Some(false),
             key_path: None,
             color: None,
             notes: None,

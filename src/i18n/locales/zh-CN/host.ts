@@ -30,6 +30,8 @@ export default {
   "field.defaultShell": "默认 Shell",
   "field.startupCommand": "启动命令",
   "field.startDirectory": "起始目录",
+  "field.forceSessionLog": "强制记录会话日志",
+  "field.forceSessionLogHint": "（每次连接都记录）",
   "field.terminalEncoding": "终端编码",
   "field.lang": "语言环境 (LANG)",
   "field.environment": "环境",

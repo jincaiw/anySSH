@@ -61,6 +61,12 @@ pub struct HostConfig {
     /// `None`/empty falls back to the global `terminal_encoding` setting.
     #[serde(default)]
     pub terminal_encoding: Option<String>,
+    /// Bookmark preset: force terminal session logging on for this host,
+    /// regardless of the global auto-record setting (e.g. production hosts).
+    /// Resolved by the command layer from the saved host; direct quick
+    /// connects leave it false.
+    #[serde(default)]
+    pub force_session_log: bool,
     /// Resolved ProxyJump / bastion host to tunnel this connection through.
     ///
     /// When present, the connection is established by first opening an SSH

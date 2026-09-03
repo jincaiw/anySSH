@@ -26,6 +26,7 @@ import { TransfersPage } from "../transfers";
 import { usePortForwardEvents } from "../../hooks/use-port-forward-events";
 import { UpdateDialog } from "../updater/UpdateDialog";
 import { Toaster } from "../shared/Toaster";
+import { SessionLogViewer } from "../terminal/SessionLogViewer";
 import { useTranslation } from "../../i18n";
 
 export function AppShell() {
@@ -263,6 +264,24 @@ export function AppShell() {
             .tabs.get(useTabStore.getState().activeTabId ?? "")?.type ===
           "terminal",
       },
+      // ─── Session log toggle (⌘⇧L) ─────────────────────────────────
+      {
+        key: "l",
+        meta: true,
+        shift: true,
+        action: () => {
+          const { activeSessionId } = useSessionStore.getState();
+          if (!activeSessionId) return;
+          void import("../../lib/session-log").then((m) =>
+            m.toggleSessionLog(activeSessionId),
+          );
+        },
+        when: () =>
+          useTabStore
+            .getState()
+            .tabs.get(useTabStore.getState().activeTabId ?? "")?.type ===
+          "terminal",
+      },
       // ─── Snippet palette ─────────────────────────────────────────
       {
         key: "k",
@@ -491,6 +510,9 @@ export function AppShell() {
 
       {/* Snippet command palette */}
       <SnippetPalette />
+
+      {/* Session log viewer (right-click menu / ⌘⇧L support) */}
+      <SessionLogViewer />
 
       {/* Transient notifications (errors, etc.) */}
       <Toaster />

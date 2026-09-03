@@ -102,6 +102,7 @@ dependencies = [
  "aes-gcm",
  "argon2",
  "async-trait",
+ "chrono",
  "dashmap",
  "dirs",
  "drag",

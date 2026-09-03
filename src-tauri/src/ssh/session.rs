@@ -7,6 +7,7 @@ use tokio::sync::{mpsc, Mutex};
 
 use super::encoding::{SessionSettings, StreamConverter};
 use super::handler::SshClientHandler;
+use super::sessionlog::SessionLogContext;
 
 /// Commands sent from the frontend to the reader/writer task.
 enum SessionCmd {
@@ -59,6 +60,9 @@ pub struct SshSession {
     /// are rebuilt inside the reader/writer task) so split panes can inherit
     /// the source session's *runtime* encoding rather than the global default.
     current_encoding: Arc<std::sync::RwLock<String>>,
+    /// Terminal session log: handle + host/user metadata for file naming, and
+    /// the auto-start decision resolved at connect time.
+    log: SessionLogContext,
 }
 
 impl SshSession {
@@ -76,6 +80,7 @@ impl SshSession {
         default_shell: Option<String>,
         startup_command: Option<String>,
         settings: SessionSettings,
+        log: SessionLogContext,
     ) -> Result<Self, SshError> {
         // Wrap the handle immediately so it can be shared with SFTP later.
         let handle = Arc::new(Mutex::new(handle));
@@ -142,6 +147,16 @@ impl SshSession {
         // can inherit the live value).
         let current_encoding = Arc::new(std::sync::RwLock::new(settings.encoding.clone()));
 
+        // Auto-record (global setting or bookmark preset) starts the logger
+        // before the reader loop runs, so even the banner/MOTD is captured.
+        if let Some(options) = log.auto_start.clone() {
+            let _ = log.logger.start(options, &log.host, &log.user);
+        }
+
+        // The task only needs the logger handle; the session keeps its own
+        // copy, so clone the Arc-based logger instead of moving the context.
+        let task_log = log.logger.clone();
+
         // The background task owns the channel exclusively. It multiplexes
         // between reading SSH output and processing frontend commands.
         let reader_task = tokio::spawn(async move {
@@ -153,6 +168,11 @@ impl SshSession {
                         match msg {
                             Some(ChannelMsg::Data { data }) => {
                                 let data = out_conv.decode_to_utf8(&data);
+                                if task_log.is_active() {
+                                    if let Ok(text) = std::str::from_utf8(&data) {
+                                        task_log.on_output(text);
+                                    }
+                                }
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
                                     data,
@@ -161,6 +181,11 @@ impl SshSession {
                             }
                             Some(ChannelMsg::ExtendedData { data, .. }) => {
                                 let data = out_conv.decode_to_utf8(&data);
+                                if task_log.is_active() {
+                                    if let Ok(text) = std::str::from_utf8(&data) {
+                                        task_log.on_output(text);
+                                    }
+                                }
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
                                     data,
@@ -181,6 +206,11 @@ impl SshSession {
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             Some(SessionCmd::Data(data)) => {
+                                if task_log.is_active() {
+                                    if let Ok(text) = std::str::from_utf8(&data) {
+                                        task_log.on_input(text);
+                                    }
+                                }
                                 let data = in_conv.encode_from_utf8(&data, false);
                                 let _ = channel.data(&data[..]).await;
                             }
@@ -218,6 +248,7 @@ impl SshSession {
             split_config: SplitConfig { default_shell },
             jump_handles,
             current_encoding,
+            log,
         })
     }
 
@@ -233,6 +264,7 @@ impl SshSession {
         app_handle: AppHandle,
         default_shell: Option<String>,
         settings: SessionSettings,
+        log: SessionLogContext,
     ) -> Result<Self, SshError> {
         let channel = handle
             .lock()
@@ -275,6 +307,16 @@ impl SshSession {
         // Runtime encoding record (shared with `set_encoding`).
         let current_encoding = Arc::new(std::sync::RwLock::new(settings.encoding.clone()));
 
+        // Split panes start logging when their source pane is logging (the
+        // manager resolves this into `auto_start`). Same capture-the-banner
+        // ordering as `open_pty`.
+        if let Some(options) = log.auto_start.clone() {
+            let _ = log.logger.start(options, &log.host, &log.user);
+        }
+
+        // Same clone-not-move reasoning as `open_pty`.
+        let task_log = log.logger.clone();
+
         let reader_task = tokio::spawn(async move {
             let mut channel = channel;
             loop {
@@ -283,6 +325,11 @@ impl SshSession {
                         match msg {
                             Some(ChannelMsg::Data { data }) => {
                                 let data = out_conv.decode_to_utf8(&data);
+                                if task_log.is_active() {
+                                    if let Ok(text) = std::str::from_utf8(&data) {
+                                        task_log.on_output(text);
+                                    }
+                                }
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
                                     data,
@@ -291,6 +338,11 @@ impl SshSession {
                             }
                             Some(ChannelMsg::ExtendedData { data, .. }) => {
                                 let data = out_conv.decode_to_utf8(&data);
+                                if task_log.is_active() {
+                                    if let Ok(text) = std::str::from_utf8(&data) {
+                                        task_log.on_output(text);
+                                    }
+                                }
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
                                     data,
@@ -311,6 +363,11 @@ impl SshSession {
                     cmd = cmd_rx.recv() => {
                         match cmd {
                             Some(SessionCmd::Data(data)) => {
+                                if task_log.is_active() {
+                                    if let Ok(text) = std::str::from_utf8(&data) {
+                                        task_log.on_input(text);
+                                    }
+                                }
                                 let data = in_conv.encode_from_utf8(&data, false);
                                 let _ = channel.data(&data[..]).await;
                             }
@@ -350,6 +407,7 @@ impl SshSession {
             // long as this split pane lives, independent of the parent session.
             jump_handles,
             current_encoding,
+            log,
         })
     }
 
@@ -408,8 +466,15 @@ impl SshSession {
             .unwrap_or_else(|_| "utf-8".to_string())
     }
 
-    /// Gracefully disconnect: signal EOF to the background task.
+    /// The session-log context (logger handle + naming metadata).
+    pub fn log(&self) -> &SessionLogContext {
+        &self.log
+    }
+
+    /// Gracefully disconnect: stop the session log (flushing it), then signal
+    /// EOF to the background task.
     pub async fn disconnect(self) -> Result<(), SshError> {
+        self.log.logger.stop();
         let _ = self.cmd_tx.send(SessionCmd::Eof);
         let _ = self.reader_task.await;
         Ok(())

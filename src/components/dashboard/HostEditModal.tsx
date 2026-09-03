@@ -50,6 +50,8 @@ interface FormState {
   color: string;
   environment: string;
   osType: string;
+  /** Force session logging on every connection to this host. */
+  forceSessionLog: boolean;
   // Notes
   notes: string;
 }
@@ -76,6 +78,7 @@ const EMPTY_FORM: FormState = {
   color: "",
   environment: "",
   osType: "",
+  forceSessionLog: false,
   notes: "",
 };
 
@@ -113,6 +116,7 @@ function savedHostToForm(host: SavedHost): FormState {
     color: host.color ?? "",
     environment: host.environment ?? "",
     osType: host.os_type ?? "",
+    forceSessionLog: host.force_session_log ?? false,
     notes: host.notes ?? "",
   };
 }
@@ -322,6 +326,7 @@ export function HostEditModal() {
       font_size: null,
       last_connected_at: null,
       connection_count: null,
+      force_session_log: null,
     };
     return {
       ...base,
@@ -350,6 +355,7 @@ export function HostEditModal() {
       color: form.color || null,
       environment: form.environment || null,
       os_type: form.osType || null,
+      force_session_log: form.forceSessionLog,
       notes: form.notes.trim() || null,
     };
   };
@@ -869,6 +875,22 @@ export function HostEditModal() {
                   {t("host.field.startDirectoryHint")}
                 </p>
               </div>
+
+              {/* Force session logging (e.g. production audit requirement) */}
+              <label className="flex items-center gap-2.5 cursor-pointer select-none" data-testid="host-modal-force-session-log">
+                <input
+                  id="hem-force-session-log"
+                  type="checkbox"
+                  checked={form.forceSessionLog}
+                  onChange={(e) => setField("forceSessionLog", e.target.checked)}
+                  disabled={isBusy}
+                  className="accent-[var(--color-accent)]"
+                />
+                <span className={labelClass}>
+                  {t("host.field.forceSessionLog")}
+                  <span className="ml-1 text-text-muted font-normal">{t("host.field.forceSessionLogHint")}</span>
+                </span>
+              </label>
 
               {/* Terminal encoding + LANG row */}
               <div className="flex gap-3">

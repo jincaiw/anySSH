@@ -55,4 +55,27 @@ export default {
   // ─── Host health check (health-store) ────────────────────────────────────
   "health.pinging": "正在 Ping 主机...",
   "health.pingFailed": "Ping 失败",
+
+  // ─── 会话右键菜单（Terminal） ────────────────────────────────────────────
+  "menu.paste": "粘贴",
+  "menu.startLog": "开始记录会话日志",
+  "menu.stopLog": "停止记录会话日志",
+  "menu.viewLog": "查看会话日志",
+  "menu.openLogDir": "打开日志目录",
+
+  // ─── 会话日志查看器（SessionLogViewer） ──────────────────────────────────
+  "logViewer.title": "会话日志",
+  "logViewer.empty": "未选择文件",
+  "logViewer.searchPlaceholder": "在日志中搜索...",
+  "logViewer.refresh": "刷新列表",
+  "logViewer.export": "导出",
+  "logViewer.exportTitle": "导出会话日志",
+  "logViewer.exportError": "导出失败",
+  "logViewer.openDir": "打开目录",
+  "logViewer.noFiles": "暂无会话日志。开启记录（右键菜单或 ⇧⌘L）后，日志将写入本地。",
+  "logViewer.emptyContent": "该日志文件为空。",
+  "logViewer.loading": "加载中...",
+  "logViewer.truncated": "文件较大——仅显示末尾部分。",
+  "logViewer.readError": "无法读取该日志文件。",
+  "logViewer.live": "正在记录",
 };

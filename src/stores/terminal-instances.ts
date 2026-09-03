@@ -207,6 +207,7 @@ function createEntry(sessionId: string): TerminalEntry {
     if (e.metaKey && !e.shiftKey && e.key >= "1" && e.key <= "9") return false;
     if (e.metaKey && (e.key === "[" || e.key === "]")) return false;
     if (e.metaKey && !e.shiftKey && e.key === "f") return false;
+    if (e.metaKey && e.shiftKey && e.key === "l") return false; // session log toggle
     // Cmd+K — snippet palette
     if (e.metaKey && !e.shiftKey && e.key === "k") return false;
     if (e.metaKey && e.key.toLowerCase() === "d") return false;

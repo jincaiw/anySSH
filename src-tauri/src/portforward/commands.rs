@@ -212,6 +212,8 @@ pub async fn pf_start_tunnel(
         // Port-forwarding connects directly; ProxyJump tunnelling is handled by
         // the terminal/SFTP connect paths.
         jump_host: None,
+        // Tunnels don't run a PTY, so there is no terminal session to log.
+        force_session_log: false,
     };
 
     let session_id = ssh_manager.connect_no_pty(config, None).await?;

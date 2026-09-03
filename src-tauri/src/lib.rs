@@ -77,6 +77,10 @@ pub fn run() {
             let host_db = HostDb::new(&app_data_dir)
                 .map_err(|e| format!("failed to initialise database: {e}"))?;
 
+            // Session logs live under <app_data_dir>/session-logs; pin the root
+            // once at startup so the writer thread and log commands agree on it.
+            ssh::sessionlog::install_root(&app_data_dir);
+
             // Resolve the persisted theme up-front and inject it onto <html>
             // *before* the page loads, so the very first paint already carries
             // the correct theme — no dark→light flash on startup. SQLite stays
@@ -293,6 +297,14 @@ pub fn run() {
             ssh::commands::connect_saved_host,
             ssh::commands::connect_saved_host_no_pty,
             ssh::commands::has_saved_password,
+            // SSH — session logs
+            ssh::commands::ssh_start_session_log,
+            ssh::commands::ssh_stop_session_log,
+            ssh::commands::ssh_session_log_status,
+            ssh::commands::ssh_list_session_logs,
+            ssh::commands::ssh_read_log,
+            ssh::commands::ssh_export_log,
+            ssh::commands::ssh_logs_dir,
             // Host persistence
             db::commands::save_host,
             db::commands::list_hosts,

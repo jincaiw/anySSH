@@ -13,6 +13,7 @@ use tracing::info;
 use super::encoding::{valid_lang, SessionSettings};
 use super::handler::SshClientHandler;
 use super::session::SshSession;
+use super::sessionlog::{SessionLogContext, SessionLogOptions};
 
 /// The target handle plus the chain of jump-host handles that must outlive it
 /// (deepest hop first, empty for a direct connection).
@@ -124,12 +125,18 @@ impl SshManager {
     }
 
     /// Establish a new SSH connection and return its SessionId.
+    ///
+    /// `log_options` carries the resolved session-log settings: `Some` means
+    /// logging starts the moment the PTY opens (global auto-record enabled
+    /// or the host preset forces it); `None` leaves logging off until the
+    /// user toggles it manually for this session.
     pub async fn connect(
         &self,
         config: HostConfig,
         app_handle: AppHandle,
         attempt_id: Option<String>,
         settings: SessionSettings,
+        log_options: Option<SessionLogOptions>,
     ) -> Result<SessionId, SshError> {
         let session_id = SessionId::new();
         let sid = session_id.0.clone();
@@ -204,6 +211,16 @@ impl SshManager {
         // partially-established handles and lets russh tear the connection down.
         // Nothing is inserted into `sessions` until this succeeds, so a cancel
         // leaves no ghost session behind.
+        // Session-log context: a fresh logger plus the resolved auto-start
+        // options. `open_split_pty` shares the source session's logger so all
+        // panes on one connection append to the same log file.
+        let log_ctx = super::sessionlog::SessionLogContext {
+            logger: super::sessionlog::SessionLogger::new(),
+            host: config.host.clone(),
+            user: config.username.clone(),
+            auto_start: log_options,
+        };
+
         let connect_fut = async {
             let (handle, jump_handles) = Self::establish(&config, russh_config).await?;
 
@@ -219,6 +236,7 @@ impl SshManager {
                 config.default_shell.clone(),
                 config.startup_command.clone(),
                 settings,
+                log_ctx,
             )
             .await
         };
@@ -846,22 +864,37 @@ impl SshManager {
         // split pane is alive — closing the parent tab no longer tears the
         // tunnel out from under its children. The encoding overrides the
         // global default so a split pane speaks the same encoding the user
-        // may have switched the source pane to at runtime.
-        let (handle, host_config, jump_handles, source_encoding) = {
+        // may have switched the source pane to at runtime. Session logging
+        // follows the source pane: a logging source starts a fresh log file
+        // for the new pane with the same options.
+        let (handle, host_config, jump_handles, source_encoding, source_log) = {
             let entry = self
                 .sessions
                 .get(source_session_id)
                 .ok_or_else(|| SshError::SessionNotFound(source_session_id.to_string()))?;
+            let log = entry.value().log();
             (
                 entry.value().ssh_handle(),
                 entry.value().host_config(),
                 entry.value().jump_handles(),
                 entry.value().encoding(),
+                (
+                    log.host.clone(),
+                    log.user.clone(),
+                    log.logger.active_options(),
+                ),
             )
         };
 
         let new_id = SessionId::new();
         let sid = new_id.0.clone();
+
+        let (log_host, log_user, log_auto_start) = source_log;
+        let log_ctx = SessionLogContext::inactive(log_host, log_user);
+        let log_ctx = SessionLogContext {
+            auto_start: log_auto_start,
+            ..log_ctx
+        };
 
         let session = SshSession::open_split_pty(
             handle,
@@ -875,6 +908,7 @@ impl SshManager {
                 encoding: source_encoding,
                 ..settings
             },
+            log_ctx,
         )
         .await?;
 
@@ -908,6 +942,15 @@ impl SshManager {
             .get(session_id)
             .ok_or_else(|| SshError::SessionNotFound(session_id.to_string()))?;
         entry.value().set_encoding(encoding)
+    }
+
+    /// Clone a session's session-log context (logger handle + naming
+    /// metadata) for the manual start/stop/status commands. `None` when the
+    /// session does not exist.
+    pub fn session_log_context(&self, session_id: &str) -> Option<SessionLogContext> {
+        self.sessions
+            .get(session_id)
+            .map(|e| e.value().log().clone())
     }
 
     /// Disconnect and remove a session.

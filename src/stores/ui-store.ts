@@ -7,6 +7,8 @@ interface UiState {
   editingHostId: string | null;
   snippetPanelOpen: boolean;
   snippetPanelPinned: boolean;
+  /** Session whose log viewer is open; non-null opens the dialog. */
+  sessionLogViewerSessionId: string | null;
 
   toggleSidebar: () => void;
   setSidebarWidth: (width: number) => void;
@@ -14,6 +16,8 @@ interface UiState {
   setEditingHostId: (id: string | null) => void;
   toggleSnippetPanel: () => void;
   toggleSnippetPanelPinned: () => void;
+  openSessionLogViewer: (sessionId: string | null) => void;
+  closeSessionLogViewer: () => void;
 }
 
 export const useUiStore = create<UiState>((set) => ({
@@ -23,6 +27,7 @@ export const useUiStore = create<UiState>((set) => ({
   editingHostId: null,
   snippetPanelOpen: false,
   snippetPanelPinned: false,
+  sessionLogViewerSessionId: null,
 
   toggleSidebar: () =>
     set((s) => ({ sidebarExpanded: !s.sidebarExpanded })),
@@ -41,6 +46,12 @@ export const useUiStore = create<UiState>((set) => ({
 
   toggleSnippetPanelPinned: () =>
     set((s) => ({ snippetPanelPinned: !s.snippetPanelPinned })),
+
+  openSessionLogViewer: (sessionId) =>
+    set({ sessionLogViewerSessionId: sessionId }),
+
+  closeSessionLogViewer: () =>
+    set({ sessionLogViewerSessionId: null }),
 }));
 
 // E2E test hook — lets WebDriver tests open the HostEditModal for a given

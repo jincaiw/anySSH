@@ -30,6 +30,8 @@ export default {
   "field.defaultShell": "Default Shell",
   "field.startupCommand": "Startup Command",
   "field.startDirectory": "Start Directory",
+  "field.forceSessionLog": "Force session log",
+  "field.forceSessionLogHint": "(record every connection)",
   "field.terminalEncoding": "Terminal Encoding",
   "field.lang": "Locale (LANG)",
   "field.environment": "Environment",

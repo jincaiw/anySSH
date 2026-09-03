@@ -59,4 +59,27 @@ export default {
   // ─── Host health check (health-store) ────────────────────────────────────
   "health.pinging": "Pinging host...",
   "health.pingFailed": "Ping failed",
+
+  // ─── Session context menu (Terminal right-click) ─────────────────────────
+  "menu.paste": "Paste",
+  "menu.startLog": "Start session log",
+  "menu.stopLog": "Stop session log",
+  "menu.viewLog": "View session logs",
+  "menu.openLogDir": "Open logs folder",
+
+  // ─── Session log viewer (SessionLogViewer) ───────────────────────────────
+  "logViewer.title": "Session logs",
+  "logViewer.empty": "No file selected",
+  "logViewer.searchPlaceholder": "Search in log...",
+  "logViewer.refresh": "Refresh list",
+  "logViewer.export": "Export",
+  "logViewer.exportTitle": "Export session log",
+  "logViewer.exportError": "Export failed",
+  "logViewer.openDir": "Open folder",
+  "logViewer.noFiles": "No session logs yet. Logs are written when a session records (right-click menu or ⇧⌘L).",
+  "logViewer.emptyContent": "This log file is empty.",
+  "logViewer.loading": "Loading...",
+  "logViewer.truncated": "Large file — showing the tail only.",
+  "logViewer.readError": "Could not read this log file.",
+  "logViewer.live": "Currently recording",
 };

@@ -37,6 +37,7 @@ function makeHost(id: string, label: string): SavedHost {
     font_size: null,
     last_connected_at: null,
     connection_count: null,
+    force_session_log: null,
   };
 }
 
