@@ -207,6 +207,8 @@ pub async fn pf_start_tunnel(
         keep_alive_interval: None,
         default_shell: None,
         startup_command: None,
+        lang: None,
+        terminal_encoding: None,
         // Port-forwarding connects directly; ProxyJump tunnelling is handled by
         // the terminal/SFTP connect paths.
         jump_host: None,

@@ -9,7 +9,7 @@ import { useUpdaterStore } from "../../stores/updater-store";
 import { toast } from "../../stores/toast-store";
 import { RefreshCw, CheckCircle2, AlertCircle, Palette, SquareTerminal, ArrowUpDown, Info, ExternalLink, Check, FileCode, Plus, Trash2, FolderOpen, Star, Search, Database, Download, Upload, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import { TERMINAL_ENCODINGS, TERMINAL_TYPES, TERM_NAME_RE } from "../../stores/settings-store";
+import { TERMINAL_ENCODINGS, TERMINAL_TYPES, TERM_NAME_RE, LANG_PRESETS, LANG_RE } from "../../stores/settings-store";
 import type { CursorStyle, ThemeMode, EditorConfig, PasteButton, DoubleClickAction, TerminalEncoding } from "../../stores/settings-store";
 
 // ─── Shared styles ───────────────────────────────────────────────────────────
@@ -603,6 +603,8 @@ function TerminalSettings() {
   const setTerminalEncoding = useSettingsStore((s) => s.setTerminalEncoding);
   const terminalType = useSettingsStore((s) => s.terminalType);
   const setTerminalType = useSettingsStore((s) => s.setTerminalType);
+  const terminalLang = useSettingsStore((s) => s.terminalLang);
+  const setTerminalLang = useSettingsStore((s) => s.setTerminalLang);
 
   const { t } = useTranslation();
 
@@ -711,6 +713,26 @@ function TerminalSettings() {
             onChange={(v) => setTerminalEncoding(v as TerminalEncoding)}
             options={TERMINAL_ENCODINGS.map((e) => ({ value: e.value, label: e.label }))}
             className="w-44"
+          />
+        </SettingRow>
+
+        <SettingRow>
+          <div>
+            <label htmlFor="s-lang" className={LABEL_CLASS}>{t("settings.terminal.lang")}</label>
+            <p className={DESC_CLASS}>{t("settings.terminal.langHint")}</p>
+          </div>
+          <CustomSelect
+            id="s-lang"
+            data-testid="s-lang"
+            value={terminalLang}
+            onChange={setTerminalLang}
+            options={[
+              { value: "", label: t("settings.terminal.langNone") },
+              ...LANG_PRESETS.map((p) => ({ value: p.value, label: p.label })),
+            ]}
+            className="w-44"
+            editable
+            editableValidate={(v) => LANG_RE.test(v)}
           />
         </SettingRow>
 

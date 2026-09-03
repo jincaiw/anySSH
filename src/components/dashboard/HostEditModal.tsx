@@ -9,6 +9,7 @@ import { useTabStore } from "../../stores/tab-store";
 import type { SavedHost, HostConfig, StoredCredential } from "../../types";
 import { HOST_COLORS } from "./HostCard";
 import { CustomSelect } from "../shared/CustomSelect";
+import { LANG_PRESETS, LANG_RE, TERMINAL_ENCODINGS, useSettingsStore } from "../../stores/settings-store";
 import { useTranslation } from "../../i18n";
 
 // ─── Field types ─────────────────────────────────────────────────────────────
@@ -34,6 +35,11 @@ interface FormState {
   defaultShell: string;
   startupCommand: string;
   startDirectory: string;
+  // Terminal
+  /** Per-host encoding override ("" = follow the global setting). */
+  terminalEncoding: string;
+  /** Per-host LANG override ("" = follow the global setting). */
+  lang: string;
   // Auth credentials (only used at connect-time, never persisted)
   password: string;
   passphrase: string;
@@ -59,6 +65,8 @@ const EMPTY_FORM: FormState = {
   defaultShell: "",
   startupCommand: "",
   startDirectory: "",
+  terminalEncoding: "",
+  lang: "",
   password: "",
   passphrase: "",
   color: "",
@@ -93,6 +101,8 @@ function savedHostToForm(host: SavedHost): FormState {
     defaultShell: host.default_shell ?? "",
     startupCommand: host.startup_command ?? "",
     startDirectory: host.start_directory ?? "",
+    terminalEncoding: host.terminal_encoding ?? "",
+    lang: host.lang ?? "",
     password: "",
     passphrase: "",
     color: host.color ?? "",
@@ -258,6 +268,9 @@ export function HostEditModal() {
       const kai = parseInt(form.keepAliveInterval, 10);
       if (isNaN(kai) || kai < 0) return t("host.validation.keepAlive");
     }
+    if (form.lang.trim() !== "" && !LANG_RE.test(form.lang.trim())) {
+      return t("host.validation.langInvalid");
+    }
     if (tunnelEnabled) {
       const candidates = hosts.filter((h) => h.id !== originalHost?.id);
       if (candidates.length === 0) {
@@ -296,6 +309,8 @@ export function HostEditModal() {
       start_directory: null,
       keep_alive_interval: null,
       default_shell: null,
+      lang: null,
+      terminal_encoding: null,
       font_size: null,
       last_connected_at: null,
       connection_count: null,
@@ -321,6 +336,8 @@ export function HostEditModal() {
       default_shell: form.defaultShell.trim() || null,
       startup_command: form.startupCommand.trim() || null,
       start_directory: form.startDirectory.trim() || null,
+      terminal_encoding: form.terminalEncoding || null,
+      lang: form.lang.trim() || null,
       color: form.color || null,
       environment: form.environment || null,
       os_type: form.osType || null,
@@ -402,6 +419,7 @@ export function HostEditModal() {
         port: host.port,
         username: host.username,
         label: host.label || undefined,
+        terminal_encoding: host.terminal_encoding || undefined,
         auth_method:
           form.authType === "privateKey"
             ? { type: "privateKey", key_path: form.keyPath }
@@ -841,6 +859,56 @@ export function HostEditModal() {
                   {t("host.field.startDirectoryHint")}
                 </p>
               </div>
+
+              {/* Terminal encoding + LANG row */}
+              <div className="flex gap-3">
+                <div className="flex-1">
+                  <label htmlFor="hem-terminal-encoding" className={labelClass}>
+                    {t("host.field.terminalEncoding")}
+                  </label>
+                  <CustomSelect
+                    id="hem-terminal-encoding"
+                    data-testid="host-modal-terminal-encoding"
+                    value={form.terminalEncoding}
+                    onChange={(v) => setField("terminalEncoding", v)}
+                    disabled={isBusy}
+                    options={[
+                      {
+                        value: "",
+                        label: t("host.field.followGlobal", {
+                          value: TERMINAL_ENCODINGS.find(
+                            (e) => e.value === useSettingsStore.getState().terminalEncoding,
+                          )?.label ?? "UTF-8",
+                        }),
+                      },
+                      ...TERMINAL_ENCODINGS.map((e) => ({ value: e.value, label: e.label })),
+                    ]}
+                  />
+                </div>
+
+                <div className="flex-1">
+                  <label htmlFor="hem-lang" className={labelClass}>
+                    {t("host.field.lang")}
+                  </label>
+                  <CustomSelect
+                    id="hem-lang"
+                    data-testid="host-modal-lang"
+                    value={form.lang}
+                    onChange={(v) => setField("lang", v)}
+                    disabled={isBusy}
+                    placeholder={t("host.field.followGlobalNoValue")}
+                    editable
+                    editableValidate={(v) => LANG_RE.test(v)}
+                    options={[
+                      { value: "", label: t("host.field.followGlobalNoValue") },
+                      ...LANG_PRESETS.map((p) => ({ value: p.value, label: p.label })),
+                    ]}
+                  />
+                </div>
+              </div>
+              <p className="mt-1 text-[length:var(--text-xs)] text-text-muted -mt-2">
+                {t("host.field.terminalHint")}
+              </p>
 
               {/* ════════════════ APPEARANCE ════════════════ */}
               <SectionHeader>{t("host.section.appearance")}</SectionHeader>

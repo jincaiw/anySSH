@@ -21,9 +21,9 @@ use encoding_rs::{CoderResult, Decoder, Encoder, Encoding};
 
 use crate::db::HostDb;
 
-/// The TERM value and character encoding a PTY session should use. Resolved
-/// from the persisted app settings at connect time (global settings — there
-/// is no per-host override yet).
+/// The TERM value, character encoding and LANG a PTY session should use.
+/// Resolved from the persisted app settings at connect time, then overridden
+/// by the per-host `terminal_encoding` / `lang` columns when present.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSettings {
     /// Value sent verbatim in the SSH `pty-req` ("TERM"). Validated against
@@ -31,6 +31,11 @@ pub struct SessionSettings {
     pub term: String,
     /// Encoding label; `utf-8` (or anything unrecognised) means passthrough.
     pub encoding: String,
+    /// LANG environment variable sent to the server via an SSH `env` request
+    /// after the PTY opens, plus a shell-level `export LANG=…` fallback for
+    /// servers that filter `env` requests (bastion/jump hosts). Empty = send
+    /// nothing.
+    pub lang: String,
 }
 
 impl Default for SessionSettings {
@@ -38,6 +43,7 @@ impl Default for SessionSettings {
         Self {
             term: "xterm-256color".to_string(),
             encoding: "utf-8".to_string(),
+            lang: String::new(),
         }
     }
 }
@@ -50,6 +56,19 @@ fn valid_term(value: &str) -> bool {
         && value
             .bytes()
             .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'+' | b'.' | b'_' | b'-'))
+}
+
+/// LANG values end up in two injection-relevant places: an SSH `env` request
+/// and a shell input line (`export LANG=<value>`). Keep a tight whitelist —
+/// locale syntax only, no whitespace or shell metacharacters. Covers presets
+/// like `zh_CN.UTF-8`, `en_US.UTF-8`, `C.UTF-8`, `C`, and custom values like
+/// `zh_CN.GBK` (length-capped).
+pub fn valid_lang(value: &str) -> bool {
+    !value.is_empty()
+        && value.len() <= 32
+        && value
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'.' | b'@' | b'-'))
 }
 
 /// Read the terminal-type / encoding settings from the persisted app settings
@@ -73,6 +92,13 @@ pub fn session_settings_from_db(db: &HostDb) -> SessionSettings {
         }
     }
 
+    if let Ok(Some(lang)) = db.get_setting("terminal_lang") {
+        let lang = lang.trim().to_string();
+        if valid_lang(&lang) {
+            settings.lang = lang;
+        }
+    }
+
     settings
 }
 
@@ -80,6 +106,28 @@ pub fn session_settings_from_db(db: &HostDb) -> SessionSettings {
 /// UTF-8 (passthrough), which also covers `utf-8` itself.
 pub fn encoding_for_label(label: &str) -> &'static Encoding {
     Encoding::for_label(label.as_bytes()).unwrap_or(encoding_rs::UTF_8)
+}
+
+/// Combine the shell-level LANG fallback with the user's startup command.
+///
+/// SSH `env` requests are frequently filtered by servers (`AcceptEnv` is
+/// restrictive by default on many distributions) and virtually always by
+/// bastion/jump-host appliances. The reliable degradation path is to inject
+/// `export LANG=…` as the first shell input, which also covers the no-startup-
+/// command case. Returns the effective input line to send after the shell is
+/// ready, or `None` when there is nothing to send.
+pub fn with_lang_export(lang: &str, startup_command: Option<String>) -> Option<String> {
+    let export = if lang.is_empty() {
+        None
+    } else {
+        Some(format!("export LANG={lang}"))
+    };
+    match (export, startup_command) {
+        (Some(export), Some(cmd)) if cmd.trim().is_empty() => Some(export),
+        (Some(export), Some(cmd)) => Some(format!("{export}; {cmd}")),
+        (Some(export), None) => Some(export),
+        (None, cmd) => cmd.filter(|c| !c.trim().is_empty()),
+    }
 }
 
 /// Streaming converter between the server's encoding and UTF-8.
@@ -283,7 +331,52 @@ mod tests {
     fn settings_keys_match_frontend_persist_keys() {
         // The frontend store persists under these exact keys; session_settings_from_db
         // reads the same ones. A rename on either side must update both.
-        let keys = ["terminal_type", "terminal_encoding"];
-        assert_eq!(keys.len(), 2);
+        let keys = ["terminal_type", "terminal_encoding", "terminal_lang"];
+        assert_eq!(keys.len(), 3);
+    }
+
+    /// LANG validation mirrors the frontend whitelist: locale syntax only
+    /// (letters, digits, _ . @ -), non-empty, length-capped. Anything that
+    /// could break out of `export LANG=…` must be rejected.
+    #[test]
+    fn lang_validation_rejects_hostile_values() {
+        assert!(valid_lang("zh_CN.UTF-8"));
+        assert!(valid_lang("en_US.UTF-8"));
+        assert!(valid_lang("C.UTF-8"));
+        assert!(valid_lang("C"));
+        assert!(valid_lang("zh_CN.GBK"));
+        assert!(valid_lang("zh_CN.UTF-8@icina"));
+        assert!(!valid_lang(""));
+        assert!(!valid_lang("x; rm -rf /"));
+        assert!(!valid_lang("zh CN"));
+        assert!(!valid_lang("zh\nCN"));
+        assert!(!valid_lang("$(env)"));
+        assert!(!valid_lang(&"a".repeat(33)));
+    }
+
+    /// The shell-level fallback export combines with the startup command:
+    /// prepended when one exists, sent alone when not, and nothing is sent
+    /// when neither LANG nor a startup command is configured.
+    #[test]
+    fn lang_export_combines_with_startup_command() {
+        assert_eq!(
+            with_lang_export("zh_CN.UTF-8", Some("cd /app".into())),
+            Some("export LANG=zh_CN.UTF-8; cd /app".to_string())
+        );
+        assert_eq!(
+            with_lang_export("C.UTF-8", None),
+            Some("export LANG=C.UTF-8".to_string())
+        );
+        assert_eq!(
+            with_lang_export("", Some("cd /app".into())),
+            Some("cd /app".to_string())
+        );
+        assert_eq!(with_lang_export("", None), None);
+        // Whitespace-only startup commands are treated as absent.
+        assert_eq!(
+            with_lang_export("C", Some("  ".into())),
+            Some("export LANG=C".to_string())
+        );
+        assert_eq!(with_lang_export("", Some("  ".into())), None);
     }
 }

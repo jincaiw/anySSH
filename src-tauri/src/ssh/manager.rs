@@ -10,7 +10,7 @@ use tauri::{AppHandle, Emitter};
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 
-use super::encoding::SessionSettings;
+use super::encoding::{valid_lang, SessionSettings};
 use super::handler::SshClientHandler;
 use super::session::SshSession;
 
@@ -147,6 +147,35 @@ impl SshManager {
                 status: ConnectionStatus::Connecting,
             },
         );
+
+        // Apply per-host overrides on top of the global settings: the host's
+        // terminal encoding and LANG win when set (validated — a hand-edited
+        // DB row must not inject into `env` requests or shell input).
+        let mut settings = settings;
+        if let Some(encoding) = config
+            .terminal_encoding
+            .as_deref()
+            .map(str::trim)
+            .filter(|e| !e.is_empty())
+        {
+            if super::encoding::encoding_for_label(encoding) != encoding_rs::UTF_8
+                || encoding.eq_ignore_ascii_case("utf-8")
+            {
+                settings.encoding = encoding.to_string();
+            }
+        }
+        if let Some(lang) = config
+            .lang
+            .as_deref()
+            .map(str::trim)
+            .filter(|l| !l.is_empty())
+        {
+            if valid_lang(lang) {
+                settings.lang = lang.to_string();
+            } else {
+                info!(host = %config.host, lang, "ignoring invalid per-host LANG value");
+            }
+        }
 
         let keepalive_secs = config.keep_alive_interval.unwrap_or(0) as u64;
         let russh_config = Arc::new(client::Config {

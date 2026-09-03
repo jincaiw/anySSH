@@ -30,6 +30,8 @@ export default {
   "field.defaultShell": "默认 Shell",
   "field.startupCommand": "启动命令",
   "field.startDirectory": "起始目录",
+  "field.terminalEncoding": "终端编码",
+  "field.lang": "语言环境 (LANG)",
   "field.environment": "环境",
   "field.osType": "系统类型",
 
@@ -41,6 +43,9 @@ export default {
   "field.passwordPrompt": "输入密码以连接",
   "field.passphrasePrompt": "没有则留空",
   "field.startDirectoryHint": "文件管理器打开时所在的目录，默认为主目录。",
+  "field.followGlobal": "跟随全局（{value}）",
+  "field.followGlobalNoValue": "跟随全局",
+  "field.terminalHint": "LANG 用于设置远程会话的语言环境，留空跟随全局设置；堡垒机过滤环境变量时自动降级为启动注入。",
 
   // ─── Auth methods (AuthType discriminants) ──────────────────────────────
   "auth.password": "密码",
@@ -92,6 +97,7 @@ export default {
   "validation.usernameRequired": "请填写用户名",
   "validation.portRange": "端口必须在 1 到 65535 之间",
   "validation.keepAlive": "保活间隔必须是正数",
+  "validation.langInvalid": "LANG 格式无效（示例：zh_CN.UTF-8）",
   "validation.noTunnelHosts": "没有其他已保存的主机可作为隧道跳板",
   "validation.selectTunnelHost": "请选择隧道主机，或关闭 SSH 隧道",
 

@@ -30,6 +30,8 @@ export default {
   "field.defaultShell": "Default Shell",
   "field.startupCommand": "Startup Command",
   "field.startDirectory": "Start Directory",
+  "field.terminalEncoding": "Terminal Encoding",
+  "field.lang": "Locale (LANG)",
   "field.environment": "Environment",
   "field.osType": "OS Type",
 
@@ -42,6 +44,10 @@ export default {
   "field.passphrasePrompt": "Leave empty if none",
   "field.startDirectoryHint":
     "Directory the file browser opens in. Defaults to the home folder.",
+  "field.followGlobal": "Follow global ({value})",
+  "field.followGlobalNoValue": "Follow global",
+  "field.terminalHint":
+    "LANG sets the remote session's locale; leave empty to follow the global setting. Falls back to startup injection when a bastion host filters environment variables.",
 
   // ─── Auth methods (AuthType discriminants) ──────────────────────────────
   "auth.password": "Password",
@@ -96,6 +102,7 @@ export default {
   "validation.usernameRequired": "Username is required",
   "validation.portRange": "Port must be between 1 and 65535",
   "validation.keepAlive": "Keep Alive must be a positive number",
+  "validation.langInvalid": "Invalid LANG format (e.g. zh_CN.UTF-8)",
   "validation.noTunnelHosts":
     "No other saved hosts are available to tunnel through",
   "validation.selectTunnelHost":

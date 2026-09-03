@@ -124,6 +124,12 @@ pub struct SavedHost {
     pub default_shell: Option<String>,
 
     // Terminal per-host overrides
+    /// LANG environment variable sent to the server after the PTY opens
+    /// (e.g. "zh_CN.UTF-8"). `None` falls back to the global default.
+    pub lang: Option<String>,
+    /// Terminal character-encoding override for this host (encoding_rs label,
+    /// e.g. "gbk"). `None` falls back to the global `terminal_encoding` setting.
+    pub terminal_encoding: Option<String>,
     /// Terminal font-size override for this host.
     pub font_size: Option<u32>,
 
@@ -541,6 +547,32 @@ impl HostDb {
             tracing::info!("migration 14→15 applied: added s3_connections.sort_order");
         }
 
+        if version < 16 {
+            // Per-host terminal overrides: LANG environment variable and
+            // character encoding. Idempotent: only add the columns when missing
+            // (same pattern as the proxy_jump_host_id / start_directory moves).
+            let has_lang: bool = conn.prepare("SELECT lang FROM saved_hosts LIMIT 0").is_ok();
+            if !has_lang {
+                conn.execute("ALTER TABLE saved_hosts ADD COLUMN lang TEXT", [])?;
+            }
+            let has_terminal_encoding: bool = conn
+                .prepare("SELECT terminal_encoding FROM saved_hosts LIMIT 0")
+                .is_ok();
+            if !has_terminal_encoding {
+                conn.execute(
+                    "ALTER TABLE saved_hosts ADD COLUMN terminal_encoding TEXT",
+                    [],
+                )?;
+            }
+            conn.execute(
+                "INSERT OR REPLACE INTO _meta (key, value) VALUES ('schema_version', '16')",
+                [],
+            )?;
+            tracing::info!(
+                "migration 15→16 applied: added saved_hosts.lang + saved_hosts.terminal_encoding"
+            );
+        }
+
         Ok(())
     }
 
@@ -650,14 +682,14 @@ impl HostDb {
                  key_path, color, notes, environment, os_type,
                  startup_command, proxy_jump, keep_alive_interval, default_shell,
                  font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                 start_directory
+                 start_directory, lang, terminal_encoding
              )
              VALUES (
                  ?1,  ?2,  ?3,  ?4,  ?5,  ?6,  ?7,  ?8,  ?9,
                  ?10, ?11, ?12, ?13, ?14,
                  ?15, ?16, ?17, ?18,
                  ?19, ?20, ?21, ?22,
-                 ?23
+                 ?23, ?24, ?25
              )
              ON CONFLICT(id) DO UPDATE SET
                  label                = excluded.label,
@@ -680,7 +712,9 @@ impl HostDb {
                  last_connected_at    = excluded.last_connected_at,
                  connection_count     = excluded.connection_count,
                  proxy_jump_host_id   = excluded.proxy_jump_host_id,
-                 start_directory      = excluded.start_directory",
+                 start_directory      = excluded.start_directory,
+                 lang                 = excluded.lang,
+                 terminal_encoding    = excluded.terminal_encoding",
             params![
                 host.id,
                 host.label,
@@ -705,6 +739,8 @@ impl HostDb {
                 host.connection_count,
                 host.proxy_jump_host_id,
                 host.start_directory,
+                host.lang,
+                host.terminal_encoding,
             ],
         )?;
         Ok(())
@@ -724,7 +760,7 @@ impl HostDb {
                     key_path, color, notes, environment, os_type,
                     startup_command, proxy_jump, keep_alive_interval, default_shell,
                     font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                    start_directory
+                    start_directory, lang, terminal_encoding
              FROM saved_hosts
              ORDER BY sort_order ASC, label ASC",
         )?;
@@ -754,6 +790,8 @@ impl HostDb {
                 connection_count: row.get(20)?,
                 proxy_jump_host_id: row.get(21)?,
                 start_directory: row.get(22)?,
+                lang: row.get(23)?,
+                terminal_encoding: row.get(24)?,
             })
         })?;
 
@@ -815,7 +853,7 @@ impl HostDb {
                     key_path, color, notes, environment, os_type,
                     startup_command, proxy_jump, keep_alive_interval, default_shell,
                     font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                    start_directory
+                    start_directory, lang, terminal_encoding
              FROM saved_hosts
              WHERE id = ?1",
         )?;
@@ -845,6 +883,8 @@ impl HostDb {
                 connection_count: row.get(20)?,
                 proxy_jump_host_id: row.get(21)?,
                 start_directory: row.get(22)?,
+                lang: row.get(23)?,
+                terminal_encoding: row.get(24)?,
             })
         })?;
 
@@ -2030,6 +2070,8 @@ mod tests {
             start_directory: None,
             keep_alive_interval: None,
             default_shell: None,
+            lang: None,
+            terminal_encoding: None,
             font_size: None,
             last_connected_at: None,
             connection_count: Some(0),

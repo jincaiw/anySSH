@@ -53,6 +53,14 @@ pub struct HostConfig {
     pub default_shell: Option<String>,
     /// Command to execute after the shell is ready.
     pub startup_command: Option<String>,
+    /// LANG environment variable to send to the server after the PTY opens
+    /// (per-host override). `None`/empty falls back to the global default.
+    #[serde(default)]
+    pub lang: Option<String>,
+    /// Per-host terminal character-encoding override (encoding_rs label).
+    /// `None`/empty falls back to the global `terminal_encoding` setting.
+    #[serde(default)]
+    pub terminal_encoding: Option<String>,
     /// Resolved ProxyJump / bastion host to tunnel this connection through.
     ///
     /// When present, the connection is established by first opening an SSH

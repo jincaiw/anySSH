@@ -14,6 +14,10 @@ export interface HostConfig {
   keep_alive_interval?: number;
   default_shell?: string;
   startup_command?: string;
+  /** Per-host LANG override sent to the server after the PTY opens. */
+  lang?: string;
+  /** Per-host terminal character-encoding override (backend label). */
+  terminal_encoding?: string;
 }
 
 export type ConnectionStatus =
@@ -80,6 +84,10 @@ export interface SavedHost {
   start_directory: string | null;
   keep_alive_interval: number | null;
   default_shell: string | null;
+  /** LANG environment variable for this host (null = follow the global default). */
+  lang: string | null;
+  /** Per-host terminal encoding override (null = follow the global default). */
+  terminal_encoding: string | null;
   font_size: number | null;
   last_connected_at: string | null;
   connection_count: number | null;

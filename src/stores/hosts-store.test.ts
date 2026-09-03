@@ -31,6 +31,8 @@ function makeHost(id: string, label: string): SavedHost {
     start_directory: null,
     keep_alive_interval: null,
     default_shell: null,
+    lang: null,
+    terminal_encoding: null,
     font_size: null,
     last_connected_at: null,
     connection_count: null,

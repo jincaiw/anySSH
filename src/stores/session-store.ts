@@ -142,9 +142,10 @@ export const useSessionStore = create<SessionState>((set) => ({
         hostConfig,
         status: "Connected",
         label: `${hostConfig.username}@${hostConfig.host}`,
-        // New sessions start on the global encoding setting; the pane-corner
-        // selector can switch them at runtime (runtime-only, not persisted).
-        encoding: useSettingsStore.getState().terminalEncoding,
+        // New sessions start on the per-host encoding override when set,
+        // otherwise the global encoding setting; the pane-corner selector can
+        // switch them at runtime (runtime-only, not persisted).
+        encoding: hostConfig.terminal_encoding || useSettingsStore.getState().terminalEncoding,
       });
 
       // New connection = new layout tree entry

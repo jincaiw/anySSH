@@ -28,6 +28,20 @@ export const TERMINAL_ENCODINGS = [
 
 export type TerminalEncoding = (typeof TERMINAL_ENCODINGS)[number]["value"];
 
+/** Preset LANG values offered for the "terminal LANG" setting (global default
+ *  and per-host override). Custom values can be typed freely (validated
+ *  against LANG_RE). */
+export const LANG_PRESETS = [
+  { value: "zh_CN.UTF-8", label: "zh_CN.UTF-8（简体中文）" },
+  { value: "en_US.UTF-8", label: "en_US.UTF-8（美式英语）" },
+  { value: "C.UTF-8", label: "C.UTF-8（无本地化，最兼容）" },
+] as const;
+
+/** Allowed syntax for a hand-typed LANG value (locale format only — the value
+ *  is sent in an SSH `env` request and a shell `export` line, so no shell
+ *  metacharacters may pass). Mirrors the backend `valid_lang` whitelist. */
+export const LANG_RE = /^[A-Za-z0-9]{1,10}(_[A-Za-z0-9]{1,10})?(\.[A-Za-z0-9-]+)?(@[A-Za-z0-9]+)?$/;
+
 /** Preset TERM values offered in the terminal-type dropdown. Custom values
  *  can be typed freely (validated against TERM_NAME_RE). */
 export const TERMINAL_TYPES = [
@@ -85,9 +99,11 @@ interface SettingsState {
   terminalCopyOnSelect: boolean;
   terminalPasteButton: PasteButton;
 
-  // Terminal session (encoding + TERM sent to the server)
+  // Terminal session (encoding + TERM + LANG sent to the server)
   terminalEncoding: TerminalEncoding;
   terminalType: string;
+  /** Global default LANG sent to servers on connect ("" = send nothing). */
+  terminalLang: string;
 
   // Explorer
   explorerDoubleClickAction: DoubleClickAction;
@@ -121,6 +137,8 @@ interface SettingsState {
   setTerminalPasteButton: (button: PasteButton) => void;
   setTerminalEncoding: (encoding: TerminalEncoding) => void;
   setTerminalType: (type: string) => void;
+  /** Global default LANG; "" disables sending it. Validated against LANG_RE. */
+  setTerminalLang: (lang: string) => void;
   setExplorerDoubleClickAction: (action: DoubleClickAction) => void;
   setTransferConcurrency: (n: number) => void;
   addEditor: (editor: Omit<EditorConfig, "id">) => void;
@@ -150,6 +168,7 @@ const DEFAULTS = {
   terminalPasteButton: "none" as PasteButton,
   terminalEncoding: "utf-8" as TerminalEncoding,
   terminalType: "xterm-256color",
+  terminalLang: "",
   explorerDoubleClickAction: "download" as DoubleClickAction,
   transferConcurrency: 3,
   editors: [] as EditorConfig[],
@@ -390,6 +409,15 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     persist("terminal_type", value);
   },
 
+  setTerminalLang: (lang) => {
+    // LANG travels in an SSH `env` request and a shell `export` line — keep
+    // the same locale-syntax whitelist the backend enforces. Empty disables.
+    const trimmed = lang.trim();
+    const value = trimmed === "" || LANG_RE.test(trimmed) ? trimmed : DEFAULTS.terminalLang;
+    set({ terminalLang: value });
+    persist("terminal_lang", value);
+  },
+
   setTransferConcurrency: (n) => {
     const clamped = Math.max(1, Math.min(10, n));
     set({ transferConcurrency: clamped });
@@ -472,6 +500,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
           case "terminal_type": {
             const trimmed = value.trim();
             updates.terminalType = TERM_NAME_RE.test(trimmed) ? trimmed : DEFAULTS.terminalType;
+            break;
+          }
+          case "terminal_lang": {
+            const trimmed = value.trim();
+            updates.terminalLang = trimmed === "" || LANG_RE.test(trimmed) ? trimmed : DEFAULTS.terminalLang;
             break;
           }
           case "explorer_double_click_action": updates.explorerDoubleClickAction = value === "open" ? "open" : "download"; break;

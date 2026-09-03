@@ -92,6 +92,14 @@ impl SshSession {
             .await
             .map_err(|e| SshError::ChannelError(e.to_string()))?;
 
+        // LANG environment variable (per-host override → global default).
+        // Best-effort: servers that restrict `AcceptEnv` (or bastion
+        // appliances) silently drop `env` requests; the shell-level
+        // `export LANG=…` fallback below covers those.
+        if !settings.lang.is_empty() {
+            let _ = channel.set_env(false, "LANG", settings.lang.clone()).await;
+        }
+
         // Use custom shell if specified, otherwise request default login shell
         if let Some(shell) = &default_shell {
             channel
@@ -111,7 +119,9 @@ impl SshSession {
         // profile scripts, prompt) then send the command via the normal
         // input channel. The 800ms delay is a pragmatic choice that works
         // across most servers and shell configs.
-        if let Some(cmd) = startup_command {
+        // The LANG export is prepended so the fallback path (servers that
+        // filter `env` requests) applies before any user command runs.
+        if let Some(cmd) = super::encoding::with_lang_export(&settings.lang, startup_command) {
             let startup_tx = cmd_tx.clone();
             tokio::spawn(async move {
                 tokio::time::sleep(std::time::Duration::from_millis(800)).await;
@@ -235,6 +245,11 @@ impl SshSession {
             .request_pty(false, &settings.term, cols, rows, 0, 0, &[])
             .await
             .map_err(|e| SshError::ChannelError(e.to_string()))?;
+
+        // LANG environment variable (best-effort — see `open_pty`).
+        if !settings.lang.is_empty() {
+            let _ = channel.set_env(false, "LANG", settings.lang.clone()).await;
+        }
 
         if let Some(shell) = &default_shell {
             channel

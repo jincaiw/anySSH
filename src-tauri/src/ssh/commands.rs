@@ -481,6 +481,8 @@ mod tests {
             keep_alive_interval: None,
             default_shell: None,
             startup_command: None,
+            lang: None,
+            terminal_encoding: None,
             jump_host: None,
         }
     }
@@ -759,6 +761,8 @@ fn build_host_config_blocking(
         keep_alive_interval: saved_host.keep_alive_interval,
         default_shell: saved_host.default_shell,
         startup_command: saved_host.startup_command,
+        lang: saved_host.lang,
+        terminal_encoding: saved_host.terminal_encoding,
         jump_host,
     })
 }

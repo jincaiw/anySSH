@@ -290,6 +290,7 @@ export function HostsDashboard() {
           port: host.port,
           username: host.username,
           label: host.label || undefined,
+          terminal_encoding: host.terminal_encoding || undefined,
           auth_method: { type: "password", password: "" },
         });
         void useHostsStore.getState().recordConnection(host.id);
@@ -349,6 +350,7 @@ export function HostsDashboard() {
           port: conn.port,
           username: conn.username,
           label: conn.host_label || undefined,
+          terminal_encoding: hosts.find((h) => h.id === conn.host_id)?.terminal_encoding || undefined,
           auth_method: { type: "password", password: "" },
         });
         void useHostsStore.getState().recordConnection(conn.host_id);
