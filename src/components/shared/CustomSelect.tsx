@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useLayoutEffect } from "react";
 import { createPortal } from "react-dom";
 import { ChevronDown, Check } from "lucide-react";
 import { useTranslation } from "../../i18n";
@@ -128,6 +128,32 @@ export function CustomSelect({
     }
   };
 
+  /** Guard so the flip pass below runs exactly once per open — the state
+   *  update it triggers would otherwise re-run the effect endlessly. */
+  const flipDoneRef = useRef(false);
+
+  // After the listbox mounts, flip it above the trigger when there isn't
+  // enough room below (e.g. bottom-anchored controls like the terminal
+  // encoding switcher). Runs in useLayoutEffect so the flip is committed
+  // before paint — the user never sees it open downward first. Falls back
+  // to downward when there's no meaningful room either way.
+  useLayoutEffect(() => {
+    if (!open || flipDoneRef.current || !listRef.current) return;
+    const anchor = editable ? inputRef.current : triggerRef.current;
+    if (!anchor) return;
+    flipDoneRef.current = true;
+
+    const rect = anchor.getBoundingClientRect();
+    const listH = listRef.current.offsetHeight;
+    const spaceBelow = window.innerHeight - rect.bottom;
+    const spaceAbove = rect.top;
+    if (spaceBelow < listH + 8 && spaceAbove > spaceBelow) {
+      setDropdownPos((prev) =>
+        prev ? { ...prev, top: Math.max(8, rect.top - listH - 4) } : prev,
+      );
+    }
+  }, [open, editable]);
+
   /** Editable mode: commit the typed input (if it passes validation) and close. */
   const commitInput = () => {
     const trimmed = inputValue.trim();
@@ -142,6 +168,7 @@ export function CustomSelect({
   };
 
   const openDropdown = () => {
+    flipDoneRef.current = false;
     computePos();
     setOpen(true);
     const visible = isFiltering && inputValue.trim().length > 0
