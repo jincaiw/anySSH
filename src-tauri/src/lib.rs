@@ -296,6 +296,7 @@ pub fn run() {
             ssh::commands::ssh_health_check_saved_host,
             ssh::commands::connect_saved_host,
             ssh::commands::connect_saved_host_no_pty,
+            ssh::commands::trigger_dual_factor_sms,
             ssh::commands::has_saved_password,
             // SSH — session logs
             ssh::commands::ssh_start_session_log,

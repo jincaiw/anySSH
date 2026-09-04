@@ -120,6 +120,59 @@ describe("settings-store — legacy bastion Backspace behaviour", () => {
   });
 });
 
+describe("settings-store — dual-factor bastion memory", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockResolvedValue(undefined);
+    useSettingsStore.setState({ dualFactorHostIds: [] });
+  });
+
+  it("starts with no remembered bastions", () => {
+    expect(useSettingsStore.getState().dualFactorHostIds).toEqual([]);
+  });
+
+  it("marks a host and persists the id list", async () => {
+    useSettingsStore.getState().markHostDualFactor("host-1");
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_setting", {
+        key: "dual_factor_hosts",
+        value: '["host-1"]',
+      }),
+    );
+
+    useSettingsStore.getState().markHostDualFactor("host-2");
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenLastCalledWith("save_setting", {
+        key: "dual_factor_hosts",
+        value: '["host-1","host-2"]',
+      }),
+    );
+
+    // Marking twice is a no-op — no third persist, list unchanged.
+    invoke.mockClear();
+    useSettingsStore.getState().markHostDualFactor("host-1");
+    expect(useSettingsStore.getState().dualFactorHostIds).toEqual(["host-1", "host-2"]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("loads the remembered list on startup and ignores malformed data", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_all_settings") {
+        return [
+          ["dual_factor_hosts", JSON.stringify(["a", 3, "b"])],
+          ["editors_seeded", "true"],
+        ];
+      }
+      return undefined;
+    });
+
+    await useSettingsStore.getState().loadSettings();
+
+    expect(useSettingsStore.getState().dualFactorHostIds).toEqual(["a", "b"]);
+  });
+});
+
 describe("settings-store — explorer double-click action", () => {
   beforeEach(() => {
     invoke.mockReset();

@@ -645,6 +645,66 @@ fn auth_method_label(auth: &AuthMethod) -> &'static str {
     }
 }
 
+/// Fire the dual-factor bastion's SMS/OTP dispatch: connect once with an
+/// EMPTY password (strategy A answers the first KI prompt empty, strategy B
+/// answers it with the non-empty `anyssh` placeholder) and swallow the
+/// inevitable auth failure — the bastion fires the code delivery off the
+/// trigger answer, and the user then logs in with "<static password><OTP>"
+/// concatenated. This turns the two-step manual flow (connect empty, wait
+/// for the failure dialog, reconnect) into one click.
+///
+/// Every failure is absorbed: the caller treats this as fire-and-forget and
+/// never surfaces an error dialog. Returns whether the empty-password
+/// connect unexpectedly SUCCEEDED (the bastion let it straight through);
+/// the throwaway session is disconnected immediately.
+#[tauri::command]
+pub async fn trigger_dual_factor_sms(
+    host_id: String,
+    state: State<'_, SshManager>,
+    db: State<'_, Arc<HostDb>>,
+    app_handle: AppHandle,
+) -> Result<bool, SshError> {
+    let db_clone = Arc::clone(&db);
+    let id = host_id.clone();
+    // Empty password override — the documented dual-factor trigger (the
+    // backend's strategy B answers the trigger prompt with the non-empty
+    // placeholder when the password is empty).
+    let config = tokio::task::spawn_blocking(move || {
+        build_host_config_blocking(&id, &db_clone, &mut Vec::new(), Some(""))
+    })
+    .await
+    .map_err(|e| SshError::IoError(format!("task panicked: {e}")))??;
+
+    let settings = session_settings_from_db(&db);
+    // Bound the whole attempt: a bastion usually rejects within seconds, but
+    // an unreachable host must not hang this fire-and-forget call forever.
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        state.connect(config, app_handle.clone(), None, settings, None),
+    )
+    .await;
+
+    match outcome {
+        // Expected: the empty password is rejected — by then strategy B has
+        // answered the trigger prompt and the bastion has dispatched the SMS.
+        Ok(Err(err)) => {
+            tracing::debug!(host_id = %host_id, error = %err, "dual-factor trigger attempt rejected (expected — SMS should be on its way)");
+            Ok(false)
+        }
+        // Unexpected: the bastion let the empty password straight in. Tear the
+        // throwaway session down; the user still logs in with their OTP.
+        Ok(Ok(session_id)) => {
+            tracing::info!(host_id = %host_id, "dual-factor trigger connect unexpectedly succeeded — disconnecting the throwaway session");
+            let _ = state.disconnect(&session_id.0, app_handle).await;
+            Ok(true)
+        }
+        Err(_elapsed) => {
+            tracing::warn!(host_id = %host_id, "dual-factor trigger attempt timed out");
+            Ok(false)
+        }
+    }
+}
+
 /// Resolve the AuthMethod for a saved host, pulling secrets from the vault.
 /// Vault read failures are reported instead of being silently swallowed:
 /// historically any vault error (missing entry, corrupt portable vault, key

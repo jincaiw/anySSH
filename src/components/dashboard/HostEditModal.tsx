@@ -2,7 +2,8 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Monitor } from "lucide-react";
 import { ModalShell, BTN_GHOST, BTN_SECONDARY, BTN_PRIMARY } from "../shared/ModalShell";
 import { PasswordPromptModal } from "./PasswordPromptModal";
-import { dualFactorHintOf } from "../../lib/backend-errors";
+import { dualFactorHintOf, isDualFactorTriggerError } from "../../lib/backend-errors";
+import { fireDualFactorTrigger } from "../../lib/dual-factor";
 import { useUiStore } from "../../stores/ui-store";
 import { useHostsStore } from "../../stores/hosts-store";
 import { useGroupsStore } from "../../stores/groups-store";
@@ -176,6 +177,8 @@ export function HostEditModal() {
   // including a deliberate EMPTY submit, which is the dual-factor bastion's
   // SMS trigger.
   const [passwordPromptTarget, setPasswordPromptTarget] = useState<string | null>(null);
+  /** True when the prompt opened in dual-factor armed mode (SMS just fired). */
+  const [dualFactorArmed, setDualFactorArmed] = useState(false);
 
   // Vault credential state
   /** True when the keychain already holds a credential for this host. */
@@ -430,8 +433,10 @@ export function HostEditModal() {
 
     setConnecting(true);
     setError(null);
+    // Built outside the try — the catch needs host.id to remember dual-factor
+    // bastions when connect_saved_host fails with the trigger marker.
+    const host = buildHost();
     try {
-      const host = buildHost();
       await saveHost(host);
 
       const { invoke } = await import("@tauri-apps/api/core");
@@ -441,9 +446,23 @@ export function HostEditModal() {
       // interactive prompt instead of failing with "no saved password". The
       // prompt also accepts an EMPTY submit — the dual-factor bastion's SMS
       // trigger.
-      if (!secrets && form.authType === "password" && !form.password && !credCleared) {
-        const has = await invoke<boolean>("has_saved_password", { hostId: host.id }).catch(() => false);
-        if (!has) {
+      //
+      // Hosts remembered as dual-factor bastions always open the prompt (in
+      // armed mode, SMS auto-fired) even when a static password is saved —
+      // the login needs <static><OTP>, not the stored password alone.
+      const dualFactorMarked = useSettingsStore.getState().dualFactorHostIds.includes(host.id);
+      if (
+        !secrets &&
+        form.authType === "password" &&
+        !credCleared &&
+        (dualFactorMarked || !form.password)
+      ) {
+        const has = dualFactorMarked
+          ? true
+          : await invoke<boolean>("has_saved_password", { hostId: host.id }).catch(() => false);
+        if (!has || dualFactorMarked) {
+          if (dualFactorMarked) fireDualFactorTrigger(host.id);
+          setDualFactorArmed(dualFactorMarked);
           setConnecting(false);
           setPasswordPromptTarget(`${form.username || host.username}@${form.host || host.host}`);
           return;
@@ -485,6 +504,9 @@ export function HostEditModal() {
       void useHostsStore.getState().recordConnection(host.id);
       close();
     } catch (err) {
+      if (isDualFactorTriggerError(err)) {
+        useSettingsStore.getState().markHostDualFactor(host.id);
+      }
       setError(extractError(err, t("host.error.connect")));
     } finally {
       setConnecting(false);
@@ -1168,6 +1190,19 @@ export function HostEditModal() {
       <PasswordPromptModal
         target={passwordPromptTarget}
         busy={connecting}
+        dualFactorArmed={dualFactorArmed}
+        onResend={
+          dualFactorArmed && editingHostId
+            ? () => {
+                void (async () => {
+                  try {
+                    const { invoke } = await import("@tauri-apps/api/core");
+                    await invoke("trigger_dual_factor_sms", { hostId: editingHostId });
+                  } catch { /* best-effort — resendable */ }
+                })();
+              }
+            : undefined
+        }
         onSubmit={(password, remember) => {
           setPasswordPromptTarget(null);
           void handleConnect({ password, savePassword: remember });

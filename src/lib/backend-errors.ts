@@ -104,3 +104,12 @@ export function dualFactorHintOf(message: string | null | undefined): string | n
   if (!message || !message.includes(DUAL_FACTOR_TRIGGER_MARKER)) return null;
   return translateIfPresent("dashboard.connect.dualFactorTriggered");
 }
+
+/**
+ * True when the error proves this host is a dual-factor bastion: the
+ * empty-password connect ended in the trigger-flavoured failure. Used to
+ * remember the host so future connects auto-fire the SMS trigger.
+ */
+export function isDualFactorTriggerError(err: unknown): boolean {
+  return dualFactorHintOf(rawErrorMessage(err)) !== null;
+}

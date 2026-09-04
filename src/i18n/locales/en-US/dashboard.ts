@@ -52,6 +52,8 @@ export default {
   "connect.passwordPlaceholder": "Enter your password",
   "connect.passwordRemember": "Remember password",
   "connect.passwordDualFactorHint": "Dual-factor bastion: type static password + dynamic code (concatenated, no spaces). No SMS yet? Connect once with an empty password to trigger the code delivery",
+  "connect.passwordPromptArmedHint": "SMS / OTP dispatch triggered: type static password + dynamic code (concatenated, no spaces). No SMS yet? Click “Resend SMS”",
+  "connect.passwordResend": "Resend SMS",
   "connect.dualFactorTriggered": "Dual-factor trigger sent: once the SMS / OTP code arrives, click Retry and type static password + dynamic code (concatenated, no spaces)",
   "connect.passwordShow": "Show password",
   "connect.passwordHide": "Hide password",

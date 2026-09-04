@@ -114,6 +114,10 @@ interface SettingsState {
    *  — for legacy curses bastion TUIs that only recognise ^H. Per-host
    *  override wins when set. */
   terminalBackspaceCtrlH: boolean;
+  /** Host ids remembered as dual-factor bastions (their connect failed with
+   *  the dual-factor trigger marker). Clicking connect on these auto-fires
+   *  the SMS/OTP trigger before the credential prompt. */
+  dualFactorHostIds: string[];
 
   // Session logging
   /** Globally auto-record every terminal session to a local log file. */
@@ -168,6 +172,8 @@ interface SettingsState {
   /** Global Backspace behaviour: true sends ^H (0x08) for legacy bastion
    *  TUIs, false (default) sends DEL (0x7f). */
   setTerminalBackspaceCtrlH: (enabled: boolean) => void;
+  /** Remember a host as a dual-factor bastion (persists a JSON list). */
+  markHostDualFactor: (hostId: string) => void;
   setTerminalEncoding: (encoding: TerminalEncoding) => void;
   setTerminalType: (type: string) => void;
   /** Global default LANG; "" disables sending it. Validated against LANG_RE. */
@@ -209,6 +215,7 @@ const DEFAULTS = {
   terminalCopyOnSelect: false,
   terminalPasteButton: "none" as PasteButton,
   terminalBackspaceCtrlH: false,
+  dualFactorHostIds: [] as string[],
   terminalEncoding: "utf-8" as TerminalEncoding,
   terminalType: "xterm-256color",
   terminalLang: "",
@@ -494,6 +501,13 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     persist("terminal_backspace_ctrl_h", String(enabled));
   },
 
+  markHostDualFactor: (hostId) => set((s) => {
+    if (s.dualFactorHostIds.includes(hostId)) return {};
+    const next = [...s.dualFactorHostIds, hostId];
+    persist("dual_factor_hosts", JSON.stringify(next));
+    return { dualFactorHostIds: next };
+  }),
+
   setTerminalEncoding: (encoding) => {
     set({ terminalEncoding: encoding });
     persist("terminal_encoding", encoding);
@@ -642,6 +656,15 @@ export const useSettingsStore = create<SettingsState>((set) => ({
           case "terminal_copy_on_select": updates.terminalCopyOnSelect = value === "true"; break;
           case "terminal_paste_button": updates.terminalPasteButton = value === "right" || value === "middle" ? value : DEFAULTS.terminalPasteButton; break;
           case "terminal_backspace_ctrl_h": updates.terminalBackspaceCtrlH = value === "true"; break;
+          case "dual_factor_hosts": {
+            try {
+              const parsed = JSON.parse(value) as unknown;
+              if (Array.isArray(parsed)) {
+                updates.dualFactorHostIds = parsed.filter((id): id is string => typeof id === "string");
+              }
+            } catch { /* ignore malformed list */ }
+            break;
+          }
           case "terminal_encoding": {
             const valid = TERMINAL_ENCODINGS.some((e) => e.value === value);
             updates.terminalEncoding = valid ? (value as TerminalEncoding) : DEFAULTS.terminalEncoding;

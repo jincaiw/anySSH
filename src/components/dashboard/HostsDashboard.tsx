@@ -31,6 +31,9 @@ import { useUiStore } from "../../stores/ui-store";
 import { useTabStore } from "../../stores/tab-store";
 import { useSftpStore } from "../../stores/sftp-store";
 import { useS3Store } from "../../stores/s3-store";
+import { useSettingsStore } from "../../stores/settings-store";
+import { isDualFactorTriggerError } from "../../lib/backend-errors";
+import { fireDualFactorTrigger } from "../../lib/dual-factor";
 import type { SavedHost, HostGroup, RecentConnection, S3Connection } from "../../types";
 import { HostCard } from "./HostCard";
 import { GroupCard } from "./GroupCard";
@@ -53,6 +56,15 @@ async function cancelConnectAttempt(attemptId: string) {
     await invoke("ssh_cancel_connect", { attemptId });
   } catch {
     /* attempt already finished — nothing to cancel */
+  }
+}
+
+/** Remember the host as a dual-factor bastion when a connect failed with the
+ *  trigger-flavoured error — future connects then auto-fire the SMS trigger
+ *  and open the one-click prompt. */
+function noteDualFactorError(hostId: string, err: unknown): void {
+  if (isDualFactorTriggerError(err)) {
+    useSettingsStore.getState().markHostDualFactor(hostId);
   }
 }
 
@@ -221,8 +233,12 @@ export function HostsDashboard() {
   // Interactive password prompt (PuTTY/Xshell-style): opened when a
   // password-auth host has no saved credential. Submitting resumes the
   // original connect with the entered password, optionally saving it.
+  // `hostId` powers the dual-factor "resend SMS" button; `armed` switches
+  // the prompt to the one-click dual-factor copy (SMS already triggered).
   const [passwordPrompt, setPasswordPrompt] = useState<{
     target: string;
+    hostId: string;
+    armed?: boolean;
     submit: (secrets: { password: string; savePassword: boolean }) => void;
   } | null>(null);
 
@@ -230,6 +246,10 @@ export function HostsDashboard() {
   // password-auth hosts without a saved credential it opens the prompt and
   // returns false — the prompt's submit re-invokes `connect` with secrets.
   // Key-auth hosts always pass (their passphrase resolution stays separate).
+  //
+  // Hosts remembered as dual-factor bastions short-circuit BEFORE the vault
+  // check: even with a saved (static) password the login needs an OTP, so
+  // the prompt always opens — with the SMS trigger fired in the background.
   const ensurePasswordOrPrompt = useCallback(
     async (
       authType: string | undefined,
@@ -238,6 +258,16 @@ export function HostsDashboard() {
       connect: (secrets?: { password: string; savePassword: boolean }) => void | Promise<void>,
     ): Promise<boolean> => {
       if (authType === "privateKey" || authType === "privateKeyData") return true;
+      if (useSettingsStore.getState().dualFactorHostIds.includes(hostId)) {
+        fireDualFactorTrigger(hostId);
+        setPasswordPrompt({
+          target,
+          hostId,
+          armed: true,
+          submit: (s) => void connect(s),
+        });
+        return false;
+      }
       let has = true;
       try {
         const { invoke } = await import("@tauri-apps/api/core");
@@ -246,7 +276,7 @@ export function HostsDashboard() {
         has = false;
       }
       if (has) return true;
-      setPasswordPrompt({ target, submit: (s) => void connect(s) });
+      setPasswordPrompt({ target, hostId, submit: (s) => void connect(s) });
       return false;
     },
     [],
@@ -306,6 +336,9 @@ export function HostsDashboard() {
         useTabStore.getState().addTab({ type: "terminal", id: sessionId, label: hostLabel });
       } catch (err) {
         if (cancelled) return;
+        // A dual-factor-flavoured failure marks the host so the NEXT connect
+        // auto-fires the SMS trigger and opens the one-click prompt.
+        noteDualFactorError(host.id, err);
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
           : t("dashboard.connect.fallback");
@@ -369,6 +402,7 @@ export function HostsDashboard() {
         useTabStore.getState().addTab({ type: "terminal", id: sessionId, label: connLabel });
       } catch (err) {
         if (cancelled) return;
+        noteDualFactorError(conn.host_id, err);
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
           : t("dashboard.connect.fallbackShort");
@@ -938,6 +972,10 @@ export function HostsDashboard() {
       {passwordPrompt && (
         <PasswordPromptModal
           target={passwordPrompt.target}
+          dualFactorArmed={passwordPrompt.armed}
+          onResend={
+            passwordPrompt.armed ? () => fireDualFactorTrigger(passwordPrompt.hostId) : undefined
+          }
           onSubmit={(password, remember) => {
             const prompt = passwordPrompt;
             setPasswordPrompt(null);
