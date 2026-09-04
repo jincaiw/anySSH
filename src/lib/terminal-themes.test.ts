@@ -103,6 +103,28 @@ describe("parseItermColors", () => {
     expect(theme!.colors.foreground).toBe("#abb2bf");
   });
 
+  it("skips empty component values instead of reading them as 0", () => {
+    // Number("") === 0 — a malformed empty <string/> must be ignored, not
+    // silently turned into a pure-black component.
+    const xml = `<?xml version="1.0"?><plist version="1.0"><dict>
+      <key>Background Color</key><dict>
+        <key>Red Component</key><string></string>
+        <key>Green Component</key><real>0.5</real>
+        <key>Blue Component</key><real>1</real>
+      </dict>
+      <key>Foreground Color</key><dict>
+        <key>Red Component</key><real>1</real>
+        <key>Green Component</key><real>1</real>
+        <key>Blue Component</key><real>1</real>
+      </dict>
+    </dict></plist>`;
+    const theme = parseItermColors(xml, "empty-comp");
+    expect(theme).not.toBeNull();
+    // Red was skipped → fallback default (not "#0080ff", which a 0 red would
+    // have produced from the green/blue that were present).
+    expect(theme!.colors.background).toBe("#000000");
+  });
+
   it("returns null for garbage input", () => {
     expect(parseItermColors("not xml at all", "x")).toBeNull();
     expect(parseItermColors("<plist><dict></dict></plist>", "x")).toBeNull();
@@ -157,6 +179,8 @@ describe("resolveTerminalTheme", () => {
 
   it("resolves builtin ids and falls back for unknown ones", () => {
     expect(resolveTerminalTheme("dracula", [])?.id).toBe("dracula");
-    expect(resolveTerminalTheme("deleted-custom-id", [])?.id).toBeTruthy();
+    // The dangling-reference fallback must be one-dark-pro by ID, not by
+    // position in BUILTIN_THEMES.
+    expect(resolveTerminalTheme("deleted-custom-id", [])?.id).toBe("one-dark-pro");
   });
 });

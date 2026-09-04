@@ -10,6 +10,7 @@ import {
   SYSTEM_THEME_ID,
   normalizeHex,
   parseItermColors,
+  resolveTerminalTheme,
   sanitizeTheme,
   type TerminalTheme,
   type TerminalThemeColors,
@@ -48,7 +49,18 @@ function ThemePreview({ colors }: { colors: TerminalThemeColors }) {
       style={{ backgroundColor: colors.background }}
     >
       <div className="font-mono text-[10px] leading-none truncate">
-        <span style={{ color: colors.foreground }}>$ ssh user@host</span>
+        <span style={{ color: colors.foreground }}>$ ssh </span>
+        {/* Demo the selection palette on "user@host" — previously the preview
+            only exercised foreground/cursor/ANSI, so a broken selection pair
+            was invisible until a real session. */}
+        <span
+          style={{
+            backgroundColor: colors.selectionBackground,
+            color: colors.selectionForeground,
+          }}
+        >
+          user@host
+        </span>
         <span
           className="inline-block w-[5px] h-[10px] align-middle ml-0.5"
           style={{ backgroundColor: colors.cursor }}
@@ -143,13 +155,17 @@ function ThemeEditorModal({
   const [colors, setColors] = useState<TerminalThemeColors>(
     () =>
       source?.colors ??
-      // Seed a new theme from the currently selected builtin/custom theme so
-      // the user starts from something legible instead of a blank slate.
-      (structuredClone(
-        useSettingsStore.getState().terminalCustomThemes.find(
-          (th) => th.id === useSettingsStore.getState().terminalThemeId,
-        )?.colors ?? BUILTIN_THEMES.find((th) => th.id === "one-dark-pro")!.colors,
-      )),
+      // Seed a new theme from the currently selected theme — builtin OR
+      // custom — so the user starts from something legible instead of a
+      // blank slate. resolveTerminalTheme handles both and falls back to
+      // One Dark Pro when the sentinel/"system" is active.
+      structuredClone(
+        resolveTerminalTheme(
+          useSettingsStore.getState().terminalThemeId,
+          useSettingsStore.getState().terminalCustomThemes,
+        )?.colors ??
+          BUILTIN_THEMES.find((th) => th.id === "one-dark-pro")!.colors,
+      ),
   );
 
   const setColor = (slot: ColorSlot, hex: string) =>

@@ -7,7 +7,7 @@ import { LOCALES, LOCALE_LABELS, useTranslation } from "../../i18n";
 import type { Locale } from "../../i18n";
 import { useUpdaterStore } from "../../stores/updater-store";
 import { toast } from "../../stores/toast-store";
-import { RefreshCw, CheckCircle2, AlertCircle, Palette, SquareTerminal, ArrowUpDown, Info, ExternalLink, Check, FileCode, Plus, Trash2, FolderOpen, Star, Search, Database, Download, Upload, ShieldCheck } from "lucide-react";
+import { RefreshCw, CheckCircle2, AlertCircle, Palette, SquareTerminal, SwatchBook, ArrowUpDown, Info, ExternalLink, Check, FileCode, Plus, Trash2, FolderOpen, Star, Search, Database, Download, Upload, ShieldCheck } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { TERMINAL_ENCODINGS, TERMINAL_TYPES, TERM_NAME_RE, LANG_PRESETS, LANG_RE } from "../../stores/settings-store";
 import type { CursorStyle, ThemeMode, EditorConfig, PasteButton, DoubleClickAction, TerminalEncoding } from "../../stores/settings-store";
@@ -51,12 +51,13 @@ const REPO_URL = "https://github.com/jincaiw/anySSH";
 // Each settings category is a section here. To add a new category, add an entry
 // to SECTIONS, a description, and render its content in <SectionContent />.
 
-type SectionId = "appearance" | "terminal" | "explorer" | "transfers" | "editors" | "data" | "about";
+type SectionId = "appearance" | "terminal" | "themes" | "explorer" | "transfers" | "editors" | "data" | "about";
 
 // `labelKey` / description values are i18n keys, resolved with `t()` at render.
 const SECTIONS: { id: SectionId; labelKey: string; icon: LucideIcon }[] = [
   { id: "appearance", labelKey: "settings.sections.appearance", icon: Palette },
   { id: "terminal", labelKey: "settings.sections.terminal", icon: SquareTerminal },
+  { id: "themes", labelKey: "settings.sections.themes", icon: SwatchBook },
   { id: "explorer", labelKey: "settings.sections.explorer", icon: FolderOpen },
   { id: "transfers", labelKey: "settings.sections.transfers", icon: ArrowUpDown },
   { id: "editors", labelKey: "settings.sections.editors", icon: FileCode },
@@ -67,6 +68,7 @@ const SECTIONS: { id: SectionId; labelKey: string; icon: LucideIcon }[] = [
 const SECTION_DESCRIPTIONS: Record<SectionId, string> = {
   appearance: "settings.sections.appearance.description",
   terminal: "settings.sections.terminal.description",
+  themes: "settings.sections.themes.description",
   explorer: "settings.sections.explorer.description",
   transfers: "settings.sections.transfers.description",
   editors: "settings.sections.editors.description",
@@ -162,6 +164,8 @@ function SectionContent({ section }: { section: SectionId }) {
       return <AppearanceSettings />;
     case "terminal":
       return <TerminalSettings />;
+    case "themes":
+      return <TerminalThemeSettings />;
     case "explorer":
       return <ExplorerSettings />;
     case "transfers":
@@ -629,10 +633,6 @@ function TerminalSettings() {
 
   return (
     <>
-      <SettingsGroup label={t("settings.terminal.group.theme")}>
-        <TerminalThemeSettings />
-      </SettingsGroup>
-
       <SettingsGroup label={t("settings.terminal.group.font")}>
         <SettingRow>
           <div>

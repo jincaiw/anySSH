@@ -228,7 +228,11 @@ export function resolveTerminalTheme(
   return (
     customThemes.find((t) => t.id === id) ??
     BUILTIN_THEMES.find((t) => t.id === id) ??
-    BUILTIN_THEMES[1] // one-dark-pro — safe dark default
+    // Named fallback (NOT a positional index — reordering BUILTIN_THEMES
+    // must not silently change the default for dangling references).
+    BUILTIN_THEMES.find((t) => t.id === "one-dark-pro") ??
+    BUILTIN_THEMES[0] ??
+    null
   );
 }
 
@@ -289,7 +293,11 @@ export function parseItermColors(xml: string, name: string): TerminalTheme | nul
     let scale = 1; // floats in [0,1] by spec
     for (let j = 0; j < valueEl.children.length - 1; j += 2) {
       const ck = (valueEl.children[j]!.textContent ?? "").trim().toLowerCase();
-      const cv = Number((valueEl.children[j + 1]?.textContent ?? "").trim());
+      // Skip empty values — Number("") is 0, which would silently turn a
+      // malformed/empty component into pure black instead of ignoring it.
+      const raw = (valueEl.children[j + 1]?.textContent ?? "").trim();
+      if (!raw) continue;
+      const cv = Number(raw);
       if (Number.isNaN(cv)) continue;
       if (ck === "red component") r = cv;
       else if (ck === "green component") g = cv;

@@ -89,6 +89,28 @@ describe("settings appearance", () => {
         expect(await selectedValue("s-fontfamily")).to.equal("monospace");
     });
 
+    it("terminal colour scheme selection persists across a restart", async () => {
+        await openSettings();
+
+        // The colour scheme lives in its own section, right below Terminal.
+        await openSection("themes");
+        const dracula = await $("[data-testid='theme-card-dracula']");
+        await dracula.waitForClickable({ timeout: 10_000 });
+        await dracula.click();
+        await browser.waitUntil(
+            async () => (await dracula.getAttribute("aria-pressed")) === "true",
+            { timeout: 5_000, timeoutMsg: "dracula card did not become selected" },
+        );
+
+        await relaunchApp();
+        await openSettings();
+        await openSection("themes");
+
+        const after = await $("[data-testid='theme-card-dracula']");
+        await after.waitForDisplayed({ timeout: 10_000 });
+        expect(await after.getAttribute("aria-pressed")).to.equal("true");
+    });
+
     it("remembers the active section when switching away and back", async () => {
         await openSettings();
         await openSection("terminal");

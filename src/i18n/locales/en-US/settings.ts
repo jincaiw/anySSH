@@ -12,6 +12,7 @@ export default {
 
   "sections.appearance": "Appearance",
   "sections.terminal": "Terminal",
+  "sections.themes": "Colour Scheme",
   "sections.explorer": "Explorer",
   "sections.transfers": "Transfers",
   "sections.editors": "Editors",
@@ -20,6 +21,7 @@ export default {
 
   "sections.appearance.description": "Theme and interface look.",
   "sections.terminal.description": "Font, cursor, and scrollback history.",
+  "sections.themes.description": "Terminal colour themes, custom themes, and .itermcolors import.",
   "sections.explorer.description": "How the file browser behaves.",
   "sections.transfers.description": "Control how files are transferred.",
   "sections.editors.description": "Editors used by “Edit” / “Open With” in the file browser.",
@@ -70,7 +72,6 @@ export default {
   "fonts.current": "Current",
 
   // ─── Terminal ────────────────────────────────────────────────────────────
-  "terminal.group.theme": "Colour Scheme",
   "terminal.theme.system": "Follow App Theme",
   "terminal.theme.new": "New Theme",
   "terminal.theme.import": "Import .itermcolors",

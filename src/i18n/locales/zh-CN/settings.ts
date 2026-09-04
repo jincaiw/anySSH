@@ -12,6 +12,7 @@ export default {
 
   "sections.appearance": "外观",
   "sections.terminal": "终端",
+  "sections.themes": "配色方案",
   "sections.explorer": "文件浏览",
   "sections.transfers": "传输",
   "sections.editors": "编辑器",
@@ -20,6 +21,7 @@ export default {
 
   "sections.appearance.description": "主题与界面外观。",
   "sections.terminal.description": "字体、光标与回滚历史。",
+  "sections.themes.description": "终端配色主题、自定义主题与 .itermcolors 导入。",
   "sections.explorer.description": "文件浏览器的行为方式。",
   "sections.transfers.description": "控制文件传输的方式。",
   "sections.editors.description": "文件浏览器中「编辑」/「打开方式」使用的编辑器。",
@@ -68,7 +70,6 @@ export default {
   "fonts.current": "当前字体",
 
   // ─── Terminal ────────────────────────────────────────────────────────────
-  "terminal.group.theme": "配色方案",
   "terminal.theme.system": "跟随应用主题",
   "terminal.theme.new": "新建主题",
   "terminal.theme.import": "导入 .itermcolors",
