@@ -148,7 +148,10 @@ SSH targets (all on port 2222 inside the compose network):
   `$XDG_DATA_HOME/com.jincaiw.anyssh` and calls `browser.reloadSession()`
   to relaunch the Tauri process with a clean SQLite DB.
 - The `05-persistence` spec uses `relaunchApp()` instead, which reloads the
-  session without wiping the DB.
+  session without wiping the DB. Before reloading, it flushes the settings
+  store's in-flight `persist()` writes (via the `__anysshFlushSettings` window
+  hook) so a fast relaunch can't interrupt a `save_setting` IPC and silently
+  lose the value.
 - The OS keychain (gnome-keyring) is process-scoped inside the runner
   container, so it also resets when the daemon is restarted between full
   `make e2e` invocations.
