@@ -20,7 +20,6 @@ export function PasswordPromptModal(props: {
   const [password, setPassword] = useState("");
   const [remember, setRemember] = useState(false);
   const [show, setShow] = useState(false);
-  const [error, setError] = useState<string | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -28,16 +27,16 @@ export function PasswordPromptModal(props: {
     setPassword("");
     setRemember(false);
     setShow(false);
-    setError(null);
     requestAnimationFrame(() => inputRef.current?.focus());
   }, []);
 
   const submit = () => {
-    if (!password) {
-      setError(t("dashboard.connect.passwordRequired"));
-      inputRef.current?.focus();
-      return;
-    }
+    // An EMPTY password is a valid submission: dual-factor bastions (堡垒机)
+    // deliver the SMS / OTP code only after receiving a password response,
+    // and connecting once with an empty password is the documented way to
+    // trigger that delivery (see the hint below). The backend's dual-factor
+    // retry answers the bastion's trigger prompt with a non-empty placeholder
+    // when the password is empty.
     props.onSubmit(password, remember);
   };
 
@@ -79,7 +78,6 @@ export function PasswordPromptModal(props: {
             value={password}
             onChange={(e) => {
               setPassword(e.target.value);
-              if (error) setError(null);
             }}
             placeholder={t("dashboard.connect.passwordPlaceholder")}
             autoComplete="off"
@@ -95,11 +93,6 @@ export function PasswordPromptModal(props: {
             {show ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
         </div>
-        {error && (
-          <p className="mt-1.5 text-[length:var(--text-xs)] text-red-400" data-testid="password-prompt-error">
-            {error}
-          </p>
-        )}
         <p className="mt-2 text-[length:var(--text-xs)] text-text-muted" data-testid="password-prompt-hint">
           {t("dashboard.connect.passwordDualFactorHint")}
         </p>

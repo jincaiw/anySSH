@@ -50,7 +50,6 @@ export default {
   "connect.passwordPromptTitle": "Authentication",
   "connect.passwordLabel": "Password",
   "connect.passwordPlaceholder": "Enter your password",
-  "connect.passwordRequired": "Password cannot be empty.",
   "connect.passwordRemember": "Remember password",
   "connect.passwordDualFactorHint": "Dual-factor bastion: type static password + dynamic code (concatenated, no spaces). No SMS yet? Connect once with an empty password to trigger the code delivery",
   "connect.passwordShow": "Show password",

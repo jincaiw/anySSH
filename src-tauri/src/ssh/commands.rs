@@ -645,18 +645,21 @@ fn auth_method_label(auth: &AuthMethod) -> &'static str {
 }
 
 /// Resolve the AuthMethod for a saved host, pulling secrets from the vault.
-/// Password auth is strict: a vault read failure is reported instead of
-/// silently authenticating with an empty password. Historically any vault
-/// error (missing entry, corrupt portable vault, key mismatch) was swallowed
-/// into `String::new()`, which surfaced minutes later as a baffling
-/// "server rejected credentials" even though the user's password was correct
-/// — there was no way to tell a bad password from a missing one.
+/// Vault read failures are reported instead of being silently swallowed:
+/// historically any vault error (missing entry, corrupt portable vault, key
+/// mismatch) was swallowed into `String::new()`, which surfaced minutes later
+/// as a baffling "server rejected credentials" even though the user's
+/// password was correct — there was no way to tell a bad password from a
+/// missing one. A GENUINE empty stored password is still allowed through:
+/// dual-factor bastions need the empty-password trigger attempt (see below).
 ///
 /// `password_override` short-circuits the vault for the top-level host: the
 /// frontend prompts for the password interactively when none is saved
 /// (PuTTY/Xshell-style flow) and passes it here for this one connection. An
-/// empty override falls through to the vault. Jump hosts always resolve from
-/// the vault — the prompt targets only the host the user clicked.
+/// EMPTY override is taken at face value — connecting with an empty password
+/// is the documented way to page a dual-factor bastion's SMS / OTP delivery.
+/// Jump hosts always resolve from the vault — the prompt targets only the
+/// host the user clicked.
 ///
 /// Key passphrase stays best-effort: private-key hosts legitimately have no
 /// passphrase stored.
@@ -686,7 +689,7 @@ fn resolve_auth_method(
             })
         }
         _ => {
-            if let Some(pw) = password_override.filter(|p| !p.is_empty()) {
+            if let Some(pw) = password_override {
                 return Ok(AuthMethod::Password {
                     password: pw.to_string(),
                 });
@@ -709,11 +712,11 @@ fn resolve_auth_method(
                     )));
                 }
             };
-            if password.is_empty() {
-                return Err(SshError::AuthenticationFailed(
-                    "the saved password for this host is empty — edit the host and re-enter the password".to_string(),
-                ));
-            }
+            // An empty saved password is allowed: dual-factor bastions fire
+            // their SMS / OTP challenge only after a password response, and
+            // the connect flow deliberately supports the empty-password
+            // trigger attempt. The auth trail will show exactly what the
+            // server replied, so this cannot mask a vault malfunction.
             Ok(AuthMethod::Password { password })
         }
     }
