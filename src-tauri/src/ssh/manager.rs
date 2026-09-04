@@ -88,6 +88,15 @@ enum KiAttemptResult {
 /// bastions use 2-3; 8 leaves headroom for multi-prompt appliances.
 const MAX_KI_ROUNDS: usize = 8;
 
+/// Non-empty placeholder answered to the dual-factor TRIGGER prompt when the
+/// user connects with an empty password. Bastions commonly gate the SMS /
+/// OTP challenge on receiving a NON-EMPTY password response (any value —
+/// even a deliberately wrong one — fires the code), so an empty answer
+/// would silently never trigger the SMS. Only used under strategy B where
+/// strategy A already sent the empty string, keeping the two attempts
+/// distinct.
+const EMPTY_PASSWORD_TRIGGER: &str = "anyssh";
+
 impl SshManager {
     pub fn new() -> Self {
         Self {
@@ -484,11 +493,15 @@ impl SshManager {
     /// password fails even with correct credentials.
     ///
     /// Dual-factor bastions (堡垒机) invert the flow: the first password-ish
-    /// prompt must be answered EMPTY to trigger the dynamic-code challenge
-    /// (SMS / OTP / 企业微信), then answered with "<static password><dynamic
-    /// code>" concatenated. When the heuristic pass is rejected, KI is
-    /// restarted once with that empty-first strategy before falling back to
-    /// plain `password`.
+    /// prompt is a TRIGGER — the bastion fires the dynamic-code challenge
+    /// (SMS / OTP / 企业微信) off that answer, and the user then answers the
+    /// code prompt with "<static password><dynamic code>" concatenated.
+    /// Strategy B answers the trigger with a value that DIFFERS from what
+    /// strategy A sent (empty when a password is set, a non-empty dummy
+    /// when the password is empty — many bastions only fire the SMS on a
+    /// non-empty response), so connecting with an empty password still
+    /// triggers the SMS for the next attempt. KI is restarted once with
+    /// strategy B before falling back to plain `password`.
     ///
     /// A genuinely wrong password still terminates in `Failure`, so this
     /// cannot mask a bad credential.
@@ -546,24 +559,25 @@ impl SshManager {
         // Two strategies, tried in order:
         //   A. every prompt answered heuristically with the real password —
         //      standard password KI and two-prompt devices (H3C/Huawei).
-        //   B. the FIRST password-ish prompt is answered EMPTY — dual-factor
-        //      bastions (堡垒机) treat an empty first response as the trigger
-        //      for a dynamic-code challenge (SMS / OTP / 企业微信), which the
-        //      user answers with "<static password><dynamic code>" typed as
-        //      one string. Only tried after A is rejected, and skipped when
-        //      the password is empty (B would send identical answers).
+        //   B. the FIRST password-ish prompt is answered with a value that
+        //      DIFFERS from A's answer (empty with a password set, a
+        //      non-empty dummy with an empty password) — the dual-factor
+        //      bastion trigger. The bastion fires its dynamic-code challenge
+        //      (SMS / OTP / 企业微信) off that response, which the user then
+        //      answers with "<static password><dynamic code>" typed as one
+        //      string. Only tried after A is rejected. Running it even with
+        //      an empty password matters: bastions that gate the SMS on a
+        //      non-empty response must still see the trigger so the user's
+        //      phone receives the code for the next attempt.
         let ki_allowed = server_allows("keyboard-interactive");
         if !ki_allowed {
             outcome.push("keyboard-interactive not offered by server, skipped");
         } else {
             let mut authenticated = false;
             for empty_first in [false, true] {
-                if empty_first && password.is_empty() {
-                    break; // strategy B would send the same answers as A
-                }
                 if empty_first {
                     outcome.push(
-                        "ki retry: first password prompt answered EMPTY (dual-factor trigger)",
+                        "ki retry: first password prompt answered with the dual-factor trigger",
                     );
                 }
                 match Self::ki_attempt(handle, username, password, empty_first, &mut outcome)
@@ -644,11 +658,10 @@ impl SshManager {
     ///
     /// With `empty_first_prompt = false` every prompt is answered
     /// heuristically (`answer_auth_prompt`). With `true`, the FIRST
-    /// password-ish prompt of the attempt is answered with an EMPTY string —
-    /// the trigger dual-factor bastions expect before they send the
-    /// dynamic-code challenge; every later prompt gets the password (which,
-    /// for such bastions, the user types as "<static password><dynamic
-    /// code>" concatenated).
+    /// password-ish prompt of the attempt gets the dual-factor trigger
+    /// answer (`dual_factor_trigger_answer`) — every later prompt gets the
+    /// password (which, for such bastions, the user types as "<static
+    /// password><dynamic code>" concatenated).
     async fn ki_attempt(
         handle: &mut client::Handle<SshClientHandler>,
         username: &str,
@@ -673,7 +686,7 @@ impl SshManager {
         };
 
         // `None` means the first password-ish prompt has already been
-        // answered (empty, under the dual-factor strategy).
+        // answered (with the dual-factor trigger).
         let mut first_password_answered = false;
         for _ in 0..MAX_KI_ROUNDS {
             let Some(resp) = response.take() else {
@@ -694,7 +707,7 @@ impl SshManager {
                         "keyboard-interactive prompts [{}] (answered {})",
                         asked.join(", "),
                         if empty_first_prompt && !first_password_answered {
-                            "empty trigger + password"
+                            "trigger + password"
                         } else if password.is_empty() {
                             "EMPTY password"
                         } else {
@@ -709,7 +722,7 @@ impl SshManager {
                                 && Self::prompt_asks_password(&p.prompt)
                             {
                                 first_password_answered = true;
-                                String::new()
+                                Self::dual_factor_trigger_answer(password)
                             } else {
                                 Self::answer_auth_prompt(&p.prompt, username, password)
                             }
@@ -775,6 +788,25 @@ impl SshManager {
             || prompt.contains("口令")
             || prompt.contains("验证码")
             || prompt.contains("令牌")
+    }
+
+    /// The answer for the dual-factor TRIGGER prompt (the first password-ish
+    /// prompt under strategy B). It must differ from what strategy A sent so
+    /// the bastion's state machine takes the second path:
+    ///
+    /// - with a static password the trigger is EMPTY (some bastions start
+    ///   the code challenge on an empty response);
+    /// - with an EMPTY password the trigger is a non-empty dummy — many
+    ///   bastions only fire the SMS / OTP after receiving a non-empty
+    ///   password response (any value, even a deliberately wrong one), so
+    ///   answering empty again would silently never trigger the SMS and the
+    ///   user's phone stays silent.
+    fn dual_factor_trigger_answer(password: &str) -> String {
+        if password.is_empty() {
+            EMPTY_PASSWORD_TRIGGER.to_string()
+        } else {
+            String::new()
+        }
     }
 
     async fn auth_with_key_data(
@@ -1033,17 +1065,17 @@ mod tests {
         assert_eq!(SshManager::answer_auth_prompt("用户密码", u, p), p);
     }
 
-    /// Dual-factor bastion strategy: the FIRST password-ish prompt of an
-    /// empty-first attempt must be answered with an empty string (the
-    /// trigger), while username prompts and every later password prompt get
-    /// the real credential (static password + dynamic code, concatenated by
-    /// the user into one string).
+    /// Dual-factor bastion strategy: the FIRST password-ish prompt of a
+    /// strategy-B attempt gets the trigger answer, while username prompts
+    /// and every later password prompt get the real credential (static
+    /// password + dynamic code, concatenated by the user into one string).
     #[test]
     fn empty_first_strategy_triggers_then_answers_password() {
         let u = "420102-7";
         let p = "Abc@123883921";
 
-        // Strategy B, round 1: the password prompt is the trigger -> EMPTY.
+        // Strategy B, round 1: the password prompt is the trigger -> EMPTY
+        // (differs from strategy A's real password).
         let mut first_password_answered = false;
         let prompts = ["Username:", "Password:", "动态码:", "请输入动态口令"];
         let answers: Vec<String> = prompts
@@ -1051,7 +1083,7 @@ mod tests {
             .map(|prompt| {
                 if !first_password_answered && SshManager::prompt_asks_password(prompt) {
                     first_password_answered = true;
-                    String::new()
+                    SshManager::dual_factor_trigger_answer(p)
                 } else {
                     SshManager::answer_auth_prompt(prompt, u, p)
                 }
@@ -1064,9 +1096,44 @@ mod tests {
         assert_eq!(answers[3], p);
         assert!(first_password_answered);
 
-        // Without the empty-first flag (strategy A) the same trigger prompt
+        // Without the strategy-B flag (strategy A) the same trigger prompt
         // gets the real password — regular hosts keep working.
         assert_eq!(SshManager::answer_auth_prompt("Password:", u, p), p);
+    }
+
+    /// With an EMPTY password the trigger answer must be NON-EMPTY: bastions
+    /// that gate the SMS / OTP challenge on a non-empty password response
+    /// (any wrong value fires the code) would otherwise never send it, and
+    /// strategy A already exhausted the empty answer.
+    #[test]
+    fn empty_password_trigger_is_a_non_empty_dummy() {
+        let trigger = SshManager::dual_factor_trigger_answer("");
+        assert!(!trigger.is_empty());
+        assert_eq!(trigger, EMPTY_PASSWORD_TRIGGER);
+
+        // With a password set the trigger stays empty — it must differ from
+        // strategy A's answer (the password itself).
+        assert!(SshManager::dual_factor_trigger_answer("secret").is_empty());
+
+        // End-to-end answer walk for the empty-password connect: trigger
+        // prompt gets the dummy, the dynamic-code prompt still gets whatever
+        // the (empty) password is — the SMS is what this attempt is for.
+        let u = "420102-7";
+        let mut first_password_answered = false;
+        let prompts = ["Password:", "请输入短信验证码:"];
+        let answers: Vec<String> = prompts
+            .iter()
+            .map(|prompt| {
+                if !first_password_answered && SshManager::prompt_asks_password(prompt) {
+                    first_password_answered = true;
+                    SshManager::dual_factor_trigger_answer("")
+                } else {
+                    SshManager::answer_auth_prompt(prompt, u, "")
+                }
+            })
+            .collect();
+        assert_eq!(answers[0], EMPTY_PASSWORD_TRIGGER);
+        assert_eq!(answers[1], "");
     }
 
     /// Cancelling an attempt ID that was never registered (or whose attempt
