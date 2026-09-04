@@ -76,3 +76,44 @@ describe("s3-store reorderConnections", () => {
     expect(useS3Store.getState().connections).toEqual([a, b, c]);
   });
 });
+
+describe("s3-store currentBucket navigation", () => {
+  const s = () => useS3Store.getState().sessions.get("s1");
+
+  beforeEach(() => {
+    invoke.mockReset();
+    useS3Store.setState({ sessions: new Map() });
+    useS3Store.getState().openSession("s1", "alpha");
+  });
+
+  it("opens a session on the bucket list (currentBucket null) and clears prefix", () => {
+    expect(s()?.currentBucket).toBeNull();
+    expect(s()?.currentPrefix).toBe("");
+    expect(s()?.entries).toEqual([]);
+  });
+
+  it("entering a bucket resets the prefix and entry cache", () => {
+    // Simulate having navigated into a subfolder with cached entries.
+    useS3Store.getState().setEntries("s1", "photos/2024/", [
+      { name: "a.jpg", key: "photos/2024/a.jpg", entry_type: "File", size: 1, last_modified: null, storage_class: null },
+    ]);
+
+    useS3Store.getState().setCurrentBucket("s1", "bucket-a");
+
+    expect(s()?.currentBucket).toBe("bucket-a");
+    expect(s()?.currentPrefix).toBe("");
+    expect(s()?.entries).toEqual([]);
+  });
+
+  it("returning to the bucket list sets currentBucket to null", () => {
+    useS3Store.getState().setCurrentBucket("s1", "bucket-a");
+    useS3Store.getState().setCurrentBucket("s1", null);
+
+    expect(s()?.currentBucket).toBeNull();
+    expect(s()?.currentPrefix).toBe("");
+  });
+
+  it("ignores navigation for an unknown session", () => {
+    expect(() => useS3Store.getState().setCurrentBucket("nope", "x")).not.toThrow();
+  });
+});

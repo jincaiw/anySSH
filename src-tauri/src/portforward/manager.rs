@@ -15,6 +15,11 @@ use super::{TunnelState, TunnelStatus};
 
 struct ActiveTunnel {
     rule_id: String,
+    /// The no-PTY SSH session this tunnel proxies over. Tracked so that when
+    /// the tunnel stops (explicit stop, restart, or rule deletion) we can tear
+    /// down the underlying SSH connection instead of leaking it in
+    /// `SshManager::bare_handles` until the app exits.
+    ssh_session_id: String,
     local_port: u32,
     cancel_token: CancellationToken,
     connection_count: Arc<AtomicU32>,
@@ -35,17 +40,27 @@ impl PortForwardManager {
         }
     }
 
+    /// Bind a local listener and start proxying to `remote_host:remote_port`
+    /// over the given no-PTY SSH session.
+    ///
+    /// Returns the active `TunnelStatus` and — when this call replaced a
+    /// still-running tunnel for the same rule — the `ssh_session_id` of the
+    /// *superseded* tunnel, which the caller is responsible for disconnecting.
+    #[allow(clippy::too_many_arguments)]
     pub async fn start_tunnel(
         &self,
         rule_id: String,
+        ssh_session_id: String,
         handle: Arc<tokio::sync::Mutex<russh::client::Handle<SshClientHandler>>>,
         bind_address: String,
         local_port: u32,
         remote_host: String,
         remote_port: u32,
-    ) -> Result<TunnelStatus, SshError> {
-        // Stop existing tunnel for this rule if any
-        let _ = self.stop_tunnel(&rule_id);
+    ) -> Result<(TunnelStatus, Option<String>), SshError> {
+        // Stop existing tunnel for this rule if any — return its SSH session id
+        // so the caller can disconnect the superseded connection (each tunnel
+        // owns its own SSH session).
+        let superseded = self.stop_tunnel(&rule_id);
 
         // Bind local TCP listener
         let addr = format!("{bind_address}:{local_port}");
@@ -68,6 +83,7 @@ impl PortForwardManager {
 
         let tunnel = ActiveTunnel {
             rule_id: rule_id.clone(),
+            ssh_session_id: ssh_session_id.clone(),
             local_port: actual_port,
             cancel_token: cancel_token.clone(),
             connection_count: connection_count.clone(),
@@ -165,10 +181,13 @@ impl PortForwardManager {
             );
         });
 
-        Ok(status)
+        Ok((status, superseded))
     }
 
-    pub fn stop_tunnel(&self, rule_id: &str) -> Result<(), SshError> {
+    /// Stop the tunnel for `rule_id` if one is running. Returns the SSH session
+    /// id the stopped tunnel was proxying over (so the caller can disconnect
+    /// it), or `None` if no tunnel was active for the rule.
+    pub fn stop_tunnel(&self, rule_id: &str) -> Option<String> {
         if let Some((_, tunnel)) = self.tunnels.remove(rule_id) {
             tunnel.cancel_token.cancel();
             info!(rule_id = %rule_id, "Tunnel stopped");
@@ -182,8 +201,10 @@ impl PortForwardManager {
                     error: None,
                 },
             );
+            Some(tunnel.ssh_session_id)
+        } else {
+            None
         }
-        Ok(())
     }
 
     pub fn list_active(&self) -> Vec<TunnelStatus> {

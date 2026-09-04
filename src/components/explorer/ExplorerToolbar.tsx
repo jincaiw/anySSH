@@ -36,6 +36,18 @@ interface ExplorerToolbarProps {
   sudoMode?: boolean;
   sudoBusy?: boolean;
   onToggleSudo?: () => void;
+  /**
+   * Optional "session root" escape hatch. Some providers (e.g. S3) nest a
+   * level of virtual directories above the provider's own root: the S3 "bucket"
+   * is the filesystem root, but the *session* root is the bucket picker. When
+   * both this and `sessionRootLabel` are provided, a button appears to the left
+   * of the path that lets the user jump back to that session-level root.
+   * Omitted for providers (like SFTP) whose session root coincides with the
+   * filesystem root.
+   */
+  onShowSessionRoot?: () => void;
+  sessionRootLabel?: string;
+  sessionRootTitle?: string;
 }
 
 // cache icons so they render once
@@ -98,6 +110,9 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
   sudoMode,
   sudoBusy,
   onToggleSudo,
+  onShowSessionRoot,
+  sessionRootLabel,
+  sessionRootTitle,
 }: ExplorerToolbarProps) {
   const caps = provider.capabilities;
   const providerType = provider.type;
@@ -158,6 +173,26 @@ export const ExplorerToolbar = memo(function ExplorerToolbar({
 
   return (
     <div className="flex items-center h-10 px-2 border-b border-border bg-bg-surface shrink-0 gap-1 no-select">
+      {/* Session-root escape (e.g. S3 "back to bucket picker"): shown only for
+          providers whose session root sits above the filesystem root. */}
+      {onShowSessionRoot && (
+        <button
+          data-testid="explorer-session-root"
+          onClick={onShowSessionRoot}
+          disabled={loading}
+          title={sessionRootTitle}
+          aria-label={sessionRootTitle}
+          className={[
+            "flex items-center gap-1 h-7 pl-1.5 pr-2 rounded-md shrink-0 text-text-muted",
+            "hover:text-text-secondary hover:bg-bg-subtle transition-colors duration-[var(--duration-fast)]",
+            "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+            "disabled:opacity-40 disabled:cursor-not-allowed",
+          ].join(" ")}
+        >
+          <ChevronRight size={13} strokeWidth={2.2} className="rotate-180 shrink-0" aria-hidden="true" />
+          <span className="text-[length:var(--text-xs)] font-medium">{sessionRootLabel}</span>
+        </button>
+      )}
       {/* Home button */}
       <button
         data-testid="explorer-home"

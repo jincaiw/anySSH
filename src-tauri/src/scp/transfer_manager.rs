@@ -881,10 +881,12 @@ async fn run_upload_dir(
             if cancel.is_cancelled() {
                 return Err(ScpError::TransferCancelled);
             }
-            let meta = match entry.metadata().await {
-                Ok(m) => m,
-                Err(_) => continue,
-            };
+            let meta = entry.metadata().await.map_err(|e| {
+                ScpError::LocalIoError(format!(
+                    "failed to stat {} while uploading directory: {e}",
+                    entry.path().display()
+                ))
+            })?;
             let entry_path = entry.path();
             if meta.is_dir() {
                 stack.push(entry_path);

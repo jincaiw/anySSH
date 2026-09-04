@@ -151,14 +151,17 @@ export function S3Browser({ sessionId, isActive = true }: S3BrowserProps) {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("s3_switch_bucket", { s3SessionId: sessionId, bucketName });
+      // setCurrentBucket flips the store, which makes the mount effect below
+      // (dep: session?.currentBucket) load the bucket's objects exactly once.
+      // Do NOT call loadObjects("") here too — that fired a second, redundant
+      // s3_list_objects for every bucket open.
       setCurrentBucket(sessionId, bucketName);
-      await loadObjects("");
     } catch (err) {
       const msg = err && typeof err === "object" && "message" in err
         ? String((err as { message: string }).message) : t("s3.browser.switchBucketFailed");
       setError(sessionId, msg);
     }
-  }, [sessionId, setCurrentBucket, loadObjects, setError]);
+  }, [sessionId, setCurrentBucket, setError]);
 
   useEffect(() => {
     // If a bucket was already selected (e.g. set by the card-click flow that
@@ -442,6 +445,9 @@ export function S3Browser({ sessionId, isActive = true }: S3BrowserProps) {
         onNewFolder={() => setCreatingFolder(true)}
         onUpload={() => void handleUpload()}
         onUploadFolder={() => void handleUploadFolder()}
+        onShowSessionRoot={() => setCurrentBucket(sessionId, null)}
+        sessionRootLabel={t("s3.browser.buckets")}
+        sessionRootTitle={t("s3.browser.backToBuckets")}
       />
 
       {/* Error banner */}

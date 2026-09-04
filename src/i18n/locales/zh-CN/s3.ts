@@ -63,4 +63,5 @@ export default {
   "browser.listBucketsFailed": "列出存储桶失败",
   "browser.listObjectsFailed": "列出对象失败",
   "browser.switchBucketFailed": "切换存储桶失败",
+  "browser.backToBuckets": "返回存储桶列表",
 };

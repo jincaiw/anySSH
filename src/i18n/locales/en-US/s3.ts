@@ -63,4 +63,5 @@ export default {
   "browser.listBucketsFailed": "Failed to list buckets",
   "browser.listObjectsFailed": "Failed to list objects",
   "browser.switchBucketFailed": "Failed to switch bucket",
+  "browser.backToBuckets": "Back to bucket list",
 };

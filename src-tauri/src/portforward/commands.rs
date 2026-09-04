@@ -108,8 +108,20 @@ pub async fn pf_update_rule(
 }
 
 #[tauri::command]
-#[instrument(skip(db))]
-pub async fn pf_delete_rule(id: String, db: State<'_, Arc<HostDb>>) -> Result<(), DbError> {
+#[instrument(skip(db, pf_manager, ssh_manager))]
+pub async fn pf_delete_rule(
+    id: String,
+    db: State<'_, Arc<HostDb>>,
+    pf_manager: State<'_, Arc<PortForwardManager>>,
+    ssh_manager: State<'_, SshManager>,
+    app_handle: tauri::AppHandle,
+) -> Result<(), DbError> {
+    // Deleting a rule must not leave its tunnel (and the SSH session behind it)
+    // running — stop it first and disconnect the session it used.
+    let stopped_ssh_session = pf_manager.stop_tunnel(&id);
+    if let Some(sid) = stopped_ssh_session {
+        let _ = ssh_manager.disconnect(&sid, app_handle).await;
+    }
     let db = Arc::clone(&db);
     let result = task::spawn_blocking(move || db.delete_pf_rule(&id))
         .await
@@ -147,6 +159,7 @@ pub async fn pf_start_tunnel(
     pf_manager: State<'_, Arc<PortForwardManager>>,
     ssh_manager: State<'_, SshManager>,
     db: State<'_, Arc<HostDb>>,
+    app_handle: tauri::AppHandle,
 ) -> Result<TunnelStatus, crate::types::SshError> {
     use crate::types::AuthMethod;
 
@@ -217,40 +230,71 @@ pub async fn pf_start_tunnel(
     };
 
     let session_id = ssh_manager.connect_no_pty(config, None).await?;
-    let handle = ssh_manager.get_handle(&session_id.0)?;
+    let sid = session_id.0.clone();
+    let handle = ssh_manager.get_handle(&sid)?;
 
     // Record last_used_at
     let db_clone = Arc::clone(&db);
     let rid = rule_id.clone();
     let _ = task::spawn_blocking(move || db_clone.touch_pf_rule(&rid)).await;
 
-    let status = pf_manager
+    // start_tunnel stops any prior tunnel for the rule and reports the SSH
+    // session that superseded tunnel was using, so it can be torn down too.
+    let (status, superseded) = match pf_manager
         .start_tunnel(
-            rule_id,
+            rule_id.clone(),
+            sid.clone(),
             handle,
             bind_address,
             local_port,
             remote_host,
             remote_port,
         )
-        .await?;
+        .await
+    {
+        Ok(v) => v,
+        Err(e) => {
+            // The freshly-opened SSH session has no tunnel to ride on now — drop
+            // it so a bind failure doesn't leak an authenticated connection.
+            let _ = ssh_manager.disconnect(&sid, app_handle.clone()).await;
+            return Err(e);
+        }
+    };
 
-    crate::telemetry::capture("tunnel_started", serde_json::json!({}));
+    if let Some(old_sid) = superseded {
+        // A previous tunnel for this rule was replaced; disconnect its SSH
+        // session (each restart spins up a fresh connection).
+        if let Err(e) = ssh_manager.disconnect(&old_sid, app_handle.clone()).await {
+            tracing::warn!(old_sid, error = %e, "disconnect superseded tunnel ssh session");
+        }
+    }
+
+    crate::telemetry::capture("tunnel_started", serde_json::json!({ "rule_id": rule_id }));
 
     Ok(status)
 }
 
 #[tauri::command]
-#[instrument(skip(pf_manager))]
+#[instrument(skip(pf_manager, ssh_manager))]
 pub async fn pf_stop_tunnel(
     rule_id: String,
     pf_manager: State<'_, Arc<PortForwardManager>>,
+    ssh_manager: State<'_, SshManager>,
+    app_handle: tauri::AppHandle,
 ) -> Result<(), crate::types::SshError> {
-    let result = pf_manager.stop_tunnel(&rule_id);
-    if result.is_ok() {
-        crate::telemetry::capture("tunnel_stopped", serde_json::json!({}));
+    // stop_tunnel returns the SSH session the tunnel was riding on — tear it
+    // down so stopping a tunnel doesn't leave an authenticated SSH connection
+    // stranded in SshManager::bare_handles until the app exits.
+    let stopped_ssh_session = pf_manager.stop_tunnel(&rule_id);
+    if let Some(sid) = stopped_ssh_session {
+        if let Err(e) = ssh_manager.disconnect(&sid, app_handle).await {
+            // The tunnel is already stopped (listener unbound); a failure to
+            // reach the peer while disconnecting is non-fatal.
+            tracing::warn!(sid, error = %e, "disconnect stopped tunnel ssh session");
+        }
     }
-    result
+    crate::telemetry::capture("tunnel_stopped", serde_json::json!({}));
+    Ok(())
 }
 
 #[tauri::command]

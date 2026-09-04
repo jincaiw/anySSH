@@ -1338,19 +1338,48 @@ async fn run_download_file(
     cancel_token: &CancellationToken,
     app_handle: &AppHandle,
 ) -> Result<(), SftpError> {
-    let mut remote_file = {
-        let sftp = sftp_arc.lock().await;
-        sftp.open(remote_path)
-            .await
-            .map_err(|e| SftpError::RemoteIoError(e.to_string()))?
-    };
-
     // Ensure local parent directory exists.
     if let Some(parent) = local_path.parent() {
         tokio::fs::create_dir_all(parent)
             .await
             .map_err(|e| SftpError::LocalIoError(e.to_string()))?;
     }
+
+    let result = download_file_to_disk(
+        jobs,
+        job_id,
+        sftp_arc,
+        remote_path,
+        local_path,
+        cancel_token,
+        app_handle,
+    )
+    .await;
+
+    // A failed or cancelled download must not leave a half-written file that a
+    // user (or a later sync) mistakes for the complete remote file. Clean up the
+    // partial whenever the file did not finish.
+    if result.is_err() {
+        let _ = tokio::fs::remove_file(local_path).await;
+    }
+    result
+}
+
+async fn download_file_to_disk(
+    jobs: &Arc<DashMap<String, TransferJobState>>,
+    job_id: &str,
+    sftp_arc: &Arc<tokio::sync::Mutex<russh_sftp::client::SftpSession>>,
+    remote_path: &str,
+    local_path: &PathBuf,
+    cancel_token: &CancellationToken,
+    app_handle: &AppHandle,
+) -> Result<(), SftpError> {
+    let mut remote_file = {
+        let sftp = sftp_arc.lock().await;
+        sftp.open(remote_path)
+            .await
+            .map_err(|e| SftpError::RemoteIoError(e.to_string()))?
+    };
 
     let mut local_file = tokio::fs::File::create(local_path)
         .await
@@ -1360,7 +1389,6 @@ async fn run_download_file(
 
     loop {
         if cancel_token.is_cancelled() {
-            let _ = tokio::fs::remove_file(local_path).await;
             return Err(SftpError::TransferCancelled);
         }
 

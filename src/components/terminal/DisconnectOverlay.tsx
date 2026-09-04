@@ -49,8 +49,23 @@ export function DisconnectOverlay({
 
       const { removeSession, addSession } = useSessionStore.getState();
       const label = hostConfig.label || `${hostConfig.username}@${hostConfig.host}`;
-      useTabStore.getState().removeTab(sessionId);
+
+      // Prune the dead session from the layout tree. removeSession removes the
+      // pane and, if it was the only pane, drops the tab too — so afterwards
+      // we know whether a live sibling pane kept the tab alive (split case).
       removeSession(sessionId);
+
+      // Mirror handleClose: only remove the unified-tab entry when the
+      // session-store tab is gone. Passing `sessionId` here (the OLD code did)
+      // removed the wrong entry and, in a split, orphaned the surviving pane —
+      // its connection leaked until app exit.
+      if (!useSessionStore.getState().tabs.get(tabId)) {
+        useTabStore.getState().removeTab(tabId);
+      }
+
+      // The reconnected session becomes its own pane/tab. (addSession always
+      // builds a fresh single-pane tab; re-inserting back into the original
+      // split would need a targeted layout edit.)
       addSession(newSessionId as SessionId, hostConfig);
       useTabStore.getState().addTab({ type: "terminal", id: newSessionId, label });
     } catch (err) {

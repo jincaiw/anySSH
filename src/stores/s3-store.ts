@@ -26,7 +26,8 @@ interface S3State {
   closeSession: (sessionId: string) => void;
   setActiveS3Session: (id: string | null) => void;
   setBuckets: (sessionId: string, buckets: S3BucketInfo[]) => void;
-  setCurrentBucket: (sessionId: string, bucket: string) => void;
+  /** Enter a bucket, or pass null to leave it and return to the bucket list. */
+  setCurrentBucket: (sessionId: string, bucket: string | null) => void;
   setEntries: (sessionId: string, prefix: string, entries: S3Entry[]) => void;
   setLoading: (sessionId: string, loading: boolean) => void;
   setError: (sessionId: string, error: string | null) => void;
@@ -87,7 +88,6 @@ export const useS3Store = create<S3State>((set, get) => ({
       next.set(sessionId, { ...session, currentBucket: bucket, currentPrefix: "", entries: [] });
       return { sessions: next };
     }),
-
   setEntries: (sessionId, prefix, entries) =>
     set((state) => {
       const session = state.sessions.get(sessionId);
