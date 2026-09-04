@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Monitor } from "lucide-react";
 import { ModalShell, BTN_GHOST, BTN_SECONDARY, BTN_PRIMARY } from "../shared/ModalShell";
+import { PasswordPromptModal } from "./PasswordPromptModal";
 import { useUiStore } from "../../stores/ui-store";
 import { useHostsStore } from "../../stores/hosts-store";
 import { useGroupsStore } from "../../stores/groups-store";
@@ -163,6 +164,12 @@ export function HostEditModal() {
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
+
+  // Interactive password prompt (PuTTY/Xshell-style): opened by Connect when
+  // the form has no password typed and the keychain holds no credential —
+  // including a deliberate EMPTY submit, which is the dual-factor bastion's
+  // SMS trigger.
+  const [passwordPromptTarget, setPasswordPromptTarget] = useState<string | null>(null);
 
   // Vault credential state
   /** True when the keychain already holds a credential for this host. */
@@ -408,7 +415,7 @@ export function HostEditModal() {
   };
 
   // ── Connect (save → vault → connect_saved_host) ─────────────────────────────
-  const handleConnect = async () => {
+  const handleConnect = async (secrets?: { password: string; savePassword: boolean }) => {
     const validationError = validate();
     if (validationError) { setError(validationError); return; }
 
@@ -421,12 +428,30 @@ export function HostEditModal() {
       const { invoke } = await import("@tauri-apps/api/core");
       const typedInvoke = invoke as (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
 
+      // Nothing typed in the form and no usable keychain credential? Open the
+      // interactive prompt instead of failing with "no saved password". The
+      // prompt also accepts an EMPTY submit — the dual-factor bastion's SMS
+      // trigger.
+      if (!secrets && form.authType === "password" && !form.password && !credCleared) {
+        const has = await invoke<boolean>("has_saved_password", { hostId: host.id }).catch(() => false);
+        if (!has) {
+          setConnecting(false);
+          setPasswordPromptTarget(`${form.username || host.username}@${form.host || host.host}`);
+          return;
+        }
+      }
+
       // Persist credential to keychain before connecting — the Rust backend
-      // reads credentials exclusively from the keychain, never from the frontend.
+      // reads credentials exclusively from its keychain, never from the
+      // frontend. Prompt secrets ride along as a connect-time override (and
+      // are persisted by the backend when "remember" was ticked).
       await syncVaultCredential(host.id, typedInvoke);
 
       // The backend resolves host config + credentials from its own DB and keychain.
-      const sessionId = await invoke<string>("connect_saved_host", { hostId: host.id });
+      const sessionId = await invoke<string>("connect_saved_host", {
+        hostId: host.id,
+        ...(secrets ? { password: secrets.password, savePassword: secrets.savePassword } : {}),
+      });
 
       // Build a minimal HostConfig for the session store label — no credentials.
       const hostConfig: HostConfig = {
@@ -485,6 +510,7 @@ export function HostEditModal() {
 
 
   return (
+    <>
     <ModalShell
       open={isOpen}
       onClose={handleClose}
@@ -525,7 +551,7 @@ export function HostEditModal() {
             <button type="button" data-testid="host-modal-save" onClick={handleSave} disabled={isBusy || loadingHost} className={BTN_SECONDARY}>
               {saving ? t("host.action.saving") : t("common.save")}
             </button>
-            <button type="button" data-testid="host-modal-connect" onClick={handleConnect} disabled={isBusy || loadingHost} className={BTN_PRIMARY}>
+            <button type="button" data-testid="host-modal-connect" onClick={() => void handleConnect()} disabled={isBusy || loadingHost} className={BTN_PRIMARY}>
               {connecting ? t("host.action.connecting") : t("common.connect")}
             </button>
           </>
@@ -1095,6 +1121,18 @@ export function HostEditModal() {
           )}
         </div>
     </ModalShell>
+    {passwordPromptTarget && (
+      <PasswordPromptModal
+        target={passwordPromptTarget}
+        busy={connecting}
+        onSubmit={(password, remember) => {
+          setPasswordPromptTarget(null);
+          void handleConnect({ password, savePassword: remember });
+        }}
+        onClose={() => setPasswordPromptTarget(null)}
+      />
+    )}
+    </>
   );
 }
 

@@ -256,7 +256,13 @@ export function HostsDashboard() {
   // If connection fails (e.g., no saved credential), the error shows in the terminal overlay.
   const connectToHost = useCallback(
     async (host: SavedHost, secrets?: { password: string; savePassword: boolean }) => {
+      // Secrets from the password prompt skip the vault check — the prompt
+      // only opens when nothing is saved, so re-checking here would loop the
+      // prompt forever and the typed password would never reach the backend
+      // (an empty password must also pass through: it is the dual-factor
+      // bastion's SMS trigger).
       if (
+        !secrets &&
         !(await ensurePasswordOrPrompt(host.auth_type, host.id, `${host.username}@${host.host}`, (s) =>
           void connectToHost(host, s),
         ))
@@ -315,6 +321,7 @@ export function HostsDashboard() {
       // falls through to the vault check, which fails into the prompt anyway.
       const authType = hosts.find((h) => h.id === conn.host_id)?.auth_type;
       if (
+        !secrets &&
         !(await ensurePasswordOrPrompt(
           authType,
           conn.host_id,
@@ -376,7 +383,9 @@ export function HostsDashboard() {
   // but we don't need a terminal pane for file-only connections.
   const exploreHost = useCallback(
     async (host: SavedHost, secrets?: { password: string; savePassword: boolean }) => {
+      // Same as connectToHost: prompt secrets skip the vault re-check.
       if (
+        !secrets &&
         !(await ensurePasswordOrPrompt(host.auth_type, host.id, `${host.username}@${host.host}`, (s) =>
           void exploreHost(host, s),
         ))
