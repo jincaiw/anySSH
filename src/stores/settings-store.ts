@@ -110,6 +110,10 @@ interface SettingsState {
   terminalType: string;
   /** Global default LANG sent to servers on connect ("" = send nothing). */
   terminalLang: string;
+  /** Global Backspace behaviour: true sends ^H (0x08) instead of DEL (0x7f)
+   *  — for legacy curses bastion TUIs that only recognise ^H. Per-host
+   *  override wins when set. */
+  terminalBackspaceCtrlH: boolean;
 
   // Session logging
   /** Globally auto-record every terminal session to a local log file. */
@@ -161,6 +165,9 @@ interface SettingsState {
   removeTerminalCustomTheme: (id: string) => void;
   setTerminalCopyOnSelect: (enabled: boolean) => void;
   setTerminalPasteButton: (button: PasteButton) => void;
+  /** Global Backspace behaviour: true sends ^H (0x08) for legacy bastion
+   *  TUIs, false (default) sends DEL (0x7f). */
+  setTerminalBackspaceCtrlH: (enabled: boolean) => void;
   setTerminalEncoding: (encoding: TerminalEncoding) => void;
   setTerminalType: (type: string) => void;
   /** Global default LANG; "" disables sending it. Validated against LANG_RE. */
@@ -201,6 +208,7 @@ const DEFAULTS = {
   terminalCustomThemes: [] as TerminalTheme[],
   terminalCopyOnSelect: false,
   terminalPasteButton: "none" as PasteButton,
+  terminalBackspaceCtrlH: false,
   terminalEncoding: "utf-8" as TerminalEncoding,
   terminalType: "xterm-256color",
   terminalLang: "",
@@ -481,6 +489,11 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     persist("terminal_paste_button", button);
   },
 
+  setTerminalBackspaceCtrlH: (enabled) => {
+    set({ terminalBackspaceCtrlH: enabled });
+    persist("terminal_backspace_ctrl_h", String(enabled));
+  },
+
   setTerminalEncoding: (encoding) => {
     set({ terminalEncoding: encoding });
     persist("terminal_encoding", encoding);
@@ -628,6 +641,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
           }
           case "terminal_copy_on_select": updates.terminalCopyOnSelect = value === "true"; break;
           case "terminal_paste_button": updates.terminalPasteButton = value === "right" || value === "middle" ? value : DEFAULTS.terminalPasteButton; break;
+          case "terminal_backspace_ctrl_h": updates.terminalBackspaceCtrlH = value === "true"; break;
           case "terminal_encoding": {
             const valid = TERMINAL_ENCODINGS.some((e) => e.value === value);
             updates.terminalEncoding = valid ? (value as TerminalEncoding) : DEFAULTS.terminalEncoding;

@@ -298,6 +298,7 @@ export function HostsDashboard() {
           label: host.label || undefined,
           terminal_encoding: host.terminal_encoding || undefined,
           terminal_theme: host.terminal_theme || undefined,
+          backspace_sends_ctrl_h: host.backspace_sends_ctrl_h ?? undefined,
           auth_method: { type: "password", password: "" },
         });
         void useHostsStore.getState().recordConnection(host.id);
@@ -360,6 +361,7 @@ export function HostsDashboard() {
           label: conn.host_label || undefined,
           terminal_encoding: hosts.find((h) => h.id === conn.host_id)?.terminal_encoding || undefined,
           terminal_theme: hosts.find((h) => h.id === conn.host_id)?.terminal_theme || undefined,
+          backspace_sends_ctrl_h: hosts.find((h) => h.id === conn.host_id)?.backspace_sends_ctrl_h ?? undefined,
           auth_method: { type: "password", password: "" },
         });
         void useHostsStore.getState().recordConnection(conn.host_id);

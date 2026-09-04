@@ -38,6 +38,8 @@ export default {
   "field.osType": "OS Type",
   "field.terminalTheme": "Terminal Theme",
   "field.terminalThemeHint": "Colour scheme for this connection only; empty follows the global default.",
+  "field.backspace": "Backspace Key",
+  "field.backspaceHint": "Switch to Ctrl+H (8) when this legacy bastion TUI ignores Backspace in its input fields.",
 
   // ─── Field placeholders ─────────────────────────────────────────────────
   "field.labelPlaceholder": "e.g., Production Server",

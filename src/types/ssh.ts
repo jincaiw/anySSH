@@ -20,6 +20,9 @@ export interface HostConfig {
   terminal_encoding?: string;
   /** Per-host terminal colour-theme override (theme id). */
   terminal_theme?: string;
+  /** Per-host Backspace override: true sends ^H (0x08) for legacy bastion
+   *  TUIs; undefined = follow the global setting (DEL 0x7f). */
+  backspace_sends_ctrl_h?: boolean;
 }
 
 export type ConnectionStatus =
@@ -90,6 +93,9 @@ export interface SavedHost {
   lang: string | null;
   /** Per-host terminal encoding override (null = follow the global default). */
   terminal_encoding: string | null;
+  /** Per-host Backspace override: true sends ^H (0x08) for legacy curses
+   *  bastion TUIs; null = follow the global default (DEL 0x7f). */
+  backspace_sends_ctrl_h: boolean | null;
   /** Per-host terminal colour-theme override (theme id, null = global default). */
   terminal_theme: string | null;
   font_size: number | null;

@@ -144,6 +144,10 @@ export default {
   "terminal.termType": "Terminal Type",
   "terminal.termTypeHint": "Sent to the server as the TERM environment variable; affects colours, cursor control and more",
   "terminal.recommendedSuffix": " (recommended)",
+  "terminal.backspace": "Backspace Key",
+  "terminal.backspaceHint": "Legacy curses bastion TUIs only recognise Ctrl+H — switch if Backspace does nothing in their input fields",
+  "terminal.backspaceDel": "DEL (127)",
+  "terminal.backspaceCtrlH": "Ctrl+H (8)",
 
   "terminal.group.sessionLog": "Session Logs",
   "terminal.sessionLog.enabled": "Auto-record Sessions",

@@ -134,6 +134,11 @@ pub struct SavedHost {
     /// frontend, e.g. "dracula" or a custom theme UUID). `None` falls back to
     /// the global `terminal_theme_id` setting.
     pub terminal_theme: Option<String>,
+    /// Per-host Backspace behaviour override. `Some(true)` sends `^H` (0x08)
+    /// instead of DEL (0x7f) — legacy curses-based bastion TUIs only
+    /// recognise `^H`. `None` falls back to the global
+    /// `terminal_backspace_ctrl_h` setting (which itself defaults to DEL).
+    pub backspace_sends_ctrl_h: Option<bool>,
     /// Bookmark preset: force terminal session logging on for this host,
     /// regardless of the global auto-record setting (e.g. production hosts).
     pub force_session_log: Option<bool>,
@@ -616,6 +621,25 @@ impl HostDb {
             tracing::info!("migration 17→18 applied: added saved_hosts.force_session_log");
         }
 
+        if version < 19 {
+            // Per-host Backspace behaviour override (NULL = follow the global
+            // setting). Idempotent, same pattern as migrations 16→18.
+            let has_backspace: bool = conn
+                .prepare("SELECT backspace_sends_ctrl_h FROM saved_hosts LIMIT 0")
+                .is_ok();
+            if !has_backspace {
+                conn.execute(
+                    "ALTER TABLE saved_hosts ADD COLUMN backspace_sends_ctrl_h INTEGER",
+                    [],
+                )?;
+            }
+            conn.execute(
+                "INSERT OR REPLACE INTO _meta (key, value) VALUES ('schema_version', '19')",
+                [],
+            )?;
+            tracing::info!("migration 18→19 applied: added saved_hosts.backspace_sends_ctrl_h");
+        }
+
         Ok(())
     }
 
@@ -725,14 +749,16 @@ impl HostDb {
                  key_path, color, notes, environment, os_type,
                  startup_command, proxy_jump, keep_alive_interval, default_shell,
                  font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                 start_directory, lang, terminal_encoding, terminal_theme, force_session_log
+                 start_directory, lang, terminal_encoding, terminal_theme, force_session_log,
+                 backspace_sends_ctrl_h
              )
              VALUES (
                  ?1,  ?2,  ?3,  ?4,  ?5,  ?6,  ?7,  ?8,  ?9,
                  ?10, ?11, ?12, ?13, ?14,
                  ?15, ?16, ?17, ?18,
                  ?19, ?20, ?21, ?22,
-                 ?23, ?24, ?25, ?26, ?27
+                 ?23, ?24, ?25, ?26, ?27,
+                 ?28
              )
              ON CONFLICT(id) DO UPDATE SET
                  label                = excluded.label,
@@ -759,7 +785,8 @@ impl HostDb {
                  lang                 = excluded.lang,
                  terminal_encoding    = excluded.terminal_encoding,
                  terminal_theme       = excluded.terminal_theme,
-                 force_session_log    = excluded.force_session_log",
+                 force_session_log    = excluded.force_session_log,
+                 backspace_sends_ctrl_h = excluded.backspace_sends_ctrl_h",
             params![
                 host.id,
                 host.label,
@@ -788,6 +815,7 @@ impl HostDb {
                 host.terminal_encoding,
                 host.terminal_theme,
                 host.force_session_log,
+                host.backspace_sends_ctrl_h,
             ],
         )?;
         Ok(())
@@ -807,7 +835,8 @@ impl HostDb {
                     key_path, color, notes, environment, os_type,
                     startup_command, proxy_jump, keep_alive_interval, default_shell,
                     font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                    start_directory, lang, terminal_encoding, terminal_theme, force_session_log
+                    start_directory, lang, terminal_encoding, terminal_theme, force_session_log,
+                    backspace_sends_ctrl_h
              FROM saved_hosts
              ORDER BY sort_order ASC, label ASC",
         )?;
@@ -841,6 +870,7 @@ impl HostDb {
                 terminal_encoding: row.get(24)?,
                 terminal_theme: row.get(25)?,
                 force_session_log: row.get(26)?,
+                backspace_sends_ctrl_h: row.get(27)?,
             })
         })?;
 
@@ -902,7 +932,8 @@ impl HostDb {
                     key_path, color, notes, environment, os_type,
                     startup_command, proxy_jump, keep_alive_interval, default_shell,
                     font_size, last_connected_at, connection_count, proxy_jump_host_id,
-                    start_directory, lang, terminal_encoding, terminal_theme, force_session_log
+                    start_directory, lang, terminal_encoding, terminal_theme, force_session_log,
+                    backspace_sends_ctrl_h
              FROM saved_hosts
              WHERE id = ?1",
         )?;
@@ -936,6 +967,7 @@ impl HostDb {
                 terminal_encoding: row.get(24)?,
                 terminal_theme: row.get(25)?,
                 force_session_log: row.get(26)?,
+                backspace_sends_ctrl_h: row.get(27)?,
             })
         })?;
 
@@ -2125,6 +2157,7 @@ mod tests {
             lang: None,
             terminal_encoding: None,
             terminal_theme: None,
+            backspace_sends_ctrl_h: None,
             font_size: None,
             last_connected_at: None,
             connection_count: Some(0),
@@ -2155,6 +2188,36 @@ mod tests {
         assert_eq!(all[0].id, "host-1");
         assert_eq!(all[0].port, 22);
         assert!(all[0].group_id.is_none());
+        // NULL per-host Backspace override round-trips as None (= follow the
+        // global setting).
+        assert!(all[0].backspace_sends_ctrl_h.is_none());
+    }
+
+    #[test]
+    fn backspace_override_round_trips() {
+        let (db, _dir) = test_db();
+        let mut h = sample_host("host-1");
+        h.backspace_sends_ctrl_h = Some(true);
+        db.save_host(&h).expect("save_host");
+
+        assert_eq!(
+            db.get_host("host-1")
+                .expect("get_host")
+                .unwrap()
+                .backspace_sends_ctrl_h,
+            Some(true)
+        );
+
+        // Update flips the override off.
+        h.backspace_sends_ctrl_h = Some(false);
+        db.save_host(&h).expect("save_host");
+        assert_eq!(
+            db.get_host("host-1")
+                .expect("get_host")
+                .unwrap()
+                .backspace_sends_ctrl_h,
+            Some(false)
+        );
     }
 
     #[test]

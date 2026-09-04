@@ -34,6 +34,7 @@ function makeHost(id: string, label: string): SavedHost {
     lang: null,
     terminal_encoding: null,
     terminal_theme: null,
+    backspace_sends_ctrl_h: null,
     font_size: null,
     last_connected_at: null,
     connection_count: null,

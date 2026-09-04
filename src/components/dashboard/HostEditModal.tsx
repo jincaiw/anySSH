@@ -45,6 +45,8 @@ interface FormState {
   lang: string;
   /** Per-host terminal colour-theme override ("" = follow the global setting). */
   terminalTheme: string;
+  /** Per-host Backspace override ("" = follow global; "del" / "ctrlh"). */
+  backspaceCtrlH: string;
   // Auth credentials (only used at connect-time, never persisted)
   password: string;
   passphrase: string;
@@ -75,6 +77,7 @@ const EMPTY_FORM: FormState = {
   terminalEncoding: "",
   lang: "",
   terminalTheme: "",
+  backspaceCtrlH: "",
   password: "",
   passphrase: "",
   color: "",
@@ -113,6 +116,8 @@ function savedHostToForm(host: SavedHost): FormState {
     terminalEncoding: host.terminal_encoding ?? "",
     lang: host.lang ?? "",
     terminalTheme: host.terminal_theme ?? "",
+    backspaceCtrlH:
+      host.backspace_sends_ctrl_h == null ? "" : host.backspace_sends_ctrl_h ? "ctrlh" : "del",
     password: "",
     passphrase: "",
     color: host.color ?? "",
@@ -331,6 +336,7 @@ export function HostEditModal() {
       lang: null,
       terminal_encoding: null,
       terminal_theme: null,
+      backspace_sends_ctrl_h: null,
       font_size: null,
       last_connected_at: null,
       connection_count: null,
@@ -360,6 +366,8 @@ export function HostEditModal() {
       terminal_encoding: form.terminalEncoding || null,
       lang: form.lang.trim() || null,
       terminal_theme: form.terminalTheme || null,
+      backspace_sends_ctrl_h:
+        form.backspaceCtrlH === "" ? null : form.backspaceCtrlH === "ctrlh",
       color: form.color || null,
       environment: form.environment || null,
       os_type: form.osType || null,
@@ -462,6 +470,7 @@ export function HostEditModal() {
         label: host.label || undefined,
         terminal_encoding: host.terminal_encoding || undefined,
         terminal_theme: host.terminal_theme || undefined,
+        backspace_sends_ctrl_h: host.backspace_sends_ctrl_h ?? undefined,
         auth_method:
           form.authType === "privateKey"
             ? { type: "privateKey", key_path: form.keyPath }
@@ -992,6 +1001,32 @@ export function HostEditModal() {
                 />
                 <p className="mt-1 text-[length:var(--text-xs)] text-text-muted">
                   {t("host.field.terminalThemeHint")}
+                </p>
+              </div>
+
+              {/* Backspace behaviour override — legacy curses bastion TUIs
+                  only recognise ^H; xterm's DEL is silently ignored. */}
+              <div>
+                <label htmlFor="hem-backspace" className={labelClass}>
+                  {t("host.field.backspace")}
+                </label>
+                <CustomSelect
+                  id="hem-backspace"
+                  data-testid="host-modal-backspace"
+                  value={form.backspaceCtrlH}
+                  onChange={(v) => setField("backspaceCtrlH", v)}
+                  disabled={isBusy}
+                  options={[
+                    {
+                      value: "",
+                      label: t("host.field.followGlobalNoValue"),
+                    },
+                    { value: "del", label: t("settings.terminal.backspaceDel") },
+                    { value: "ctrlh", label: t("settings.terminal.backspaceCtrlH") },
+                  ]}
+                />
+                <p className="mt-1 text-[length:var(--text-xs)] text-text-muted">
+                  {t("host.field.backspaceHint")}
                 </p>
               </div>
 

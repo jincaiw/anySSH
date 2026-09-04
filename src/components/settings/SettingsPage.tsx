@@ -606,6 +606,8 @@ function TerminalSettings() {
   const setTerminalType = useSettingsStore((s) => s.setTerminalType);
   const terminalLang = useSettingsStore((s) => s.terminalLang);
   const setTerminalLang = useSettingsStore((s) => s.setTerminalLang);
+  const terminalBackspaceCtrlH = useSettingsStore((s) => s.terminalBackspaceCtrlH);
+  const setTerminalBackspaceCtrlH = useSettingsStore((s) => s.setTerminalBackspaceCtrlH);
   const sessionLogEnabled = useSettingsStore((s) => s.sessionLogEnabled);
   const setSessionLogEnabled = useSettingsStore((s) => s.setSessionLogEnabled);
   const sessionLogAnsi = useSettingsStore((s) => s.sessionLogAnsi);
@@ -772,6 +774,22 @@ function TerminalSettings() {
             className="w-44"
             editable
             editableValidate={(v) => TERM_NAME_RE.test(v)}
+          />
+        </SettingRow>
+
+        <SettingRow>
+          <div>
+            <p className={LABEL_CLASS}>{t("settings.terminal.backspace")}</p>
+            <p className={DESC_CLASS}>{t("settings.terminal.backspaceHint")}</p>
+          </div>
+          <SegmentedControl<"del" | "ctrlh">
+            id="s-backspace"
+            value={terminalBackspaceCtrlH ? "ctrlh" : "del"}
+            onChange={(v) => setTerminalBackspaceCtrlH(v === "ctrlh")}
+            options={[
+              { value: "del", label: t("settings.terminal.backspaceDel") },
+              { value: "ctrlh", label: t("settings.terminal.backspaceCtrlH") },
+            ]}
           />
         </SettingRow>
       </SettingsGroup>

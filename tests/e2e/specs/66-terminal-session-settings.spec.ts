@@ -110,6 +110,26 @@ describe("terminal session settings", () => {
         );
     });
 
+    it("backspace behaviour defaults to DEL and persists the Ctrl+H choice", async () => {
+        await openTerminalSettings();
+
+        const ctrlhBtn = await $("[data-testid='s-backspace-ctrlh']");
+        await ctrlhBtn.waitForClickable({ timeout: 10_000 });
+        expect(await ctrlhBtn.getAttribute("aria-checked")).to.equal("false");
+
+        await ctrlhBtn.click();
+        await browser.waitUntil(
+            async () => (await ctrlhBtn.getAttribute("aria-checked")) === "true",
+            { timeout: 5_000, timeoutMsg: "backspace did not switch to Ctrl+H" },
+        );
+
+        await relaunchApp();
+        await openTerminalSettings();
+        expect(
+            await (await $("[data-testid='s-backspace-ctrlh']")).getAttribute("aria-checked"),
+        ).to.equal("true");
+    });
+
     it("terminal type rejects invalid input and reverts", async () => {
         await openTerminalSettings();
 

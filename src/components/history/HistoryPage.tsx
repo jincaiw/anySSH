@@ -126,6 +126,7 @@ export function HistoryPage() {
         // Read through the store (not the render-scope value) so the callback
         // stays referentially stable.
         terminal_theme: useHostsStore.getState().hosts.find((h) => h.id === entry.host_id)?.terminal_theme || undefined,
+        backspace_sends_ctrl_h: useHostsStore.getState().hosts.find((h) => h.id === entry.host_id)?.backspace_sends_ctrl_h ?? undefined,
         auth_method: { type: "password", password: "" },
       });
       useTabStore.getState().addTab({ type: "terminal", id: sessionId, label });

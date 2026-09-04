@@ -81,6 +81,45 @@ describe("settings-store — terminal clipboard settings (#71)", () => {
   });
 });
 
+describe("settings-store — legacy bastion Backspace behaviour", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockResolvedValue(undefined);
+    useSettingsStore.setState({ terminalBackspaceCtrlH: false });
+  });
+
+  it("defaults to DEL (off)", () => {
+    expect(useSettingsStore.getState().terminalBackspaceCtrlH).toBe(false);
+  });
+
+  it("toggles ^H mode and persists it as a string", async () => {
+    useSettingsStore.getState().setTerminalBackspaceCtrlH(true);
+    expect(useSettingsStore.getState().terminalBackspaceCtrlH).toBe(true);
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenCalledWith("save_setting", {
+        key: "terminal_backspace_ctrl_h",
+        value: "true",
+      }),
+    );
+  });
+
+  it("loads the persisted choice on startup", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_all_settings") {
+        return [
+          ["terminal_backspace_ctrl_h", "true"],
+          ["editors_seeded", "true"],
+        ];
+      }
+      return undefined;
+    });
+
+    await useSettingsStore.getState().loadSettings();
+
+    expect(useSettingsStore.getState().terminalBackspaceCtrlH).toBe(true);
+  });
+});
+
 describe("settings-store — explorer double-click action", () => {
   beforeEach(() => {
     invoke.mockReset();

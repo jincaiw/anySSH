@@ -26,6 +26,9 @@ export interface TerminalEntry {
   fitAddon: FitAddon;
   /** Pending debounced PTY-resize timer, cleared on dispose. */
   resizeTimer: ReturnType<typeof setTimeout> | null;
+  /** Effective Backspace behaviour for this session (per-host override wins
+   *  over the global setting): true sends ^H (0x08), false sends DEL (0x7f). */
+  backspaceCtrlH: boolean;
 }
 
 const instances = new Map<string, TerminalEntry>();
@@ -145,6 +148,12 @@ export function resolveSessionTheme(sessionId: string): TerminalTheme | null {
 
 function createEntry(sessionId: string): TerminalEntry {
   const settings = useSettingsStore.getState();
+  // Per-host Backspace override (like the theme: carried on the session's
+  // HostConfig) wins over the global setting. Legacy curses bastion TUIs
+  // (e.g. 维护变更单 forms) only recognise ^H (0x08) — xterm.js's default
+  // DEL (0x7f) is silently ignored by them.
+  const session = useSessionStore.getState().sessions.get(sessionId);
+  const backspaceCtrlH = session?.hostConfig.backspace_sends_ctrl_h ?? settings.terminalBackspaceCtrlH;
 
   const element = document.createElement("div");
   element.className = "h-full w-full";
@@ -173,7 +182,15 @@ function createEntry(sessionId: string): TerminalEntry {
   term.loadAddon(fitAddon);
   term.open(element);
 
-  const entry: TerminalEntry = { term, element, fitAddon, resizeTimer: null };
+  const entry: TerminalEntry = { term, element, fitAddon, resizeTimer: null, backspaceCtrlH };
+
+  /** Forward raw keystrokes to the PTY. */
+  const sendBytes = (data: string) => {
+    void (async () => {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("ssh_send_input", { sessionId, data: Array.from(new TextEncoder().encode(data)) });
+    })();
+  };
 
   // Load search addon asynchronously.
   import("@xterm/addon-search")
@@ -214,15 +231,25 @@ function createEntry(sessionId: string): TerminalEntry {
     if (e.metaKey && e.shiftKey && e.key === "Enter") return false;
     if (e.metaKey && e.altKey && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key))
       return false;
+    // Legacy-bastion Backspace: rewrite DEL (0x7f) → ^H (0x08) when the
+    // session's effective setting asks for it. Only the plain key is
+    // rewritten — modified Backspace keeps xterm's default behaviour.
+    if (
+      backspaceCtrlH &&
+      e.type === "keydown" &&
+      e.key === "Backspace" &&
+      !e.metaKey &&
+      !e.altKey &&
+      !e.ctrlKey
+    ) {
+      sendBytes("\x08");
+      return false;
+    }
     return true;
   });
 
   term.onData((data) => {
-    (async () => {
-      const { invoke } = await import("@tauri-apps/api/core");
-      const bytes = Array.from(new TextEncoder().encode(data));
-      await invoke("ssh_send_input", { sessionId, data: bytes });
-    })();
+    sendBytes(data);
   });
 
   // Debounce PTY resize requests; the timer lives on the entry (not a closure

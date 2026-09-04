@@ -38,6 +38,8 @@ export default {
   "field.osType": "系统类型",
   "field.terminalTheme": "终端主题",
   "field.terminalThemeHint": "仅对该连接生效的配色方案，留空跟随全局默认。",
+  "field.backspace": "退格键行为",
+  "field.backspaceHint": "该堡垒机/维护终端的输入框中退格键无效时，切换为 Ctrl+H (8)。",
 
   // ─── Field placeholders ─────────────────────────────────────────────────
   "field.labelPlaceholder": "例如：生产服务器",

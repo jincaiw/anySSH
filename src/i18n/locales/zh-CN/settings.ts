@@ -142,6 +142,10 @@ export default {
   "terminal.termType": "终端类型",
   "terminal.termTypeHint": "终端类型作为TERM环境变量发送给服务器，影响颜色显示、光标控制等功能。",
   "terminal.recommendedSuffix": "（推荐）",
+  "terminal.backspace": "退格键行为",
+  "terminal.backspaceHint": "老式堡垒机/维护终端（curses 界面）只识别 Ctrl+H 退格——若输入框中退格键无效，请切换到此选项",
+  "terminal.backspaceDel": "DEL (127)",
+  "terminal.backspaceCtrlH": "Ctrl+H (8)",
 
   "terminal.group.sessionLog": "会话日志",
   "terminal.sessionLog.enabled": "自动记录会话",
