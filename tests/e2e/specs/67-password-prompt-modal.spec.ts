@@ -48,7 +48,10 @@ async function waitForPasswordPrompt(): Promise<void> {
 /** Type a password (possibly empty) and click the prompt's Connect button. */
 async function submitPromptPassword(value: string): Promise<void> {
     const input = await $("#password-prompt-input");
-    await input.setValue(value);
+    // WebKitWebDriver rejects an empty "text" param, and an empty submit is
+    // the whole point of the first test — the input already starts empty, so
+    // just skip typing instead of setValue("").
+    if (value !== "") await input.setValue(value);
     // Footer buttons: show/hide eye lives in the body; the footer is
     // [Cancel, Connect] — the primary submit is the last button in the panel.
     const buttons = await $$("[data-testid='password-prompt-modal'] button");
