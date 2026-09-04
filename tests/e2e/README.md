@@ -98,6 +98,7 @@ unauthenticated (`-nopw`) because the port is only exposed on localhost.
 | `06-error-bad-creds` | Auth-failure path surfaces an error banner in the modal. |
 | `07-sftp-flow` | `vault_save_credential` → keychain → Explorer button → `sftp_open` → `sftp_list_dir`. |
 | `52-scp-flow` | SFTP→SCP fallback against SFTP-disabled targets, run as a matrix over GNU and busybox userlands: lists, create/delete, and a `scp -t`/`-f` upload+download round-trip. |
+| `67-password-prompt-modal` | Interactive password prompt: opens when no password is saved, EMPTY submit reaches the backend and yields the dual-factor trigger guidance, and a typed password authenticates (no re-prompt loop). |
 
 ## How it's wired together
 
