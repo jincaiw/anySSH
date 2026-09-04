@@ -93,8 +93,10 @@ describe("settings appearance", () => {
         await openSettings();
 
         // The colour scheme lives in its own section, right below Terminal.
+        // NOTE: the card testid sits on the wrapper div — aria-pressed is on
+        // the inner select button.
         await openSection("themes");
-        const dracula = await $("[data-testid='theme-card-dracula']");
+        const dracula = await $("[data-testid='theme-card-dracula'] button");
         await dracula.waitForClickable({ timeout: 10_000 });
         await dracula.click();
         await browser.waitUntil(
@@ -106,7 +108,7 @@ describe("settings appearance", () => {
         await openSettings();
         await openSection("themes");
 
-        const after = await $("[data-testid='theme-card-dracula']");
+        const after = await $("[data-testid='theme-card-dracula'] button");
         await after.waitForDisplayed({ timeout: 10_000 });
         expect(await after.getAttribute("aria-pressed")).to.equal("true");
     });
