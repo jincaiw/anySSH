@@ -150,7 +150,7 @@ impl SshSession {
         // Auto-record (global setting or bookmark preset) starts the logger
         // before the reader loop runs, so even the banner/MOTD is captured.
         if let Some(options) = log.auto_start.clone() {
-            let _ = log.logger.start(options, &log.host, &log.user);
+            let _ = log.logger.start(options, &log.host, &log.user, None);
         }
 
         // The task only needs the logger handle; the session keeps its own
@@ -311,7 +311,7 @@ impl SshSession {
         // manager resolves this into `auto_start`). Same capture-the-banner
         // ordering as `open_pty`.
         if let Some(options) = log.auto_start.clone() {
-            let _ = log.logger.start(options, &log.host, &log.user);
+            let _ = log.logger.start(options, &log.host, &log.user, None);
         }
 
         // Same clone-not-move reasoning as `open_pty`.

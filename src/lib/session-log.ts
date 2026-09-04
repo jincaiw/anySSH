@@ -1,3 +1,4 @@
+import { t } from "../i18n";
 import { useUiStore } from "../stores/ui-store";
 
 /**
@@ -46,10 +47,13 @@ export async function getSessionLogStatus(
 /**
  * Toggle logging for a live session (right-click menu / ⌘⇧L). When no
  * explicit options are sent the backend falls back to the persisted settings.
- * Returns the fresh status, or null when the session disappeared.
+ * `path` (Xshell-style "Save As…") starts logging to a user-chosen file;
+ * it is only meaningful when starting. Returns the fresh status, or null
+ * when the session disappeared.
  */
 export async function toggleSessionLog(
   sessionId: string,
+  path?: string,
 ): Promise<SessionLogStatus | null> {
   const before = await getSessionLogStatus(sessionId);
   try {
@@ -57,12 +61,58 @@ export async function toggleSessionLog(
     if (before?.active) {
       await invoke("ssh_stop_session_log", { sessionId });
     } else {
-      await invoke("ssh_start_session_log", { sessionId });
+      await invoke("ssh_start_session_log", { sessionId, path: path ?? null });
     }
   } catch {
     /* session gone or command unavailable */
   }
   return getSessionLogStatus(sessionId);
+}
+
+/**
+ * Xshell-style start: ask the user where to put the log with a save
+ * dialog (default: the session-log root, `<host>_<timestamp>.log`), then
+ * start recording there. Returns the fresh status, or null when the
+ * dialog was cancelled or the session disappeared.
+ */
+export async function startSessionLogWithSaveDialog(
+  sessionId: string,
+): Promise<SessionLogStatus | null> {
+  const status = await getSessionLogStatus(sessionId);
+  if (!status) return null;
+  const { save } = await import("@tauri-apps/plugin-dialog");
+  const stamp = new Date()
+    .toISOString()
+    .slice(0, 19)
+    .replace("T", "_")
+    .replace(/:/g, "-");
+  const suggested = `${status.host || "session"}_${stamp}.log`;
+  let dir: string | null = null;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    dir = await invoke<string>("ssh_logs_dir");
+  } catch {
+    /* fall back to the dialog's default location */
+  }
+  const chosen = (await save({
+    defaultPath: dir ? `${dir}/${suggested}` : suggested,
+    title: t("terminal.menu.startTitle"),
+    filters: [{ name: "Log", extensions: ["log", "cast"] }],
+  })) as string | null;
+  if (!chosen) return null;
+  return toggleSessionLog(sessionId, chosen);
+}
+
+/** Reveal the session's current log file in Finder / Explorer. */
+export async function revealActiveLogFile(sessionId: string): Promise<void> {
+  try {
+    const status = await getSessionLogStatus(sessionId);
+    if (!status?.path) return;
+    const { revealItemInDir } = await import("@tauri-apps/plugin-opener");
+    await revealItemInDir(status.path);
+  } catch {
+    /* opener unavailable */
+  }
 }
 
 /** Open the built-in log viewer for a session (or the plain log browser). */

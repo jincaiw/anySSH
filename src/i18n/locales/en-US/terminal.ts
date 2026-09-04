@@ -62,9 +62,11 @@ export default {
 
   // ─── Session context menu (Terminal right-click) ─────────────────────────
   "menu.paste": "Paste",
-  "menu.startLog": "Start session log",
+  "menu.startLog": "Start Logging…",
+  "menu.startTitle": "Choose where to save the session log",
   "menu.stopLog": "Stop session log",
   "menu.viewLog": "View session logs",
+  "menu.openLogFile": "Open Log File",
   "menu.openLogDir": "Open logs folder",
 
   // ─── Session log viewer (SessionLogViewer) ───────────────────────────────

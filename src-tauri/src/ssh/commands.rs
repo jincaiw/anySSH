@@ -7,6 +7,7 @@ use crate::types::{AuthMethod, HostConfig, SessionId, SshError};
 use crate::vault;
 use russh::client;
 use serde::{Deserialize, Serialize};
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tauri::{AppHandle, State};
@@ -857,11 +858,13 @@ pub struct SessionLogStatus {
 }
 
 /// Start logging for a live session (manual toggle). Options default to the
-/// persisted app settings when omitted.
+/// persisted app settings when omitted; `path` (Xshell-style "Save As…")
+/// overrides the auto-generated log file location.
 #[tauri::command]
 pub async fn ssh_start_session_log(
     session_id: String,
     options: Option<SessionLogOptions>,
+    path: Option<String>,
     state: State<'_, SshManager>,
     db: State<'_, Arc<HostDb>>,
 ) -> Result<String, SshError> {
@@ -871,7 +874,7 @@ pub async fn ssh_start_session_log(
     let resolved = options.unwrap_or_else(|| sessionlog::session_log_options_from_db(&db));
     entry
         .logger
-        .start(resolved, &entry.host, &entry.user)
+        .start(resolved, &entry.host, &entry.user, path.map(PathBuf::from))
         .map(|p| p.display().to_string())
         .map_err(SshError::IoError)
 }

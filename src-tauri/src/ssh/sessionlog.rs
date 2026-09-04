@@ -431,25 +431,30 @@ struct ActiveLog {
 }
 
 /// Spawn the background writer thread and hand back its command channel.
+/// `custom` overrides the auto-named log file (Xshell-style "Save As…"
+/// start); rotation still applies, with `_partN` inserted before the
+/// extension of the chosen path.
 fn spawn_writer(
     options: SessionLogOptions,
     host: &str,
     user: &str,
     started: SystemTime,
     seq: u64,
+    custom: Option<PathBuf>,
 ) -> mpsc::Sender<LogEvent> {
     let host = host.to_string();
     let user = user.to_string();
     let (tx, rx) = mpsc::channel::<LogEvent>();
     std::thread::Builder::new()
         .name("session-log-writer".to_string())
-        .spawn(move || writer_loop(rx, options, &host, &user, started, seq))
+        .spawn(move || writer_loop(rx, options, &host, &user, started, seq, custom))
         .expect("failed to spawn session log writer thread");
     tx
 }
 
 /// Open (or rotate to) a log file with 0600 permissions and write the
-/// format-appropriate header.
+/// format-appropriate header. `custom` replaces the auto-generated path for
+/// part 1; later parts suffix the chosen stem with `_partN`.
 fn open_log_file(
     options: &SessionLogOptions,
     host: &str,
@@ -457,18 +462,36 @@ fn open_log_file(
     started: SystemTime,
     part: u32,
     seq: u64,
+    custom: Option<&Path>,
 ) -> std::io::Result<ActiveLog> {
-    let stem = file_stem(host, user, started, seq);
-    let (date, _) = datetime_parts(started);
-    let dir = log_root().join(&date);
-    std::fs::create_dir_all(&dir)?;
+    let ext = ext_for(options.format);
+    let path = match custom {
+        Some(p) => {
+            if let Some(parent) = p.parent() {
+                if !parent.as_os_str().is_empty() {
+                    std::fs::create_dir_all(parent)?;
+                }
+            }
+            if part <= 1 {
+                p.to_path_buf()
+            } else {
+                with_part_suffix(p, part)
+            }
+        }
+        None => {
+            let stem = file_stem(host, user, started, seq);
+            let (date, _) = datetime_parts(started);
+            let dir = log_root().join(&date);
+            std::fs::create_dir_all(&dir)?;
 
-    let file_name = if part <= 1 {
-        format!("{stem}.{}", ext_for(options.format))
-    } else {
-        format!("{stem}_part{part}.{}", ext_for(options.format))
+            let file_name = if part <= 1 {
+                format!("{stem}.{ext}")
+            } else {
+                format!("{stem}_part{part}.{ext}")
+            };
+            dir.join(file_name)
+        }
     };
-    let path = dir.join(file_name);
 
     let file = OpenOptions::new().create(true).append(true).open(&path)?;
     restrict_permissions(&file, &path)?;
@@ -491,6 +514,23 @@ fn ext_for(format: LogFormat) -> &'static str {
         LogFormat::Text => "log",
         LogFormat::Asciicast => "cast",
     }
+}
+
+/// `name_part2.ext` — inserts the rotation suffix before the extension of a
+/// (possibly custom, user-chosen) log file path.
+fn with_part_suffix(path: &Path, part: u32) -> PathBuf {
+    let stem = path.file_stem().map_or_else(
+        || std::ffi::OsString::from("session"),
+        std::ffi::OsStr::to_os_string,
+    );
+    let ext = path.extension().map(std::ffi::OsStr::to_os_string);
+    let mut name: std::ffi::OsString = stem;
+    name.push(format!("_part{part}"));
+    if let Some(ext) = ext {
+        name.push(".");
+        name.push(ext);
+    }
+    path.with_file_name(name)
 }
 
 /// Best-effort 0600 on Unix. Windows ACLs default to the creating user's
@@ -560,11 +600,12 @@ fn writer_loop(
     user: &str,
     started: SystemTime,
     seq: u64,
+    custom: Option<PathBuf>,
 ) {
     // Retention / quota sweep runs here, off the connection path. Best-effort.
     cleanup_logs(&log_root(), options.retention_days, options.quota_mb);
 
-    let mut active = match open_log_file(&options, host, user, started, 1, seq) {
+    let mut active = match open_log_file(&options, host, user, started, 1, seq, custom.as_deref()) {
         Ok(a) => Some(a),
         Err(e) => {
             tracing::warn!(host, user, error = %e, "failed to open session log file — logging disabled for this session");
@@ -632,6 +673,7 @@ fn writer_loop(
                             user,
                             started,
                             seq,
+                            custom.as_deref(),
                         );
                     }
                     LogFormat::Asciicast => {
@@ -649,6 +691,7 @@ fn writer_loop(
                             user,
                             started,
                             seq,
+                            custom.as_deref(),
                         );
                     }
                 }
@@ -670,6 +713,7 @@ fn writer_loop(
                         user,
                         started,
                         seq,
+                        custom.as_deref(),
                     );
                 }
             }
@@ -696,12 +740,13 @@ fn write_chunk(
     user: &str,
     started: SystemTime,
     seq: u64,
+    custom: Option<&Path>,
 ) {
     if active.size.saturating_add(bytes.len() as u64) > max_bytes {
         let next_part = active.part + 1;
         // Flush + drop the old file before opening its successor.
         let _ = active.writer.flush();
-        match open_log_file(options, host, user, started, next_part, seq) {
+        match open_log_file(options, host, user, started, next_part, seq, custom) {
             Ok(new_active) => {
                 *active = new_active;
             }
@@ -855,12 +900,15 @@ impl SessionLogger {
     }
 
     /// Start logging. Returns the path of the (first) log file. A second
-    /// `start` while already active is a no-op.
+    /// `start` while already active is a no-op. `custom` (Xshell-style
+    /// "Save As…") overrides the auto-generated path — parent directories
+    /// are created as needed, and rotation suffixes the chosen stem.
     pub fn start(
         &self,
         options: SessionLogOptions,
         host: &str,
         user: &str,
+        custom: Option<PathBuf>,
     ) -> Result<PathBuf, String> {
         if self.is_active() {
             return Ok(self.info().map(|i| i.path).unwrap_or_else(log_root));
@@ -869,12 +917,17 @@ impl SessionLogger {
         // Captured once so every rotation of this log reuses the same name.
         let seq = LOG_SEQ.fetch_add(1, Ordering::Relaxed);
         let format = options.format;
-        let tx = spawn_writer(options.clone(), host, user, started, seq);
-        let stem = file_stem(host, user, started, seq);
-        let (date, _) = datetime_parts(started);
-        let path = log_root()
-            .join(&date)
-            .join(format!("{stem}.{}", ext_for(format)));
+        let tx = spawn_writer(options.clone(), host, user, started, seq, custom.clone());
+        let path = match &custom {
+            Some(p) => p.clone(),
+            None => {
+                let stem = file_stem(host, user, started, seq);
+                let (date, _) = datetime_parts(started);
+                log_root()
+                    .join(&date)
+                    .join(format!("{stem}.{}", ext_for(format)))
+            }
+        };
 
         {
             let mut tx_guard = self.inner.tx.lock().map_err(|_| "logger poisoned")?;
@@ -1292,7 +1345,7 @@ mod tests {
         let _root = with_test_root();
         let logger = SessionLogger::new();
         let path = logger
-            .start(SessionLogOptions::default(), "prod.web", "root")
+            .start(SessionLogOptions::default(), "prod.web", "root", None)
             .unwrap();
 
         logger.on_output("user@host:~$ ");
@@ -1323,7 +1376,7 @@ mod tests {
         let _root = with_test_root();
         let logger = SessionLogger::new();
         let path = logger
-            .start(SessionLogOptions::default(), "hstop", "u")
+            .start(SessionLogOptions::default(), "hstop", "u", None)
             .unwrap();
         // Multiple rapid chunks then immediate stop — stop must flush.
         for i in 0..100 {
@@ -1340,8 +1393,26 @@ mod tests {
         // Verify the rotation naming rule directly: part 2 gets the _part2
         // suffix in the same day directory.
         let started = SystemTime::now();
-        let a = open_log_file(&SessionLogOptions::default(), "hrot", "u", started, 1, 0).unwrap();
-        let b = open_log_file(&SessionLogOptions::default(), "hrot", "u", started, 2, 0).unwrap();
+        let a = open_log_file(
+            &SessionLogOptions::default(),
+            "hrot",
+            "u",
+            started,
+            1,
+            0,
+            None,
+        )
+        .unwrap();
+        let b = open_log_file(
+            &SessionLogOptions::default(),
+            "hrot",
+            "u",
+            started,
+            2,
+            0,
+            None,
+        )
+        .unwrap();
         assert!(a.path.to_string_lossy().ends_with(".log"));
         assert!(b
             .path
@@ -1360,7 +1431,7 @@ mod tests {
             format: LogFormat::Asciicast,
             ..Default::default()
         };
-        let path = logger.start(options, "hcast", "u").unwrap();
+        let path = logger.start(options, "hcast", "u", None).unwrap();
         logger.on_output("hello\n");
         logger.on_input("ls\r");
         logger.stop();
@@ -1382,7 +1453,7 @@ mod tests {
         let _root = with_test_root();
         let logger = SessionLogger::new();
         let path = logger
-            .start(SessionLogOptions::default(), "hmask", "u")
+            .start(SessionLogOptions::default(), "hmask", "u", None)
             .unwrap();
         logger.on_output("Password: ");
         logger.on_input("hunter2");
@@ -1400,7 +1471,7 @@ mod tests {
         let _root = with_test_root();
         let logger = SessionLogger::new();
         let path = logger
-            .start(SessionLogOptions::default(), "hstrip", "u")
+            .start(SessionLogOptions::default(), "hstrip", "u", None)
             .unwrap();
         logger.on_output("\x1b[31mred\x1b[0m\n");
         logger.stop();
@@ -1420,7 +1491,7 @@ mod tests {
             ansi: AnsiMode::Keep,
             ..Default::default()
         };
-        let path = logger.start(options, "hkeep", "u").unwrap();
+        let path = logger.start(options, "hkeep", "u", None).unwrap();
         logger.on_output("\x1b[31mred\x1b[0m\n");
         logger.stop();
         let content = std::fs::read_to_string(&path).unwrap();
@@ -1435,7 +1506,7 @@ mod tests {
             timestamps: true,
             ..Default::default()
         };
-        let path = logger.start(options, "hts", "u").unwrap();
+        let path = logger.start(options, "hts", "u", None).unwrap();
         logger.on_output("first\n");
         logger.on_output("second\n");
         logger.stop();
@@ -1445,6 +1516,51 @@ mod tests {
         assert!(stamps >= 2, "expected line stamps, got: {content}");
         // The second chunk continued on a fresh line → got its own stamp.
         assert!(content.contains("second"), "{content}");
+    }
+
+    #[test]
+    fn logger_start_with_custom_path_writes_there() {
+        let _root = with_test_root();
+        // Xshell-style "Save As…": the user picks an arbitrary location; the
+        // writer must create parent dirs and land exactly there.
+        let custom = log_root().join("custom-dir").join("picked.log");
+        let logger = SessionLogger::new();
+        let path = logger
+            .start(
+                SessionLogOptions::default(),
+                "hcust",
+                "u",
+                Some(custom.clone()),
+            )
+            .unwrap();
+        assert_eq!(path, custom);
+        logger.on_output("custom-location\n");
+        logger.stop();
+
+        let content = std::fs::read_to_string(&custom).unwrap();
+        assert!(content.contains("# AnySSH session log"));
+        assert!(content.contains("custom-location"));
+        // 0600 on the user-chosen file too.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&custom).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+    }
+
+    #[test]
+    fn with_part_suffix_inserts_before_extension() {
+        let p = PathBuf::from("/tmp/picked.log");
+        assert_eq!(
+            with_part_suffix(&p, 2),
+            PathBuf::from("/tmp/picked_part2.log")
+        );
+        let no_ext = PathBuf::from("/tmp/picked");
+        assert_eq!(
+            with_part_suffix(&no_ext, 3),
+            PathBuf::from("/tmp/picked_part3")
+        );
     }
 
     #[test]

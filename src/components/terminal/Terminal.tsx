@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
-import { ClipboardPaste, CircleDot, Square, ScrollText, FolderOpen } from "lucide-react";
+import { ClipboardPaste, Square, ScrollText, FolderOpen, FileText, Disc } from "lucide-react";
 import { useSshOutput } from "../../hooks/use-ssh-events";
 import {
   ensureTerminal,
@@ -14,7 +14,9 @@ import { ContextMenu, type ContextMenuItem } from "../shared/ContextMenu";
 import {
   getSessionLogStatus,
   openSessionLogViewer,
+  revealActiveLogFile,
   revealLogsDirectory,
+  startSessionLogWithSaveDialog,
   toggleSessionLog,
 } from "../../lib/session-log";
 import { useTranslation } from "../../i18n";
@@ -218,13 +220,34 @@ export function Terminal({ sessionId }: TerminalProps) {
 
   const menuItems: ContextMenuItem[] = [
     { label: t("terminal.menu.paste"), icon: ClipboardPaste, onClick: pasteFromClipboard },
-    {
-      label: logActive ? t("terminal.menu.stopLog") : t("terminal.menu.startLog"),
-      icon: logActive ? Square : CircleDot,
-      onClick: () => {
-        void toggleSessionLog(sessionId).then((s) => setLogActive(!!s?.active));
-      },
-    },
+    // Xshell-style 日志 menu: start (with Save-As dialog) / stop, plus quick
+    // access to the current file and the log browser.
+    logActive
+      ? {
+          label: t("terminal.menu.stopLog"),
+          icon: Square,
+          onClick: () => {
+            void toggleSessionLog(sessionId).then((s) => setLogActive(!!s?.active));
+          },
+        }
+      : {
+          label: t("terminal.menu.startLog"),
+          icon: Disc,
+          onClick: () => {
+            void startSessionLogWithSaveDialog(sessionId).then((s) =>
+              setLogActive(!!s?.active),
+            );
+          },
+        },
+    ...(logActive
+      ? [
+          {
+            label: t("terminal.menu.openLogFile"),
+            icon: FileText,
+            onClick: () => void revealActiveLogFile(sessionId),
+          },
+        ]
+      : []),
     {
       label: t("terminal.menu.viewLog"),
       icon: ScrollText,

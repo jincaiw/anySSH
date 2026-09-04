@@ -58,9 +58,11 @@ export default {
 
   // ─── 会话右键菜单（Terminal） ────────────────────────────────────────────
   "menu.paste": "粘贴",
-  "menu.startLog": "开始记录会话日志",
+  "menu.startLog": "启动日志记录…",
+  "menu.startTitle": "选择会话日志保存位置",
   "menu.stopLog": "停止记录会话日志",
   "menu.viewLog": "查看会话日志",
+  "menu.openLogFile": "打开日志文件",
   "menu.openLogDir": "打开日志目录",
 
   // ─── 会话日志查看器（SessionLogViewer） ──────────────────────────────────
