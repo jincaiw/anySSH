@@ -297,14 +297,34 @@ function initialLanguage(): Locale {
   return DEFAULT_LOCALE;
 }
 
+/** Settings persist() writes currently in flight. Fire-and-forget writes are
+ *  easy to lose across an app restart (an e2e relaunch can interrupt the IPC
+ *  round-trip), so e2e helpers flush these before reloading the session. */
+const inFlightPersists = new Set<Promise<unknown>>();
+
+/** Resolve once every persist() issued so far has settled (test hook). */
+export async function flushPendingPersists(): Promise<void> {
+  while (inFlightPersists.size > 0) {
+    await Promise.allSettled([...inFlightPersists]);
+  }
+}
+
+// e2e tests reach this through the page context (WebDriver execute), since the
+// store module itself can't be imported from outside the bundle.
+if (typeof window !== "undefined") {
+  (window as unknown as Record<string, unknown>).__anysshFlushSettings = flushPendingPersists;
+}
+
 /** Persist a single setting to the backend. Fire-and-forget. */
 function persist(key: string, value: string) {
-  void (async () => {
+  const p = (async () => {
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       await invoke("save_setting", { key, value });
     } catch { /* best-effort */ }
   })();
+  inFlightPersists.add(p);
+  void p.finally(() => inFlightPersists.delete(p));
 }
 
 /** Persist the whole editor config as one JSON blob (it's a list, not a scalar). */

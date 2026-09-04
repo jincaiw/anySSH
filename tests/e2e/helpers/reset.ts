@@ -29,7 +29,16 @@ export async function resetApp(): Promise<void> {
 /**
  * Relaunch the app without touching the DB — used to verify persistence
  * across restarts.
+ *
+ * Settings writes are fire-and-forget in the UI (settings-store `persist()`),
+ * so before killing the webview we wait for every in-flight `save_setting`
+ * IPC to settle — otherwise a fast relaunch can interrupt the write and the
+ * setting is silently lost ("persisted value reverts to default").
  */
 export async function relaunchApp(): Promise<void> {
+    await browser.execute(async () => {
+        const flush = (window as unknown as Record<string, unknown>).__anysshFlushSettings;
+        if (typeof flush === "function") await (flush as () => Promise<void>)();
+    });
     await browser.reloadSession();
 }
