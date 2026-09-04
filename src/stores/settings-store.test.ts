@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeEach, vi } from "vitest";
 import { useSettingsStore } from "./settings-store";
+import { BUILTIN_THEMES } from "../lib/terminal-themes";
 
 // The store reaches the backend via a dynamic `import("@tauri-apps/api/core")`,
 // so we mock that module's `invoke` (persist is fire-and-forget, hence waitFor).
@@ -256,5 +257,123 @@ describe("settings-store — interface monospace font", () => {
     });
     await useSettingsStore.getState().loadSettings();
     expect(useSettingsStore.getState().interfaceMonoFont).toBe(DEFAULT_MONO);
+  });
+});
+
+describe("settings-store — dual-factor memory cleanup", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockResolvedValue(undefined);
+    useSettingsStore.setState({ dualFactorHostIds: [] });
+  });
+
+  it("unmarks a host and persists the shorter list", async () => {
+    useSettingsStore.setState({ dualFactorHostIds: ["host-1", "host-2"] });
+    useSettingsStore.getState().unmarkHostDualFactor("host-1");
+    expect(useSettingsStore.getState().dualFactorHostIds).toEqual(["host-2"]);
+    await vi.waitFor(() =>
+      expect(invoke).toHaveBeenLastCalledWith("save_setting", {
+        key: "dual_factor_hosts",
+        value: JSON.stringify(["host-2"]),
+      }),
+    );
+  });
+
+  it("unmarking an unknown host is a no-op", async () => {
+    useSettingsStore.setState({ dualFactorHostIds: ["host-1"] });
+    invoke.mockClear();
+    useSettingsStore.getState().unmarkHostDualFactor("nope");
+    expect(useSettingsStore.getState().dualFactorHostIds).toEqual(["host-1"]);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(invoke).not.toHaveBeenCalled();
+  });
+
+  it("trims and de-duplicates a corrupted remembered list", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_all_settings") {
+        return [
+          ["dual_factor_hosts", JSON.stringify([" a ", "a", "", 7, "b"])],
+          ["editors_seeded", "true"],
+        ];
+      }
+      return undefined;
+    });
+
+    await useSettingsStore.getState().loadSettings();
+
+    expect(useSettingsStore.getState().dualFactorHostIds).toEqual(["a", "b"]);
+  });
+});
+
+describe("settings-store — terminal theme load validation", () => {
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockResolvedValue(undefined);
+    useSettingsStore.setState({
+      terminalThemeId: "system",
+      terminalCustomThemes: [],
+    });
+  });
+
+  it("resets a selection that no longer exists so the UI and terminal agree", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_all_settings") {
+        return [
+          ["terminal_theme_id", "theme-deleted-elsewhere"],
+          ["editors_seeded", "true"],
+        ];
+      }
+      return undefined;
+    });
+
+    await useSettingsStore.getState().loadSettings();
+
+    expect(useSettingsStore.getState().terminalThemeId).toBe("system");
+  });
+
+  it("keeps a selection that resolves to a builtin or custom theme", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_all_settings") {
+        return [
+          ["terminal_theme_id", "custom-1"],
+          [
+            "terminal_custom_themes",
+            JSON.stringify([
+              { id: "custom-1", name: "Mine", colors: BUILTIN_THEMES[0]!.colors },
+            ]),
+          ],
+          ["editors_seeded", "true"],
+        ];
+      }
+      return undefined;
+    });
+
+    await useSettingsStore.getState().loadSettings();
+
+    expect(useSettingsStore.getState().terminalThemeId).toBe("custom-1");
+  });
+
+  it("drops custom themes whose id collides with a builtin or the system sentinel", async () => {
+    invoke.mockImplementation(async (cmd: string) => {
+      if (cmd === "load_all_settings") {
+        return [
+          [
+            "terminal_custom_themes",
+            JSON.stringify([
+              { id: "system", name: "Bad sentinel", colors: BUILTIN_THEMES[0]!.colors },
+              { id: "dracula", name: "Bad builtin", colors: BUILTIN_THEMES[0]!.colors },
+              { id: "mine", name: "Good", colors: BUILTIN_THEMES[0]!.colors },
+            ]),
+          ],
+          ["editors_seeded", "true"],
+        ];
+      }
+      return undefined;
+    });
+
+    await useSettingsStore.getState().loadSettings();
+
+    const ids = useSettingsStore.getState().terminalCustomThemes.map((t) => t.id);
+    expect(ids).toEqual(["mine"]);
   });
 });

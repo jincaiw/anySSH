@@ -75,6 +75,7 @@ export default {
   "terminal.theme.import": "导入 .itermcolors",
   "terminal.theme.import.success": "已导入主题「{name}」",
   "terminal.theme.import.failed": "无法读取 .itermcolors 文件",
+  "terminal.theme.import.tooLarge": "文件过大，不像是配色主题文件",
   "terminal.theme.liveHint": "更改会立即应用到已打开的终端。每个连接可在主机设置中单独覆盖配色。",
   "terminal.theme.delete.title": "删除主题",
   "terminal.theme.delete.message": "确定删除主题「{name}」？正在使用该主题的连接将回退到全局默认配色。",

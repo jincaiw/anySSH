@@ -654,16 +654,25 @@ fn auth_method_label(auth: &AuthMethod) -> &'static str {
 /// for the failure dialog, reconnect) into one click.
 ///
 /// Every failure is absorbed: the caller treats this as fire-and-forget and
-/// never surfaces an error dialog. Returns whether the empty-password
-/// connect unexpectedly SUCCEEDED (the bastion let it straight through);
-/// the throwaway session is disconnected immediately.
+/// never surfaces an error dialog.
+///
+/// Returns a status string so the UI can tell the outcomes apart — previously
+/// a down/unreachable host and a successfully-dispatched SMS both returned
+/// `false`, and the prompt claimed "SMS sent" while the bastion was in fact
+/// never reached:
+///   "sent"       — the bastion rejected the empty password (SMS dispatched)
+///   "connected"  — the empty password was accepted (no OTP needed); the
+///                  throwaway session is disconnected immediately
+///   "unreachable" — connect failed before authentication (host down, DNS,
+///                   port closed, proxy jump broken): no SMS was dispatched
+///   "timeout"    — the attempt exceeded the 60s bound
 #[tauri::command]
 pub async fn trigger_dual_factor_sms(
     host_id: String,
     state: State<'_, SshManager>,
     db: State<'_, Arc<HostDb>>,
     app_handle: AppHandle,
-) -> Result<bool, SshError> {
+) -> Result<&'static str, SshError> {
     let db_clone = Arc::clone(&db);
     let id = host_id.clone();
     // Empty password override — the documented dual-factor trigger (the
@@ -687,20 +696,32 @@ pub async fn trigger_dual_factor_sms(
     match outcome {
         // Expected: the empty password is rejected — by then strategy B has
         // answered the trigger prompt and the bastion has dispatched the SMS.
+        // Distinguish "the server talked to us and said no" (SMS on its way)
+        // from "we never reached it" (nothing was dispatched) so the UI can
+        // stop claiming a code is coming when the host is simply down.
         Ok(Err(err)) => {
-            tracing::debug!(host_id = %host_id, error = %err, "dual-factor trigger attempt rejected (expected — SMS should be on its way)");
-            Ok(false)
+            let dispatched = matches!(
+                err,
+                SshError::AuthenticationFailed(_) | SshError::ChannelError(_)
+            );
+            if dispatched {
+                tracing::debug!(host_id = %host_id, error = %err, "dual-factor trigger attempt rejected (expected — SMS should be on its way)");
+                Ok("sent")
+            } else {
+                tracing::warn!(host_id = %host_id, error = %err, "dual-factor trigger attempt failed before authentication — no SMS dispatched");
+                Ok("unreachable")
+            }
         }
         // Unexpected: the bastion let the empty password straight in. Tear the
         // throwaway session down; the user still logs in with their OTP.
         Ok(Ok(session_id)) => {
             tracing::info!(host_id = %host_id, "dual-factor trigger connect unexpectedly succeeded — disconnecting the throwaway session");
             let _ = state.disconnect(&session_id.0, app_handle).await;
-            Ok(true)
+            Ok("connected")
         }
         Err(_elapsed) => {
             tracing::warn!(host_id = %host_id, "dual-factor trigger attempt timed out");
-            Ok(false)
+            Ok("timeout")
         }
     }
 }

@@ -77,6 +77,7 @@ export default {
   "terminal.theme.import": "Import .itermcolors",
   "terminal.theme.import.success": "Imported theme “{name}”",
   "terminal.theme.import.failed": "Could not read the .itermcolors file",
+  "terminal.theme.import.tooLarge": "That file is too large to be a colour theme",
   "terminal.theme.liveHint": "Changes apply to open terminals immediately. Each connection can override the theme in its host settings.",
   "terminal.theme.delete.title": "Delete Theme",
   "terminal.theme.delete.message": "Delete the theme “{name}”? Connections using it will fall back to the global default.",

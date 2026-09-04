@@ -40,6 +40,9 @@ const ANSI_BRIGHT_SLOTS: ColorSlot[] = [
 
 const slotLabelKey = (slot: ColorSlot) => `settings.terminal.theme.c.${slot}`;
 
+/** Import guard: a legitimate .itermcolors file is a few KB of XML. */
+const MAX_IMPORT_BYTES = 2 * 1024 * 1024;
+
 // ─── Theme preview card ──────────────────────────────────────────────────────
 
 function ThemePreview({ colors }: { colors: TerminalThemeColors }) {
@@ -293,11 +296,27 @@ export function TerminalThemeSettings() {
 
   const handleImportFile = async (file: File) => {
     try {
+      // A .itermcolors file is a few KB of XML. Parsing is synchronous inside
+      // DOMParser, so a mis-selected multi-MB file would freeze the UI thread
+      // — bound it before reading.
+      if (file.size > MAX_IMPORT_BYTES) {
+        toast.error(t("settings.terminal.theme.import.tooLarge"));
+        return;
+      }
       const text = await file.text();
       const theme = parseItermColors(text, file.name);
       if (!theme) {
         toast.error(t("settings.terminal.theme.import.failed"));
         return;
+      }
+      // Importing the same file twice used to stack two identically named
+      // cards (each import gets a fresh uuid). Suffix the repeat so the grid
+      // stays readable.
+      const existing = useSettingsStore.getState().terminalCustomThemes;
+      if (existing.some((th) => th.name === theme.name)) {
+        let n = 2;
+        while (existing.some((th) => th.name === `${theme.name} ${n}`)) n++;
+        theme.name = `${theme.name} ${n}`;
       }
       useSettingsStore.getState().upsertTerminalCustomTheme(theme);
       useSettingsStore.getState().setTerminalThemeId(theme.id);

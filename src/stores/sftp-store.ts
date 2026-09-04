@@ -43,7 +43,42 @@ interface SftpState {
   setClipboard: (clipboard: SftpClipboard | null) => void;
 }
 
-// ─── Store ────────────────────────────────────────────────────────────────────
+// ─── Teardown helper ─────────────────────────────────────────────────────────
+
+/**
+ * Close a file-browser tab for real: the transfer channel AND the SSH
+ * connection underneath it.
+ *
+ * `connect_saved_host_no_pty` (Explore) opens a bare, PTY-less SSH session
+ * that lives in SshManager. `sftp_close` / `scp_close` only tear down the
+ * transfer channel — they never touch SshManager — so closing a file-browser
+ * tab used to leave the TCP connection (and any proxy-jump chain) alive until
+ * the app exited. Every Explore click leaked one.
+ *
+ * Safe to call on an already-closed session: both close commands and
+ * ssh_disconnect are best-effort here (ssh_disconnect returns
+ * SessionNotFound for an unknown id rather than panicking).
+ */
+export async function closeSftpSession(sftpSessionId: string): Promise<void> {
+  // Read the entry BEFORE it is dropped — the SSH id only lives there.
+  const sshSessionId = useSftpStore.getState().sessions.get(sftpSessionId)?.sshSessionId;
+  try {
+    const { invoke } = await import("@tauri-apps/api/core");
+    // The transport can be SFTP or the transparent SCP fallback; the store
+    // doesn't record which, and both commands are no-ops when the id isn't
+    // theirs.
+    await invoke("sftp_close", { sftpSessionId }).catch(() => {});
+    await invoke("scp_close", { scpSessionId: sftpSessionId }).catch(() => {});
+    if (sshSessionId) {
+      await invoke("ssh_disconnect", { sessionId: sshSessionId }).catch(() => {});
+    }
+  } catch {
+    /* backend unavailable — drop the local entry regardless */
+  }
+  useSftpStore.getState().closeSession(sftpSessionId);
+}
+
+// ─── Store ───────────────────────────────────────────────────────────────────
 
 export const useSftpStore = create<SftpState>((set) => ({
   sessions: new Map(),

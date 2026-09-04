@@ -125,6 +125,20 @@ describe("parseItermColors", () => {
     expect(theme!.colors.background).toBe("#000000");
   });
 
+  it("scales float and 8-bit components independently when mixed", () => {
+    // A single shared scale would latch to 255 on the 8-bit key and then
+    // divide the float component by 255 — turning 0.86 into ~0 (black).
+    const xml = `<?xml version="1.0"?><plist version="1.0"><dict>
+      <key>Background Color</key><dict>
+        <key>Red Component</key><real>0.15686</real>
+        <key>Green</key><integer>44</integer>
+        <key>Blue Component</key><real>0.20392</real>
+      </dict>
+    </dict></plist>`;
+    const theme = parseItermColors(xml, "mixed");
+    expect(theme!.colors.background).toBe("#282c34");
+  });
+
   it("returns null for garbage input", () => {
     expect(parseItermColors("not xml at all", "x")).toBeNull();
     expect(parseItermColors("<plist><dict></dict></plist>", "x")).toBeNull();

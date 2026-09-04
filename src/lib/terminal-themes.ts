@@ -287,10 +287,16 @@ export function parseItermColors(xml: string, name: string): TerminalTheme | nul
     const key = (keyEl.textContent ?? "").trim().toLowerCase();
     if (!key) continue;
 
-    let r: number | null = null;
-    let g: number | null = null;
-    let b: number | null = null;
-    let scale = 1; // floats in [0,1] by spec
+    // Track the scale PER CHANNEL: a single shared `scale` was latched to 255
+    // as soon as one 8-bit key was seen and then wrongly applied to the float
+    // components of the same colour (e.g. "Red Component" 0.86 read as
+    // 0.86/255 ≈ black). iTerm2 exports one or the other, but third-party
+    // writers and hand-edited files do mix them.
+    const chan: { value: number | null; scale: number }[] = [
+      { value: null, scale: 1 },
+      { value: null, scale: 1 },
+      { value: null, scale: 1 },
+    ];
     for (let j = 0; j < valueEl.children.length - 1; j += 2) {
       const ck = (valueEl.children[j]!.textContent ?? "").trim().toLowerCase();
       // Skip empty values — Number("") is 0, which would silently turn a
@@ -299,17 +305,22 @@ export function parseItermColors(xml: string, name: string): TerminalTheme | nul
       if (!raw) continue;
       const cv = Number(raw);
       if (Number.isNaN(cv)) continue;
-      if (ck === "red component") r = cv;
-      else if (ck === "green component") g = cv;
-      else if (ck === "blue component") b = cv;
+      const set = (idx: number, scale: number) => {
+        chan[idx] = { value: cv, scale };
+      };
+      if (ck === "red component") set(0, 1);
+      else if (ck === "green component") set(1, 1);
+      else if (ck === "blue component") set(2, 1);
       // Newer iTerm2 exports 8-bit ints without the "Component" suffix.
-      else if (ck === "red") { r = cv; scale = 255; }
-      else if (ck === "green") { g = cv; scale = 255; }
-      else if (ck === "blue") { b = cv; scale = 255; }
+      else if (ck === "red") set(0, 255);
+      else if (ck === "green") set(1, 255);
+      else if (ck === "blue") set(2, 255);
     }
-    if (r === null || g === null || b === null) continue;
+    if (chan.some((c) => c.value === null)) continue;
 
-    const hex = `#${componentToHex(r / scale)}${componentToHex(g / scale)}${componentToHex(b / scale)}`;
+    const hex = `#${chan
+      .map((c) => componentToHex(c.value! / c.scale))
+      .join("")}`;
 
     const slot = NAMED_SLOT_MAP[key];
     if (slot) {

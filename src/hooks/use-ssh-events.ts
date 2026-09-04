@@ -18,11 +18,21 @@ export function useSshOutput(
       const { listen } = await import("@tauri-apps/api/event");
       if (cancelled) return;
 
-      unlisten = await listen<SshOutputPayload>("ssh:output", (event) => {
+      const un = await listen<SshOutputPayload>("ssh:output", (event) => {
         if (event.payload.session_id === sessionId) {
           onDataRef.current(new Uint8Array(event.payload.data));
         }
       });
+      // The component can unmount while `listen()` is still resolving: the
+      // cleanup below then ran with `unlisten` still undefined, and this
+      // assignment leaked a listener for the rest of the process. Its
+      // callback calls ensureTerminal(sessionId), which would resurrect an
+      // xterm instance for an already-disposed session.
+      if (cancelled) {
+        un();
+        return;
+      }
+      unlisten = un;
     })();
 
     return () => {

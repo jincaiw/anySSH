@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type { SavedHost, RecentConnection } from "../types";
+import { useSettingsStore } from "./settings-store";
 
 interface HostsState {
   hosts: SavedHost[];
@@ -71,6 +72,10 @@ export const useHostsStore = create<HostsState>((set, get) => ({
     await invoke("delete_host", { id });
     const hosts = await invoke<SavedHost[]>("list_hosts");
     set({ hosts });
+    // The dual-factor memory is keyed by host id — a deleted host must not
+    // leave a dangling entry behind (it would arm a re-imported host and the
+    // list would otherwise only ever grow).
+    useSettingsStore.getState().unmarkHostDualFactor(id);
   },
 
   // Optimistically apply a drag-and-drop reordering, then persist it. The UI

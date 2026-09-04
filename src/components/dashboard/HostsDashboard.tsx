@@ -33,7 +33,7 @@ import { useSftpStore } from "../../stores/sftp-store";
 import { useS3Store } from "../../stores/s3-store";
 import { useSettingsStore } from "../../stores/settings-store";
 import { isDualFactorTriggerError } from "../../lib/backend-errors";
-import { fireDualFactorTrigger } from "../../lib/dual-factor";
+import { fireDualFactorTrigger, triggerDispatched } from "../../lib/dual-factor";
 import type { SavedHost, HostGroup, RecentConnection, S3Connection } from "../../types";
 import { HostCard } from "./HostCard";
 import { GroupCard } from "./GroupCard";
@@ -259,12 +259,17 @@ export function HostsDashboard() {
     ): Promise<boolean> => {
       if (authType === "privateKey" || authType === "privateKeyData") return true;
       if (useSettingsStore.getState().dualFactorHostIds.includes(hostId)) {
-        fireDualFactorTrigger(hostId);
         setPasswordPrompt({
           target,
           hostId,
           armed: true,
           submit: (s) => void connect(s),
+        });
+        // Fire in parallel with opening the prompt (the trigger takes 1-3s,
+        // the SMS a dozen more), but report back when the bastion was not
+        // actually reached — otherwise the prompt claims a code is on its way.
+        void fireDualFactorTrigger(hostId).then((status) => {
+          if (!triggerDispatched(status)) toast.error(t("dashboard.connect.dualFactorTriggerFailed"));
         });
         return false;
       }
@@ -409,7 +414,13 @@ export function HostsDashboard() {
         setConnectingHost({ label, error: msg, retry: () => void handleRecentConnect(conn), cancel: null });
       }
     },
-    [t],
+    // `hosts` MUST be a dependency: `t` is memoised on the locale and never
+    // changes, so a `[t]`-only dep list froze this callback at first render —
+    // when `hosts` was still empty. Consequence: `hosts.find(...)` was always
+    // undefined for recent connections, so key-auth hosts got a bogus
+    // password prompt and every per-host override (encoding / colour theme /
+    // Backspace) was silently dropped.
+    [t, hosts, ensurePasswordOrPrompt],
   );
 
   // Explore: connect SSH + open a file browser + switch to Files page.
@@ -970,11 +981,38 @@ export function HostsDashboard() {
 
       {/* ── Interactive password prompt (no saved credential) ── */}
       {passwordPrompt && (
+        // Keyed by host so switching the prompt to another host remounts it:
+        // the modal resets its password field and "resending" state on mount
+        // only, so a reused instance would carry host A's typed password over
+        // to host B.
         <PasswordPromptModal
+          key={passwordPrompt.hostId}
           target={passwordPrompt.target}
           dualFactorArmed={passwordPrompt.armed}
           onResend={
-            passwordPrompt.armed ? () => fireDualFactorTrigger(passwordPrompt.hostId) : undefined
+            passwordPrompt.armed
+              ? () => {
+                  // Await so a bastion we cannot reach reports back instead of
+                  // leaving the user waiting for a code that is not coming.
+                  void fireDualFactorTrigger(passwordPrompt.hostId).then((status) => {
+                    if (!triggerDispatched(status)) {
+                      toast.error(t("dashboard.connect.dualFactorTriggerFailed"));
+                    }
+                  });
+                }
+              : undefined
+          }
+          onDisableAuto={
+            passwordPrompt.armed
+              ? () => {
+                  const { hostId } = passwordPrompt;
+                  useSettingsStore.getState().unmarkHostDualFactor(hostId);
+                  toast.success(t("dashboard.connect.dualFactorDisabled"));
+                  // Stay open (the user still needs to log in), but as a
+                  // normal prompt — no further background attempts.
+                  setPasswordPrompt((p) => (p ? { ...p, armed: false } : null));
+                }
+              : undefined
           }
           onSubmit={(password, remember) => {
             const prompt = passwordPrompt;

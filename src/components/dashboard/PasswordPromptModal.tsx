@@ -23,6 +23,8 @@ export function PasswordPromptModal(props: {
   dualFactorArmed?: boolean;
   /** Refire the SMS dispatch (armed mode only). */
   onResend?: () => void;
+  /** Stop auto-firing the SMS trigger for this host (armed mode only). */
+  onDisableAuto?: () => void;
   onSubmit: (password: string, remember: boolean) => void;
   onClose: () => void;
 }) {
@@ -32,13 +34,21 @@ export function PasswordPromptModal(props: {
   const [show, setShow] = useState(false);
   const [resending, setResending] = useState(false);
   const inputRef = useRef<HTMLInputElement>(null);
+  // Held in a ref so the unmount cleanup can cancel it — a bare
+  // window.setTimeout would fire after the dialog closed and set state on an
+  // unmounted component.
+  const resendTimer = useRef<number | null>(null);
 
   useEffect(() => {
     // Fresh dialog each time it opens.
     setPassword("");
     setRemember(false);
     setShow(false);
+    setResending(false);
     requestAnimationFrame(() => inputRef.current?.focus());
+    return () => {
+      if (resendTimer.current !== null) window.clearTimeout(resendTimer.current);
+    };
   }, []);
 
   const submit = () => {
@@ -52,12 +62,16 @@ export function PasswordPromptModal(props: {
   };
 
   const resend = () => {
-    if (!props.onResend) return;
+    if (!props.onResend || resending) return;
     setResending(true);
     props.onResend();
     // The trigger attempt is bounded on the Rust side (60s); re-enable the
     // button after a beat so a slow dispatch can't lock the dialog out.
-    window.setTimeout(() => setResending(false), 3_000);
+    if (resendTimer.current !== null) window.clearTimeout(resendTimer.current);
+    resendTimer.current = window.setTimeout(() => {
+      resendTimer.current = null;
+      setResending(false);
+    }, 3_000);
   };
 
   const armed = props.dualFactorArmed === true;
@@ -141,6 +155,19 @@ export function PasswordPromptModal(props: {
             />
             {t("dashboard.connect.passwordRemember")}
           </label>
+        )}
+        {armed && props.onDisableAuto && (
+          // Escape hatch: a host is armed automatically on the first failed
+          // empty-password connect, and without this it stayed armed forever
+          // (every click fired a background SSH attempt).
+          <button
+            type="button"
+            onClick={props.onDisableAuto}
+            disabled={props.busy}
+            className="mt-3 text-[length:var(--text-xs)] text-text-muted underline decoration-dotted hover:text-text-primary transition-colors"
+          >
+            {t("dashboard.connect.passwordDisableAuto")}
+          </button>
         )}
       </form>
     </ModalShell>

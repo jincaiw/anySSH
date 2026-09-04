@@ -6,6 +6,7 @@ import {
   ensureTerminal,
   getTerminal,
   getTerminalTheme,
+  resolveThemeOrNull,
 } from "../../stores/terminal-instances";
 import { useSettingsStore } from "../../stores/settings-store";
 import { useSessionStore } from "../../stores/session-store";
@@ -56,13 +57,20 @@ export function Terminal({ sessionId }: TerminalProps) {
   const globalThemeId = useSettingsStore((s) => s.terminalThemeId);
   const customThemes = useSettingsStore((s) => s.terminalCustomThemes);
   const themeMode = useSettingsStore((s) => s.themeMode);
+  // Accent feeds the "system" palette's cursor/selection colours.
+  const accentHue = useSettingsStore((s) => s.accentHue);
+  const accentCustom = useSettingsStore((s) => s.accentCustom);
   const hostThemeId = useSessionStore(
     (s) => s.sessions.get(sessionId)?.hostConfig.terminal_theme,
   );
-  const effectiveTheme = resolveTerminalTheme(
-    hostThemeId ?? globalThemeId,
-    customThemes,
-  );
+  // Mirrors resolveSessionTheme: a dangling per-host override (theme deleted)
+  // inherits the GLOBAL theme rather than silently snapping to a hard-coded
+  // palette — otherwise the terminal and the settings page disagree.
+  const hostOverride = hostThemeId
+    ? resolveThemeOrNull(hostThemeId, customThemes)
+    : null;
+  const effectiveTheme =
+    hostOverride ?? resolveTerminalTheme(globalThemeId, customThemes);
   const themeBackground = effectiveTheme?.colors.background ?? null;
 
   // Read the live clipboard-behaviour settings through refs so the listeners
@@ -129,10 +137,19 @@ export function Terminal({ sessionId }: TerminalProps) {
   // Live theme switching: repaint the already-open terminal when the global
   // theme, the custom theme list, or this host's override changes. The theme
   // object must be replaced (not mutated) for xterm to detect the change.
+  //
+  // accentHue/accentCustom are dependencies because the "system" sentinel
+  // palette reads its cursor and selection colours from --color-accent —
+  // changing the accent must repaint those terminals too.
   useEffect(() => {
     const term = getTerminal(sessionId)?.term;
-    if (term) term.options.theme = getTerminalTheme(effectiveTheme);
-  }, [sessionId, effectiveTheme, themeMode]);
+    if (!term) return;
+    term.options.theme = getTerminalTheme(effectiveTheme);
+    // xterm does not always re-render the viewport when only the palette
+    // changes; force a repaint of the visible rows so the new colours actually
+    // appear (otherwise the change shows up only on the next output).
+    term.refresh(0, term.rows - 1);
+  }, [sessionId, effectiveTheme, themeMode, accentHue, accentCustom]);
 
   // Clipboard behaviours (#71): copy-on-select and configurable paste button.
   // Registered once per session; the current setting values are read through

@@ -20,6 +20,7 @@ export default {
   io_error: "I/O 错误",
   already_disconnected: "会话已断开",
   cancelled: "连接已取消",
+  invalid_encoding: "不支持的终端编码",
 
   // ─── SFTP / SCP ───────────────────────────────────────────────────────────
   protocol_error: "协议错误",

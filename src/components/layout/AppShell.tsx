@@ -127,14 +127,11 @@ export function AppShell() {
             void (async () => {
               const { invoke } = await import("@tauri-apps/api/core");
               if (tab.type === "sftp") {
-                try {
-                  await invoke("sftp_close", { sftpSessionId: activeTabId });
-                } catch {
-                  /* ok */
-                }
-                const { useSftpStore } =
+                // Also disconnects the underlying SSH session (Explore opens a
+                // bare, PTY-less one that sftp_close does not touch).
+                const { closeSftpSession } =
                   await import("../../stores/sftp-store");
-                useSftpStore.getState().closeSession(activeTabId);
+                await closeSftpSession(activeTabId);
               } else if (tab.type === "s3") {
                 try {
                   await invoke("s3_disconnect", { s3SessionId: activeTabId });

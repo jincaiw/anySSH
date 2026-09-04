@@ -23,6 +23,7 @@ export default {
   io_error: "I/O error",
   already_disconnected: "Session already disconnected",
   cancelled: "Connection cancelled",
+  invalid_encoding: "Unsupported terminal encoding",
 
   // ─── SFTP / SCP ───────────────────────────────────────────────────────────
   protocol_error: "Protocol error",

@@ -1,5 +1,5 @@
 import { X } from "lucide-react";
-import { useSftpStore } from "../../stores/sftp-store";
+import { useSftpStore, closeSftpSession } from "../../stores/sftp-store";
 import { useTranslation } from "../../i18n";
 
 export function SftpTabs() {
@@ -7,7 +7,6 @@ export function SftpTabs() {
   const sessions = useSftpStore((s) => s.sessions);
   const activeSftpSessionId = useSftpStore((s) => s.activeSftpSessionId);
   const setActiveSftpSession = useSftpStore((s) => s.setActiveSftpSession);
-  const closeSession = useSftpStore((s) => s.closeSession);
 
   if (sessions.size === 0) return null;
 
@@ -15,13 +14,8 @@ export function SftpTabs() {
 
   const handleClose = async (id: string, e: React.MouseEvent) => {
     e.stopPropagation();
-    try {
-      const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("sftp_close", { sftpSessionId: id });
-    } catch {
-      // Already closed
-    }
-    closeSession(id);
+    // Closes the SFTP/SCP channel AND the SSH connection beneath it.
+    await closeSftpSession(id);
   };
 
   return (

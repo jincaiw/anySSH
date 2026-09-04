@@ -3,7 +3,7 @@ import { Monitor } from "lucide-react";
 import { ModalShell, BTN_GHOST, BTN_SECONDARY, BTN_PRIMARY } from "../shared/ModalShell";
 import { PasswordPromptModal } from "./PasswordPromptModal";
 import { dualFactorHintOf, isDualFactorTriggerError } from "../../lib/backend-errors";
-import { fireDualFactorTrigger } from "../../lib/dual-factor";
+import { fireDualFactorTrigger, triggerDispatched } from "../../lib/dual-factor";
 import { useUiStore } from "../../stores/ui-store";
 import { useHostsStore } from "../../stores/hosts-store";
 import { useGroupsStore } from "../../stores/groups-store";
@@ -15,6 +15,7 @@ import { CustomSelect } from "../shared/CustomSelect";
 import { LANG_PRESETS, LANG_RE, TERMINAL_ENCODINGS, useSettingsStore } from "../../stores/settings-store";
 import { BUILTIN_THEMES, SYSTEM_THEME_ID } from "../../lib/terminal-themes";
 import { useTranslation } from "../../i18n";
+import { toast } from "../../stores/toast-store";
 
 // ─── Field types ─────────────────────────────────────────────────────────────
 
@@ -438,6 +439,11 @@ export function HostEditModal() {
     const host = buildHost();
     try {
       await saveHost(host);
+      // Latch the saved host as the "original" — for a NEW host buildHost()
+      // mints a fresh uuid on every call, so a second save (which is exactly
+      // what the password prompt does: submit → handleConnect → save again)
+      // would insert a DUPLICATE host row under a different id.
+      setOriginalHost(host);
 
       const { invoke } = await import("@tauri-apps/api/core");
       const typedInvoke = invoke as (cmd: string, args?: Record<string, unknown>) => Promise<unknown>;
@@ -461,7 +467,13 @@ export function HostEditModal() {
           ? true
           : await invoke<boolean>("has_saved_password", { hostId: host.id }).catch(() => false);
         if (!has || dualFactorMarked) {
-          if (dualFactorMarked) fireDualFactorTrigger(host.id);
+          if (dualFactorMarked) {
+            // Report when the bastion could not be reached — otherwise the
+            // armed prompt promises a code that is never coming.
+            void fireDualFactorTrigger(host.id).then((status) => {
+              if (!triggerDispatched(status)) toast.error(t("dashboard.connect.dualFactorTriggerFailed"));
+            });
+          }
           setDualFactorArmed(dualFactorMarked);
           setConnecting(false);
           setPasswordPromptTarget(`${form.username || host.username}@${form.host || host.host}`);
@@ -531,6 +543,11 @@ export function HostEditModal() {
   if (!isOpen) return null;
 
   const isBusy = saving || connecting;
+
+  // The persisted host id for dual-factor actions. `editingHostId` is the UI
+  // store's sentinel (NEW_HOST_ID) while creating a host, so the saved
+  // `originalHost` is the only source of the real id once Connect has saved.
+  const hostIdForTrigger = originalHost?.id ?? editingHostId;
 
   // ── Shared input class ───────────────────────────────────────────────────────
   const inputClass =
@@ -1192,14 +1209,16 @@ export function HostEditModal() {
         busy={connecting}
         dualFactorArmed={dualFactorArmed}
         onResend={
-          dualFactorArmed && editingHostId
+          // Resend targets the REAL saved host id — `editingHostId` is the
+          // UI store's sentinel (NEW_HOST_ID) for a host that was just
+          // created here, so triggering on it would fail silently.
+          dualFactorArmed && hostIdForTrigger
             ? () => {
-                void (async () => {
-                  try {
-                    const { invoke } = await import("@tauri-apps/api/core");
-                    await invoke("trigger_dual_factor_sms", { hostId: editingHostId });
-                  } catch { /* best-effort — resendable */ }
-                })();
+                void fireDualFactorTrigger(hostIdForTrigger).then((status) => {
+                  if (!triggerDispatched(status)) {
+                    toast.error(t("dashboard.connect.dualFactorTriggerFailed"));
+                  }
+                });
               }
             : undefined
         }

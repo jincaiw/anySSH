@@ -5,7 +5,7 @@ import {
   isLocale,
   type Locale,
 } from "../i18n";
-import { SYSTEM_THEME_ID, sanitizeTheme, type TerminalTheme } from "../lib/terminal-themes";
+import { BUILTIN_THEMES, SYSTEM_THEME_ID, sanitizeTheme, type TerminalTheme } from "../lib/terminal-themes";
 
 export type CursorStyle = "block" | "bar" | "underline";
 export type ThemeMode = "dark" | "light";
@@ -174,6 +174,8 @@ interface SettingsState {
   setTerminalBackspaceCtrlH: (enabled: boolean) => void;
   /** Remember a host as a dual-factor bastion (persists a JSON list). */
   markHostDualFactor: (hostId: string) => void;
+  /** Forget a dual-factor host (the user opted out, or the host was deleted). */
+  unmarkHostDualFactor: (hostId: string) => void;
   setTerminalEncoding: (encoding: TerminalEncoding) => void;
   setTerminalType: (type: string) => void;
   /** Global default LANG; "" disables sending it. Validated against LANG_RE. */
@@ -365,7 +367,7 @@ function pickDefaultEditorId(editors: EditorConfig[]): string | null {
   return editors[0]?.id ?? null;
 }
 
-let accentPersistTimer: ReturnType<typeof setTimeout> | undefined;
+let accentPersistTimer: ReturnType<typeof setTimeout> | null = null;
 
 export const useSettingsStore = create<SettingsState>((set) => ({
   ...DEFAULTS,
@@ -390,7 +392,15 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   },
 
   setAccentHue: (hue) => {
-    // Choosing a preset hue clears any custom colour.
+    // Choosing a preset hue clears any custom colour. Cancel a pending
+    // debounced custom-colour write first — otherwise switching from the
+    // custom picker straight to a preset leaves a stale timer that writes the
+    // old custom value back ~200ms later, so the accent silently reverts on
+    // the next launch.
+    if (accentPersistTimer) {
+      clearTimeout(accentPersistTimer);
+      accentPersistTimer = null;
+    }
     set({ accentHue: hue, accentCustom: null });
     persist("app_accent_hue", String(hue));
     persist("app_accent_custom", "");
@@ -504,6 +514,19 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   markHostDualFactor: (hostId) => set((s) => {
     if (s.dualFactorHostIds.includes(hostId)) return {};
     const next = [...s.dualFactorHostIds, hostId];
+    persist("dual_factor_hosts", JSON.stringify(next));
+    return { dualFactorHostIds: next };
+  }),
+
+  // Without this a host marked once (any failed empty-password connect) is
+  // armed forever — even after the user saves a credential, and even for a
+  // host that was never a dual-factor bastion. Deleting the host must also
+  // drop its entry, otherwise the id lingers and is re-armed if the same
+  // host is re-created from a backup/import with a fresh id… and the list
+  // would grow without bound.
+  unmarkHostDualFactor: (hostId) => set((s) => {
+    if (!s.dualFactorHostIds.includes(hostId)) return {};
+    const next = s.dualFactorHostIds.filter((id) => id !== hostId);
     persist("dual_factor_hosts", JSON.stringify(next));
     return { dualFactorHostIds: next };
   }),
@@ -660,7 +683,16 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             try {
               const parsed = JSON.parse(value) as unknown;
               if (Array.isArray(parsed)) {
-                updates.dualFactorHostIds = parsed.filter((id): id is string => typeof id === "string");
+                // Sanitise: drop non-strings/empties and de-duplicate — a
+                // corrupted blob would otherwise arm every connect attempt,
+                // and duplicates would accumulate on every mark.
+                const clean: string[] = [];
+                for (const id of parsed) {
+                  if (typeof id !== "string") continue;
+                  const trimmed = id.trim();
+                  if (trimmed && !clean.includes(trimmed)) clean.push(trimmed);
+                }
+                updates.dualFactorHostIds = clean;
               }
             } catch { /* ignore malformed list */ }
             break;
@@ -742,6 +774,40 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             }
             // Nothing detected → leave unseeded so we retry on the next launch.
           } catch { /* detection unavailable — leave unseeded to retry next launch */ }
+        }
+      }
+
+      // Post-parse validation (order-independent — the two settings keys can
+      // arrive in any order from the backend).
+      //
+      // A custom theme whose id collides with a builtin id (or with the
+      // "system" sentinel) can never be selected: the builtin matches first,
+      // and the sentinel returns null before custom themes are consulted. It
+      // would also produce duplicate React keys in the theme grid.
+      if (updates.terminalCustomThemes) {
+        let changed = false;
+        const clean = updates.terminalCustomThemes.filter((t) => {
+          const reserved = t.id === SYSTEM_THEME_ID || BUILTIN_THEMES.some((b) => b.id === t.id);
+          if (reserved) changed = true;
+          return !reserved;
+        });
+        if (changed) {
+          updates.terminalCustomThemes = clean;
+          persist("terminal_custom_themes", JSON.stringify(clean));
+        }
+      }
+      // An unknown selection id (theme deleted on another machine / profile
+      // restored) leaves the settings grid with nothing highlighted while the
+      // terminal silently renders the One Dark Pro fallback. Reset it so the
+      // UI and the terminal agree.
+      if (updates.terminalThemeId) {
+        const known =
+          updates.terminalThemeId === SYSTEM_THEME_ID ||
+          BUILTIN_THEMES.some((b) => b.id === updates.terminalThemeId) ||
+          (updates.terminalCustomThemes ?? []).some((t) => t.id === updates.terminalThemeId);
+        if (!known) {
+          updates.terminalThemeId = SYSTEM_THEME_ID;
+          persist("terminal_theme_id", SYSTEM_THEME_ID);
         }
       }
 

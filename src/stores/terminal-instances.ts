@@ -3,7 +3,7 @@ import { FitAddon } from "@xterm/addon-fit";
 import { registerSearchAddon, unregisterSearchAddon } from "./terminal-registry";
 import { useSettingsStore } from "./settings-store";
 import { useSessionStore } from "./session-store";
-import { resolveTerminalTheme, type TerminalTheme } from "../lib/terminal-themes";
+import { BUILTIN_THEMES, resolveTerminalTheme, type TerminalTheme } from "../lib/terminal-themes";
 
 /**
  * Module-level registry of live xterm.js instances, keyed by sessionId.
@@ -26,9 +26,6 @@ export interface TerminalEntry {
   fitAddon: FitAddon;
   /** Pending debounced PTY-resize timer, cleared on dispose. */
   resizeTimer: ReturnType<typeof setTimeout> | null;
-  /** Effective Backspace behaviour for this session (per-host override wins
-   *  over the global setting): true sends ^H (0x08), false sends DEL (0x7f). */
-  backspaceCtrlH: boolean;
 }
 
 const instances = new Map<string, TerminalEntry>();
@@ -136,24 +133,50 @@ export function getTerminalTheme(explicit?: TerminalTheme | null): Record<string
  * Effective colour theme for a session: the per-host override (carried on the
  * session's HostConfig) wins over the global setting. Returns null for the
  * "system" sentinel — callers then fall back to the CSS-variable palette.
+ *
+ * A dangling per-host reference (the theme was deleted, or the host points at
+ * a custom theme from another profile) falls back to the GLOBAL setting — not
+ * to a hard-coded palette — matching what the delete confirmation promises.
  */
 export function resolveSessionTheme(sessionId: string): TerminalTheme | null {
   const session = useSessionStore.getState().sessions.get(sessionId);
   const settings = useSettingsStore.getState();
-  return resolveTerminalTheme(
-    session?.hostConfig.terminal_theme ?? settings.terminalThemeId,
-    settings.terminalCustomThemes,
+  const hostThemeId = session?.hostConfig.terminal_theme;
+  // Only honour the override when it actually resolves; otherwise inherit the
+  // global choice (which itself falls back to One Dark Pro if dangling).
+  const override = hostThemeId
+    ? resolveThemeOrNull(hostThemeId, settings.terminalCustomThemes)
+    : null;
+  return override ?? resolveTerminalTheme(settings.terminalThemeId, settings.terminalCustomThemes);
+}
+
+/**
+ * Resolve a theme id against builtins + custom themes only — no fallback, so
+ * callers can tell "resolves" from "dangling" and decide what to inherit.
+ */
+export function resolveThemeOrNull(id: string, customThemes: TerminalTheme[]): TerminalTheme | null {
+  if (!id || id === "system") return null;
+  return (
+    customThemes.find((t) => t.id === id) ??
+    BUILTIN_THEMES.find((t) => t.id === id) ??
+    null
   );
+}
+
+/**
+ * Effective Backspace behaviour for a session, resolved LIVE on every keypress
+ * (the per-host override wins over the global setting). Reading it at keypress
+ * time (instead of capturing it when the terminal was created) means toggling
+ * the setting in Settings takes effect on an already-open terminal.
+ */
+export function backspaceSendsCtrlH(sessionId: string): boolean {
+  const session = useSessionStore.getState().sessions.get(sessionId);
+  const settings = useSettingsStore.getState();
+  return session?.hostConfig.backspace_sends_ctrl_h ?? settings.terminalBackspaceCtrlH;
 }
 
 function createEntry(sessionId: string): TerminalEntry {
   const settings = useSettingsStore.getState();
-  // Per-host Backspace override (like the theme: carried on the session's
-  // HostConfig) wins over the global setting. Legacy curses bastion TUIs
-  // (e.g. 维护变更单 forms) only recognise ^H (0x08) — xterm.js's default
-  // DEL (0x7f) is silently ignored by them.
-  const session = useSessionStore.getState().sessions.get(sessionId);
-  const backspaceCtrlH = session?.hostConfig.backspace_sends_ctrl_h ?? settings.terminalBackspaceCtrlH;
 
   const element = document.createElement("div");
   element.className = "h-full w-full";
@@ -182,7 +205,7 @@ function createEntry(sessionId: string): TerminalEntry {
   term.loadAddon(fitAddon);
   term.open(element);
 
-  const entry: TerminalEntry = { term, element, fitAddon, resizeTimer: null, backspaceCtrlH };
+  const entry: TerminalEntry = { term, element, fitAddon, resizeTimer: null };
 
   /** Forward raw keystrokes to the PTY. */
   const sendBytes = (data: string) => {
@@ -232,15 +255,27 @@ function createEntry(sessionId: string): TerminalEntry {
     if (e.metaKey && e.altKey && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"].includes(e.key))
       return false;
     // Legacy-bastion Backspace: rewrite DEL (0x7f) → ^H (0x08) when the
-    // session's effective setting asks for it. Only the plain key is
-    // rewritten — modified Backspace keeps xterm's default behaviour.
+    // session's effective setting asks for it. Only the plain key is rewritten.
+    //
+    // Three guards matter here:
+    //  - modifier keys (incl. Shift) keep xterm's default behaviour;
+    //  - IME composition must never be hijacked: xterm runs this custom
+    //    handler BEFORE its own CompositionHelper.keydown, so deleting a
+    //    pinyin/candidate character would send ^H to the PTY and corrupt
+    //    both the remote line and the local composition (keyCode 229 is
+    //    the "composition in progress" code WebKit sends);
+    //  - the setting is resolved per keypress, so toggling it in Settings
+    //    applies to an already-open terminal.
     if (
-      backspaceCtrlH &&
       e.type === "keydown" &&
       e.key === "Backspace" &&
       !e.metaKey &&
       !e.altKey &&
-      !e.ctrlKey
+      !e.ctrlKey &&
+      !e.shiftKey &&
+      !e.isComposing &&
+      e.keyCode !== 229 &&
+      backspaceSendsCtrlH(sessionId)
     ) {
       sendBytes("\x08");
       return false;
