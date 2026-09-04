@@ -103,6 +103,11 @@ const MAX_KI_ROUNDS: usize = 8;
 /// distinct.
 const EMPTY_PASSWORD_TRIGGER: &str = "anyssh";
 
+/// Trail entry pushed when the server's auth-method list does not include
+/// keyboard-interactive — strategy B (the dual-factor trigger) never runs
+/// in that case.
+const KI_NOT_OFFERED_TRAIL: &str = "keyboard-interactive not offered by server, skipped";
+
 impl SshManager {
     pub fn new() -> Self {
         Self {
@@ -461,18 +466,10 @@ impl SshManager {
             );
             if let AuthMethod::Password { password } = &config.auth_method {
                 if password.is_empty() {
-                    if outcome.dual_factor_attempted {
-                        // The empty-password connect is the deliberate
-                        // dual-factor SMS trigger — the failure is expected
-                        // and the guidance below is the actual message.
-                        msg.push_str(
-                            " — dual-factor trigger sent: if the SMS / OTP code arrived, reconnect and type <static password><dynamic code> as one string",
-                        );
-                    } else {
-                        msg.push_str(
-                            " — the password sent was EMPTY, the saved credential is missing",
-                        );
-                    }
+                    // When the empty-password connect was the deliberate
+                    // dual-factor SMS trigger and the trigger actually went
+                    // out, the appended guidance is the real message.
+                    msg.push_str(&Self::empty_password_suffix(&outcome));
                 }
             }
             tracing::warn!(host = %config.host, "{msg}");
@@ -588,7 +585,7 @@ impl SshManager {
         //      phone receives the code for the next attempt.
         let ki_allowed = server_allows("keyboard-interactive");
         if !ki_allowed {
-            outcome.push("keyboard-interactive not offered by server, skipped");
+            outcome.push(KI_NOT_OFFERED_TRAIL);
         } else {
             let mut authenticated = false;
             for empty_first in [false, true] {
@@ -825,6 +822,28 @@ impl SshManager {
         } else {
             String::new()
         }
+    }
+
+    /// Suffix appended to the auth-failure message when the connect used an
+    /// EMPTY password. Three flavours depending on what actually happened:
+    /// - strategy B ran → the dual-factor trigger WAS sent; the failure is
+    ///   the expected SMS trigger and the guidance is the real message.
+    /// - the server never offered keyboard-interactive → the trigger could
+    ///   not be sent at all; don't blame a missing saved credential, since
+    ///   the empty password may be the deliberate bastion trigger.
+    /// - anything else → most likely the saved credential really is missing.
+    fn empty_password_suffix(outcome: &AuthOutcome) -> String {
+        if outcome.dual_factor_attempted {
+            return " — dual-factor trigger sent: if the SMS / OTP code arrived, reconnect and type <static password><dynamic code> as one string".to_string();
+        }
+        if outcome
+            .trail
+            .iter()
+            .any(|step| step == KI_NOT_OFFERED_TRAIL)
+        {
+            return " — the password sent was EMPTY and the dual-factor trigger was NOT sent: this server does not offer keyboard-interactive".to_string();
+        }
+        " — the password sent was EMPTY, the saved credential is missing".to_string()
     }
 
     async fn auth_with_key_data(
@@ -1152,6 +1171,36 @@ mod tests {
             .collect();
         assert_eq!(answers[0], EMPTY_PASSWORD_TRIGGER);
         assert_eq!(answers[1], "");
+    }
+
+    /// The empty-password failure suffix must reflect what actually happened:
+    /// trigger sent → guidance; KI never offered → say so instead of blaming
+    /// a missing credential; otherwise → missing-credential claim stands.
+    #[test]
+    fn empty_password_error_suffix_reflects_what_happened() {
+        // Strategy B ran — the trigger went out, guidance is the message.
+        let mut sent = AuthOutcome::not_authenticated();
+        sent.dual_factor_attempted = true;
+        let s = SshManager::empty_password_suffix(&sent);
+        assert!(s.contains("dual-factor trigger sent: if the SMS"));
+
+        // Server never offered keyboard-interactive — the trigger could not
+        // be sent, and the empty password may be the deliberate bastion
+        // trigger, so the message must not claim a missing credential.
+        let mut no_ki = AuthOutcome::not_authenticated();
+        no_ki.push(KI_NOT_OFFERED_TRAIL);
+        let s = SshManager::empty_password_suffix(&no_ki);
+        assert!(s.contains("was NOT sent"));
+        assert!(s.contains("does not offer keyboard-interactive"));
+        assert!(!s.contains("saved credential is missing"));
+        // Must not collide with the frontend's "trigger sent" hint marker.
+        assert!(!s.contains("dual-factor trigger sent"));
+
+        // KI offered but strategy B never ran (prompt flow ended early) —
+        // the missing-credential claim is the best available explanation.
+        let plain = AuthOutcome::not_authenticated();
+        let s = SshManager::empty_password_suffix(&plain);
+        assert!(s.contains("the saved credential is missing"));
     }
 
     /// Cancelling an attempt ID that was never registered (or whose attempt
