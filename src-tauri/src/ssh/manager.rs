@@ -57,6 +57,11 @@ pub struct SshManager {
 struct AuthOutcome {
     authenticated: bool,
     trail: Vec<String>,
+    /// True once the dual-factor KI strategy (strategy B) ran. When the
+    /// connect then fails with an empty password, the trigger answer has
+    /// been delivered and the bastion has likely dispatched the SMS / OTP —
+    /// the failure dialog should say so instead of reporting a bare error.
+    dual_factor_attempted: bool,
 }
 
 impl AuthOutcome {
@@ -64,6 +69,7 @@ impl AuthOutcome {
         Self {
             authenticated: false,
             trail: Vec::new(),
+            dual_factor_attempted: false,
         }
     }
 
@@ -455,7 +461,18 @@ impl SshManager {
             );
             if let AuthMethod::Password { password } = &config.auth_method {
                 if password.is_empty() {
-                    msg.push_str(" — the password sent was EMPTY, the saved credential is missing");
+                    if outcome.dual_factor_attempted {
+                        // The empty-password connect is the deliberate
+                        // dual-factor SMS trigger — the failure is expected
+                        // and the guidance below is the actual message.
+                        msg.push_str(
+                            " — dual-factor trigger sent: if the SMS / OTP code arrived, reconnect and type <static password><dynamic code> as one string",
+                        );
+                    } else {
+                        msg.push_str(
+                            " — the password sent was EMPTY, the saved credential is missing",
+                        );
+                    }
                 }
             }
             tracing::warn!(host = %config.host, "{msg}");
@@ -576,6 +593,7 @@ impl SshManager {
             let mut authenticated = false;
             for empty_first in [false, true] {
                 if empty_first {
+                    outcome.dual_factor_attempted = true;
                     outcome.push(
                         "ki retry: first password prompt answered with the dual-factor trigger",
                     );

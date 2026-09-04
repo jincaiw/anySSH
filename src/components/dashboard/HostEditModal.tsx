@@ -2,6 +2,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Monitor } from "lucide-react";
 import { ModalShell, BTN_GHOST, BTN_SECONDARY, BTN_PRIMARY } from "../shared/ModalShell";
 import { PasswordPromptModal } from "./PasswordPromptModal";
+import { dualFactorHintOf } from "../../lib/backend-errors";
 import { useUiStore } from "../../stores/ui-store";
 import { useHostsStore } from "../../stores/hosts-store";
 import { useGroupsStore } from "../../stores/groups-store";
@@ -1109,13 +1110,20 @@ export function HostEditModal() {
 
               {/* Error banner */}
               {error && (
-                <p
-                  role="alert"
-                  data-testid="host-modal-error"
-                  className="text-[length:var(--text-sm)] text-status-error bg-status-error/10 rounded-lg px-3 py-2"
-                >
-                  {error}
-                </p>
+                <div className="flex flex-col gap-2">
+                  {dualFactorHintOf(error) && (
+                    <p className="text-[length:var(--text-sm)] text-text-primary bg-accent/10 rounded-lg px-3 py-2">
+                      {dualFactorHintOf(error)}
+                    </p>
+                  )}
+                  <p
+                    role="alert"
+                    data-testid="host-modal-error"
+                    className="text-[length:var(--text-sm)] text-status-error bg-status-error/10 rounded-lg px-3 py-2"
+                  >
+                    {error}
+                  </p>
+                </div>
               )}
             </div>
           )}

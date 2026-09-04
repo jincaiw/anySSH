@@ -1,7 +1,8 @@
 import { useEffect } from "react";
-import { Loader2, AlertCircle, X } from "lucide-react";
+import { Loader2, AlertCircle, X, MessageCircle } from "lucide-react";
 import { ModalBackdrop } from "../shared/ModalBackdrop";
 import { useTranslation } from "../../i18n";
+import { dualFactorHintOf } from "../../lib/backend-errors";
 
 interface ConnectionDialogProps {
   /** Host label or user@host shown during connecting */
@@ -16,6 +17,10 @@ interface ConnectionDialogProps {
 
 export function ConnectionDialog({ label, error, onClose, onRetry, onCancel }: ConnectionDialogProps) {
   const { t } = useTranslation();
+  // An empty-password connect to a dual-factor bastion ends in an expected
+  // auth failure — its purpose was firing the SMS dispatch. Lead with the
+  // next step instead of the scary trail.
+  const dualFactorHint = dualFactorHintOf(error);
 
   // While connecting, Escape cancels the attempt; in the error state it closes.
   useEffect(() => {
@@ -58,6 +63,17 @@ export function ConnectionDialog({ label, error, onClose, onRetry, onCancel }: C
                 <X size={15} strokeWidth={2} />
               </button>
             </div>
+
+            {dualFactorHint && (
+              <div className="rounded-lg bg-accent/10 border border-accent/30 px-3 py-2.5 mb-3">
+                <div className="flex items-start gap-2">
+                  <MessageCircle size={15} strokeWidth={2} className="text-accent shrink-0 mt-0.5" />
+                  <p className="text-[length:var(--text-xs)] text-text-primary leading-relaxed">
+                    {dualFactorHint}
+                  </p>
+                </div>
+              </div>
+            )}
 
             <div className="rounded-lg bg-status-error/5 border border-status-error/20 px-3 py-2.5 mb-5">
               <p className="text-[length:var(--text-xs)] text-status-error leading-relaxed">

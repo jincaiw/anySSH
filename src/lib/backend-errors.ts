@@ -90,3 +90,17 @@ export function localizeBackendError(err: unknown): string {
 
   return raw || String(translateIfPresent("errors.unknown") ?? "Something went wrong");
 }
+
+/**
+ * Marker the Rust auth path appends when the dual-factor bastion trigger
+ * was delivered from an empty-password connect. The auth failure is then
+ * EXPECTED — the SMS / OTP dispatch is the outcome — so UI surfaces show a
+ * friendly localized guide above (or instead of) the technical trail.
+ */
+export const DUAL_FACTOR_TRIGGER_MARKER = "dual-factor trigger sent";
+
+/** Localized next-step guidance when the marker is present, else null. */
+export function dualFactorHintOf(message: string | null | undefined): string | null {
+  if (!message || !message.includes(DUAL_FACTOR_TRIGGER_MARKER)) return null;
+  return translateIfPresent("dashboard.connect.dualFactorTriggered");
+}
