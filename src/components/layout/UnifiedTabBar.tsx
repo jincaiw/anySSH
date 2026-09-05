@@ -9,6 +9,8 @@ import {
   FolderOpen,
   Cloud,
   Monitor,
+  ScreenShare,
+  MonitorPlay,
   Braces,
   Plug,
   History,
@@ -37,6 +39,8 @@ function getTabIcon(tab: UnifiedTab): React.ElementType {
   if (tab.type === "terminal") return TerminalSquare;
   if (tab.type === "sftp") return FolderOpen;
   if (tab.type === "s3") return Cloud;
+  if (tab.type === "vnc") return ScreenShare;
+  if (tab.type === "rdp") return MonitorPlay;
   return PAGE_ICONS[tab.page] ?? Monitor;
 }
 
@@ -231,6 +235,8 @@ export function UnifiedTabBar() {
                   "shrink-0",
                   tab.type === "terminal" && statusDot ? statusDot.replace("bg-", "text-") : "",
                   tab.type === "sftp" || tab.type === "s3" ? "text-status-connected" : "",
+                  tab.type === "vnc" ? (isActive ? "text-accent" : "text-status-connected") : "",
+                  tab.type === "rdp" ? (isActive ? "text-accent" : "text-status-connected") : "",
                   tab.type === "page" && isActive ? "text-accent" : "",
                   tab.type === "page" && !isActive ? "text-text-muted" : "",
                 ].join(" ")}

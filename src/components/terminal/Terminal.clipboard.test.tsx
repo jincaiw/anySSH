@@ -42,8 +42,11 @@ vi.mock("../../stores/terminal-instances", () => {
   };
 });
 
-// The SSH output subscription is irrelevant to clipboard behaviour.
-vi.mock("../../hooks/use-ssh-events", () => ({ useSshOutput: () => {} }));
+// The SSH / term output subscriptions are irrelevant to clipboard behaviour.
+vi.mock("../../hooks/use-ssh-events", () => ({
+  useSshOutput: () => {},
+  useTermOutput: () => {},
+}));
 
 // The right-click session menu queries the session-log backend; mock the
 // helpers so no real Tauri invoke (dynamic import) is scheduled — otherwise

@@ -4,6 +4,8 @@ export type {
   HostConfig,
   ConnectionStatus,
   Session,
+  TermSessionKind,
+  SavedHostKind,
   SshOutputPayload,
   SshStatusPayload,
   SavedHost,

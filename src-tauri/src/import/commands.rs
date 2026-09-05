@@ -59,6 +59,8 @@ pub async fn import_save_ssh_hosts(
             let id = uuid::Uuid::new_v4().to_string();
 
             let host = SavedHost {
+                kind: None,
+                params_json: None,
                 id: id.clone(),
                 label: entry.host_alias.clone(),
                 host: entry.hostname.clone(),
@@ -220,6 +222,8 @@ mod tests {
     /// Minimal SavedHost for resolution tests (only id/label/host are consulted).
     fn host(id: &str, label: &str, hostname: &str) -> SavedHost {
         SavedHost {
+            kind: None,
+            params_json: None,
             id: id.to_string(),
             label: label.to_string(),
             host: hostname.to_string(),

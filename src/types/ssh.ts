@@ -32,12 +32,24 @@ export type ConnectionStatus =
   | "Disconnected"
   | "Error";
 
+/** Which character-stream protocol a terminal session carries. `"ssh"` is
+ *  the default and rides the legacy `ssh:*` event channels; telnet/serial/
+ *  local ride the generic `term:*` channels (term layer, P0). */
+export type TermSessionKind = "ssh" | "telnet" | "serial" | "local";
+
+/** Saved-host protocol kind. Mirrors the Rust enum + `saved_hosts.kind`
+ *  column (default 'ssh'). */
+export type SavedHostKind = TermSessionKind | "vnc" | "rdp" | "s3";
+
 export interface Session {
   id: SessionId;
   hostConfig: HostConfig;
   status: ConnectionStatus;
   statusMessage?: string;
   label: string;
+  /** Protocol kind (default "ssh"). Selects which event channel the
+   *  terminal reads (`ssh:output` vs `term:output`). */
+  kind?: TermSessionKind;
   /** Character encoding this session currently transcodes with. Initialised
    *  from the global setting; switchable at runtime via the pane-corner
    *  selector (runtime-only — never persisted). */
@@ -104,6 +116,12 @@ export interface SavedHost {
   /** Force session logging on every connection to this host (null = follow
    *  the global session-log settings). E.g. production hosts. */
   force_session_log: boolean | null;
+  /** Protocol kind (default "ssh"). Non-SSH rows carry their connection
+   *  parameters in `params_json` (plan §5). */
+  kind?: SavedHostKind | null;
+  /** Kind-specific parameters JSON — TermParams for telnet/serial/local,
+   *  {host, port, username?} for vnc/rdp. Null for SSH rows. */
+  params_json?: string | null;
 }
 
 export interface RecentConnection {

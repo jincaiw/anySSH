@@ -92,8 +92,21 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
   );
   const jumpLabel = jumpHost ? jumpHost.label || jumpHost.host : null;
 
+  // Protocol kind (P5): non-SSH saved hosts show the protocol as the first
+  // subtitle segment; only SSH entries offer the SFTP explorer.
+  const isSsh = !host.kind || host.kind === "ssh" || host.kind === "s3";
+  const kindLabels: Record<string, string> = {
+    telnet: t("dashboard.action.newTelnet"),
+    serial: t("dashboard.action.newSerial"),
+    local: t("dashboard.action.localTerminal"),
+    vnc: "VNC",
+    rdp: "RDP",
+  };
+
   // Build subtitle segments
-  const subtitleParts: string[] = [t("dashboard.hostCard.subtitle", { username: host.username })];
+  const subtitleParts: string[] = isSsh
+    ? [t("dashboard.hostCard.subtitle", { username: host.username })]
+    : [kindLabels[host.kind ?? ""] ?? host.kind ?? ""];
   if (host.os_type) {
     const osLabels: Record<string, string> = {
       linux: "Linux",
@@ -131,11 +144,15 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
       icon: TerminalSquare,
       onClick: () => onConnect(host),
     },
-    {
-      label: t("dashboard.hostCard.explorer"),
-      icon: FolderOpen,
-      onClick: () => onExplore(host),
-    },
+    ...(isSsh
+      ? [
+          {
+            label: t("dashboard.hostCard.explorer"),
+            icon: FolderOpen,
+            onClick: () => onExplore(host),
+          },
+        ]
+      : []),
     {
       label: t("common.edit"),
       icon: Pencil,
@@ -235,13 +252,15 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
             ariaLabel={t("dashboard.hostCard.openTerminalFor", { name: displayName })}
             testId={`host-card-${host.id}-terminal`}
           />
-          <CardActionButton
-            icon={FolderOpen}
-            label={t("dashboard.hostCard.explorer")}
-            onClick={() => onExplore(host)}
-            ariaLabel={t("dashboard.hostCard.openExplorerFor", { name: displayName })}
-            testId={`host-card-${host.id}-explorer`}
-          />
+          {isSsh && (
+            <CardActionButton
+              icon={FolderOpen}
+              label={t("dashboard.hostCard.explorer")}
+              onClick={() => onExplore(host)}
+              ariaLabel={t("dashboard.hostCard.openExplorerFor", { name: displayName })}
+              testId={`host-card-${host.id}-explorer`}
+            />
+          )}
         </CardActionStrip>
 
         {/* Avatar circle */}

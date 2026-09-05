@@ -5,7 +5,7 @@ import {
   useCallback,
   useMemo,
 } from "react";
-import { Search, Plus, ArrowLeft, FolderPlus, Import, Cloud } from "lucide-react";
+import { Search, Plus, ArrowLeft, FolderPlus, Import, Cloud, SquareTerminal, Network, Cable, MonitorUp, MonitorPlay } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -36,6 +36,9 @@ import { isDualFactorTriggerError } from "../../lib/backend-errors";
 import { fireDualFactorTrigger, triggerDispatched } from "../../lib/dual-factor";
 import type { SavedHost, HostGroup, RecentConnection, S3Connection } from "../../types";
 import { HostCard } from "./HostCard";
+import { TelnetConnectModal } from "./TelnetConnectModal";
+import { SerialConnectModal } from "./SerialConnectModal";
+import { VncConnectModal, RdpConnectModal } from "../remote";
 import { GroupCard } from "./GroupCard";
 import { S3Card } from "./S3Card";
 import { SortableCard } from "./SortableCard";
@@ -46,6 +49,7 @@ import { PasswordPromptModal } from "./PasswordPromptModal";
 import { RecentConnections } from "./RecentConnections";
 import { toast } from "../../stores/toast-store";
 import { useTranslation } from "../../i18n";
+import { isSshHost } from "../../lib/protocol-hosts";
 
 // Abort an in-flight SSH connection attempt on the Rust side. Best-effort:
 // the attempt may already have settled, in which case the backend reports it
@@ -84,6 +88,11 @@ export function HostsDashboard() {
   const [groupModalOpen, setGroupModalOpen] = useState(false);
   const [importModalOpen, setImportModalOpen] = useState(false);
   const [s3DialogOpen, setS3DialogOpen] = useState(false);
+  const [telnetModalOpen, setTelnetModalOpen] = useState(false);
+  const [serialModalOpen, setSerialModalOpen] = useState(false);
+  const [vncModalOpen, setVncModalOpen] = useState(false);
+  const [rdpModalOpen, setRdpModalOpen] = useState(false);
+  const [rdpPrefill, setRdpPrefill] = useState<{ host?: string; port?: string; username?: string } | undefined>(undefined);
 
   // Group delete dialog state
   const [deletingGroup, setDeletingGroup] = useState<{
@@ -289,8 +298,75 @@ export function HostsDashboard() {
 
   // Connect directly using saved credentials from the vault.
   // If connection fails (e.g., no saved credential), the error shows in the terminal overlay.
+  /** Reconnect a saved telnet/serial/vnc/rdp host card (P5). telnet/serial
+   *  re-run `term_open` with the persisted TermParams blob; vnc re-opens the
+   *  bridge route; rdp opens the connect modal prefilled (password is never
+   *  persisted). */
+  const connectProtocolHost = useCallback(async (host: SavedHost) => {
+    const { invoke } = await import("@tauri-apps/api/core");
+    try {
+      if (host.kind === "telnet" || host.kind === "serial" || host.kind === "local") {
+        const params = host.params_json
+          ? (JSON.parse(host.params_json) as Record<string, unknown>)
+          : null;
+        if (!params) throw new Error("missing saved parameters");
+        const sessionId = await invoke<string>("term_open", {
+          params,
+          cols: 80,
+          rows: 24,
+        });
+        const label = host.label || host.host;
+        useSessionStore.getState().addSession(
+          sessionId,
+          {
+            host: host.host,
+            port: host.port,
+            username: "",
+            auth_method: { type: "password", password: "" },
+            label,
+          },
+          host.kind,
+        );
+        useTabStore.getState().addTab({ type: "terminal", id: sessionId, label });
+      } else if (host.kind === "vnc") {
+        const { wsUrl, token } = await invoke<{ wsUrl: string; token: string }>(
+          "vnc_open",
+          { host: host.host, port: host.port },
+        );
+        useTabStore.getState().addTab({
+          type: "vnc",
+          id: token,
+          label: host.label || `vnc://${host.host}:${host.port}`,
+          wsUrl,
+        });
+      } else if (host.kind === "rdp") {
+        const saved = host.params_json
+          ? (JSON.parse(host.params_json) as { username?: string })
+          : {};
+        setRdpPrefill({
+          host: host.host,
+          port: String(host.port || 3389),
+          username: saved.username ?? "",
+        });
+        setRdpModalOpen(true);
+      }
+    } catch (err) {
+      const msg =
+        err && typeof err === "object" && "message" in err
+          ? String((err as { message: string }).message)
+          : t("dashboard.connect.fallbackShort");
+      toast.error(msg);
+    }
+  }, [t]);
+
   const connectToHost = useCallback(
     async (host: SavedHost, secrets?: { password: string; savePassword: boolean }) => {
+      // Non-SSH protocol hosts (P5): telnet/serial/vnc reconnect directly
+      // from the persisted params; RDP re-prompts for the password.
+      if (!isSshHost(host)) {
+        void connectProtocolHost(host);
+        return;
+      }
       // Secrets from the password prompt skip the vault check — the prompt
       // only opens when nothing is saved, so re-checking here would loop the
       // prompt forever and the typed password would never reach the backend
@@ -352,6 +428,38 @@ export function HostsDashboard() {
     },
     [t, ensurePasswordOrPrompt],
   );
+
+  // Open a local terminal (P1a): backend resolves the shell ($SHELL → zsh →
+  // bash / pwsh → powershell → cmd), spawns it on a PTY and streams over the
+  // generic `term:*` event channels.
+  const openLocalTerminal = useCallback(async () => {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      const sessionId = await invoke<string>("term_open", {
+        params: { kind: "local" },
+        cols: 80,
+        rows: 24,
+      });
+      const label = t("dashboard.action.localTerminal");
+      useSessionStore.getState().addSession(
+        sessionId,
+        {
+          host: "localhost",
+          port: 0,
+          username: "",
+          auth_method: { type: "password", password: "" },
+          label,
+        },
+        "local",
+      );
+      useTabStore.getState().addTab({ type: "terminal", id: sessionId, label });
+    } catch (err) {
+      const msg = err && typeof err === "object" && "message" in err
+        ? String((err as { message: string }).message)
+        : t("dashboard.error.localTerminal");
+      toast.error(msg);
+    }
+  }, [t]);
 
   const handleRecentConnect = useCallback(
     async (conn: RecentConnection, secrets?: { password: string; savePassword: boolean }) => {
@@ -749,6 +857,86 @@ export function HostsDashboard() {
             </button>
 
             <button
+              data-testid="new-local-terminal-button"
+              onClick={() => void openLocalTerminal()}
+              className={[
+                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
+                "bg-bg-surface border border-border text-text-secondary",
+                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
+                "transition-all duration-[var(--duration-fast)]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              ].join(" ")}
+              title={t("dashboard.action.localTerminalHint")}
+            >
+              <SquareTerminal size={14} strokeWidth={2} aria-hidden="true" />
+              {t("dashboard.action.localTerminal")}
+            </button>
+
+            <button
+              data-testid="new-telnet-button"
+              onClick={() => setTelnetModalOpen(true)}
+              className={[
+                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
+                "bg-bg-surface border border-border text-text-secondary",
+                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
+                "transition-all duration-[var(--duration-fast)]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              ].join(" ")}
+              title={t("dashboard.action.newTelnetHint")}
+            >
+              <Network size={14} strokeWidth={2} aria-hidden="true" />
+              {t("dashboard.action.newTelnet")}
+            </button>
+
+            <button
+              data-testid="new-serial-button"
+              onClick={() => setSerialModalOpen(true)}
+              className={[
+                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
+                "bg-bg-surface border border-border text-text-secondary",
+                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
+                "transition-all duration-[var(--duration-fast)]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              ].join(" ")}
+              title={t("dashboard.action.newSerialHint")}
+            >
+              <Cable size={14} strokeWidth={2} aria-hidden="true" />
+              {t("dashboard.action.newSerial")}
+            </button>
+
+            <button
+              data-testid="new-vnc-button"
+              onClick={() => setVncModalOpen(true)}
+              className={[
+                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
+                "bg-bg-surface border border-border text-text-secondary",
+                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
+                "transition-all duration-[var(--duration-fast)]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              ].join(" ")}
+              title={t("dashboard.action.newVncHint")}
+            >
+              <MonitorUp size={14} strokeWidth={2} aria-hidden="true" />
+              {t("dashboard.action.newVnc")}
+            </button>
+
+            <button
+              data-testid="new-rdp-button"
+              onClick={() => setRdpModalOpen(true)}
+              className={[
+                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
+                "bg-bg-surface border border-border text-text-secondary",
+                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
+                "transition-all duration-[var(--duration-fast)]",
+                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+              ].join(" ")}
+              title={t("dashboard.action.newRdpHint")}
+            >
+              <MonitorPlay size={14} strokeWidth={2} aria-hidden="true" />
+              {t("dashboard.action.newRdp")}
+            </button>
+
+            <button
               data-testid="new-s3-button"
               onClick={() => setS3DialogOpen(true)}
               className={[
@@ -954,6 +1142,14 @@ export function HostsDashboard() {
       {s3DialogOpen && (
         <S3ConnectDialog onClose={() => { setS3DialogOpen(false); void loadS3Connections(); }} />
       )}
+
+      {telnetModalOpen && <TelnetConnectModal onClose={() => setTelnetModalOpen(false)} />}
+
+      {serialModalOpen && <SerialConnectModal onClose={() => setSerialModalOpen(false)} />}
+
+      {vncModalOpen && <VncConnectModal onClose={() => setVncModalOpen(false)} />}
+
+      {rdpModalOpen && <RdpConnectModal onClose={() => { setRdpModalOpen(false); setRdpPrefill(undefined); }} initial={rdpPrefill} />}
 
       {editingS3Connection && (
         <S3ConnectDialog

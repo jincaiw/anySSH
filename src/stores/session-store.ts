@@ -6,6 +6,7 @@ import type {
   ConnectionStatus,
   LayoutNode,
   SplitDirection,
+  TermSessionKind,
 } from "../types";
 import { useSettingsStore } from "./settings-store";
 
@@ -110,7 +111,9 @@ interface SessionState {
   activeTerminalTabId: string | null;
   zoomedPaneId: string | null;
 
-  addSession: (id: SessionId, hostConfig: HostConfig) => void;
+  /** `kind` selects the protocol (default "ssh"); it decides which event
+   *  channel the terminal reads (`ssh:output` vs `term:output`). */
+  addSession: (id: SessionId, hostConfig: HostConfig, kind?: TermSessionKind) => void;
   removeSession: (id: SessionId) => void;
   setActiveSession: (id: SessionId | null) => void;
   /** Called by tab-store when a terminal tab is activated. Sets activeSessionId from the layout tree. */
@@ -134,14 +137,17 @@ export const useSessionStore = create<SessionState>((set) => ({
   activeTerminalTabId: null,
   zoomedPaneId: null,
 
-  addSession: (id, hostConfig) =>
+  addSession: (id, hostConfig, kind) =>
     set((state) => {
       const sessions = new Map(state.sessions);
       sessions.set(id, {
         id,
         hostConfig,
         status: "Connected",
-        label: `${hostConfig.username}@${hostConfig.host}`,
+        // Explicit label (local terminals, custom labels) wins over the
+        // user@host composition.
+        label: hostConfig.label || `${hostConfig.username}@${hostConfig.host}`,
+        kind,
         // New sessions start on the per-host encoding override when set,
         // otherwise the global encoding setting; the pane-corner selector can
         // switch them at runtime (runtime-only, not persisted).
@@ -152,7 +158,7 @@ export const useSessionStore = create<SessionState>((set) => ({
       const tabs = new Map(state.tabs);
       tabs.set(id, {
         layout: { type: "pane", sessionId: id },
-        label: `${hostConfig.username}@${hostConfig.host}`,
+        label: hostConfig.label || `${hostConfig.username}@${hostConfig.host}`,
       });
 
       return {

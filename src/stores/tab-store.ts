@@ -11,6 +11,8 @@ export type UnifiedTab =
   | { type: "terminal"; id: string; label: string }
   | { type: "sftp"; id: string; label: string; transport?: "sftp" | "scp" }
   | { type: "s3"; id: string; label: string }
+  | { type: "vnc"; id: string; label: string; wsUrl: string }
+  | { type: "rdp"; id: string; label: string; wsUrl: string; destination: string; username: string; password: string }
   | { type: "page"; id: string; label: string; page: PageId };
 
 export function getTabType(tab: UnifiedTab): string {

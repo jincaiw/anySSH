@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { ClipboardPaste, Square, ScrollText, FolderOpen, FileText, Disc } from "lucide-react";
-import { useSshOutput } from "../../hooks/use-ssh-events";
+import { useSshOutput, useTermOutput } from "../../hooks/use-ssh-events";
 import {
   ensureTerminal,
   getTerminal,
@@ -85,9 +85,24 @@ export function Terminal({ sessionId }: TerminalProps) {
   // MOTD / initial prompt) that lands before the mount effect runs is written
   // into the scrollback rather than dropped. createEntry opens into a detached
   // element; the mount effect later attaches that same cached element.
-  useSshOutput(sessionId, (data) => {
-    ensureTerminal(sessionId).term.write(data);
-  });
+  // SSH rides the legacy `ssh:output` channel; telnet/serial/local ride the
+  // generic `term:output` channel. Passing null disables the unused hook
+  // (both hooks must stay unconditionally mounted — no conditional hooks).
+  const sessionKind = useSessionStore(
+    (s) => s.sessions.get(sessionId)?.kind ?? "ssh",
+  );
+  useSshOutput(
+    sessionKind === "ssh" ? sessionId : null,
+    (data) => {
+      ensureTerminal(sessionId).term.write(data);
+    },
+  );
+  useTermOutput(
+    sessionKind !== "ssh" ? sessionId : null,
+    (data) => {
+      ensureTerminal(sessionId).term.write(data);
+    },
+  );
 
   useEffect(() => {
     if (!containerRef.current) return;

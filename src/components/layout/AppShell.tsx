@@ -15,6 +15,7 @@ import { TerminalArea } from "../terminal";
 import { UnifiedTabBar } from "./UnifiedTabBar";
 
 import { HostsDashboard, HostEditModal } from "../dashboard";
+import { VncCanvas, RdpCanvas } from "../remote";
 import { NEW_HOST_ID } from "../dashboard/HostEditModal";
 import { SnippetsPage } from "../snippets";
 import { SnippetPalette } from "../snippets/SnippetPalette";
@@ -473,6 +474,53 @@ export function AppShell() {
                     ) : (
                       <ExplorerPage s3SessionId={tabId} isActive={isVisible} />
                     )}
+                  </div>
+                );
+              })}
+
+            {/* VNC tabs — render ALL and toggle visibility like terminals, so
+                the remote framebuffer session survives tab switches. */}
+            {Array.from(allTabs.entries())
+              .filter(([, tab]) => tab.type === "vnc")
+              .map(([tabId, tab]) => {
+                const isVisible = tabId === activeTabId;
+                return (
+                  <div
+                    key={tabId}
+                    className={`absolute inset-0 ${isVisible ? "z-10 visible" : "z-0 invisible"}`}
+                  >
+                    {tab.type === "vnc" ? (
+                      <VncCanvas
+                        sessionId={tabId}
+                        wsUrl={tab.wsUrl}
+                        isActive={isVisible}
+                      />
+                    ) : null}
+                  </div>
+                );
+              })}
+
+            {/* RDP tabs — persistent render like VNC (session survives tab
+                switches); the web component keeps the WASM session alive. */}
+            {Array.from(allTabs.entries())
+              .filter(([, tab]) => tab.type === "rdp")
+              .map(([tabId, tab]) => {
+                const isVisible = tabId === activeTabId;
+                return (
+                  <div
+                    key={tabId}
+                    className={`absolute inset-0 ${isVisible ? "z-10 visible" : "z-0 invisible"}`}
+                  >
+                    {tab.type === "rdp" ? (
+                      <RdpCanvas
+                        sessionId={tabId}
+                        wsUrl={tab.wsUrl}
+                        destination={tab.destination}
+                        username={tab.username}
+                        password={tab.password}
+                        isActive={isVisible}
+                      />
+                    ) : null}
                   </div>
                 );
               })}

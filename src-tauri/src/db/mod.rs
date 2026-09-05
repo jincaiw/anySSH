@@ -150,6 +150,18 @@ pub struct SavedHost {
     pub last_connected_at: Option<String>,
     /// Running total of successful connections to this host.
     pub connection_count: Option<u32>,
+
+    // Multi-protocol expansion (P0 migration 19→20; wired in P5)
+    /// Session protocol kind: "ssh" (default/legacy), "telnet", "serial",
+    /// "local", "vnc", "rdp". `None` reads back as a legacy SSH-only row.
+    #[serde(default)]
+    pub kind: Option<String>,
+    /// Kind-specific connection parameters as JSON — `TermParams` for
+    /// telnet/serial/local (serde-tagged `{"kind": ...}`, camelCase), plain
+    /// `{host, port, username?}` for vnc/rdp. `None` for SSH rows (all
+    /// SSH-relevant fields live in the dedicated columns).
+    #[serde(default)]
+    pub params_json: Option<String>,
 }
 
 /// A named group that hosts can be assigned to.
@@ -640,6 +652,33 @@ impl HostDb {
             tracing::info!("migration 18→19 applied: added saved_hosts.backspace_sends_ctrl_h");
         }
 
+        if version < 20 {
+            // Multi-protocol expansion (P0): character-stream session kinds.
+            // `kind` defaults to 'ssh' so every existing row stays an SSH
+            // host; `params_json` holds the kind-specific TermParams blob
+            // (Telnet host/port/script, Serial line settings, Local shell)
+            // and stays NULL for plain SSH hosts. Idempotent, same pattern
+            // as migrations 16→19.
+            let has_kind: bool = conn.prepare("SELECT kind FROM saved_hosts LIMIT 0").is_ok();
+            if !has_kind {
+                conn.execute(
+                    "ALTER TABLE saved_hosts ADD COLUMN kind TEXT NOT NULL DEFAULT 'ssh'",
+                    [],
+                )?;
+            }
+            let has_params: bool = conn
+                .prepare("SELECT params_json FROM saved_hosts LIMIT 0")
+                .is_ok();
+            if !has_params {
+                conn.execute("ALTER TABLE saved_hosts ADD COLUMN params_json TEXT", [])?;
+            }
+            conn.execute(
+                "INSERT OR REPLACE INTO _meta (key, value) VALUES ('schema_version', '20')",
+                [],
+            )?;
+            tracing::info!("migration 19→20 applied: added saved_hosts.kind + params_json");
+        }
+
         Ok(())
     }
 
@@ -750,7 +789,7 @@ impl HostDb {
                  startup_command, proxy_jump, keep_alive_interval, default_shell,
                  font_size, last_connected_at, connection_count, proxy_jump_host_id,
                  start_directory, lang, terminal_encoding, terminal_theme, force_session_log,
-                 backspace_sends_ctrl_h
+                 backspace_sends_ctrl_h, kind, params_json
              )
              VALUES (
                  ?1,  ?2,  ?3,  ?4,  ?5,  ?6,  ?7,  ?8,  ?9,
@@ -758,7 +797,7 @@ impl HostDb {
                  ?15, ?16, ?17, ?18,
                  ?19, ?20, ?21, ?22,
                  ?23, ?24, ?25, ?26, ?27,
-                 ?28
+                 ?28, ?29, ?30
              )
              ON CONFLICT(id) DO UPDATE SET
                  label                = excluded.label,
@@ -786,7 +825,9 @@ impl HostDb {
                  terminal_encoding    = excluded.terminal_encoding,
                  terminal_theme       = excluded.terminal_theme,
                  force_session_log    = excluded.force_session_log,
-                 backspace_sends_ctrl_h = excluded.backspace_sends_ctrl_h",
+                 backspace_sends_ctrl_h = excluded.backspace_sends_ctrl_h,
+                 kind                   = excluded.kind,
+                 params_json            = excluded.params_json",
             params![
                 host.id,
                 host.label,
@@ -816,6 +857,11 @@ impl HostDb {
                 host.terminal_theme,
                 host.force_session_log,
                 host.backspace_sends_ctrl_h,
+                // Legacy SSH rows: NULL kind → the column default 'ssh'
+                // (an explicit NULL would violate NOT NULL without hitting
+                // the column default, so coalesce here).
+                host.kind.as_deref().unwrap_or("ssh"),
+                host.params_json,
             ],
         )?;
         Ok(())
@@ -836,7 +882,7 @@ impl HostDb {
                     startup_command, proxy_jump, keep_alive_interval, default_shell,
                     font_size, last_connected_at, connection_count, proxy_jump_host_id,
                     start_directory, lang, terminal_encoding, terminal_theme, force_session_log,
-                    backspace_sends_ctrl_h
+                    backspace_sends_ctrl_h, kind, params_json
              FROM saved_hosts
              ORDER BY sort_order ASC, label ASC",
         )?;
@@ -871,6 +917,8 @@ impl HostDb {
                 terminal_theme: row.get(25)?,
                 force_session_log: row.get(26)?,
                 backspace_sends_ctrl_h: row.get(27)?,
+                kind: row.get(28)?,
+                params_json: row.get(29)?,
             })
         })?;
 
@@ -933,7 +981,7 @@ impl HostDb {
                     startup_command, proxy_jump, keep_alive_interval, default_shell,
                     font_size, last_connected_at, connection_count, proxy_jump_host_id,
                     start_directory, lang, terminal_encoding, terminal_theme, force_session_log,
-                    backspace_sends_ctrl_h
+                    backspace_sends_ctrl_h, kind, params_json
              FROM saved_hosts
              WHERE id = ?1",
         )?;
@@ -968,6 +1016,8 @@ impl HostDb {
                 terminal_theme: row.get(25)?,
                 force_session_log: row.get(26)?,
                 backspace_sends_ctrl_h: row.get(27)?,
+                kind: row.get(28)?,
+                params_json: row.get(29)?,
             })
         })?;
 
@@ -2131,8 +2181,36 @@ mod tests {
         (db, dir)
     }
 
+    #[test]
+    fn kind_and_params_json_round_trip() {
+        let (db, _dir) = test_db();
+
+        // Non-SSH kind persists with its parameter blob.
+        let mut h = sample_host("kind-1");
+        h.kind = Some("telnet".to_string());
+        h.params_json = Some(r#"{"kind":"telnet","host":"10.0.0.1","port":23}"#.to_string());
+        db.save_host(&h).unwrap();
+        let loaded = db.get_host("kind-1").unwrap().unwrap();
+        assert_eq!(loaded.kind.as_deref(), Some("telnet"));
+        assert_eq!(
+            loaded.params_json.as_deref(),
+            Some(r#"{"kind":"telnet","host":"10.0.0.1","port":23}"#)
+        );
+
+        // A payload with kind = None round-trips as the legacy 'ssh' row.
+        let mut legacy = sample_host("kind-2");
+        legacy.kind = None;
+        legacy.params_json = None;
+        db.save_host(&legacy).unwrap();
+        let loaded = db.get_host("kind-2").unwrap().unwrap();
+        assert_eq!(loaded.kind.as_deref(), Some("ssh"));
+        assert!(loaded.params_json.is_none());
+    }
+
     fn sample_host(id: &str) -> SavedHost {
         SavedHost {
+            kind: None,
+            params_json: None,
             id: id.to_string(),
             label: format!("My Server {id}"),
             host: "192.0.2.1".to_string(),
@@ -2343,6 +2421,8 @@ mod tests {
     /// Helper: build a host that tunnels through `jump_id`.
     fn host_with_jump(id: &str, jump_id: &str) -> SavedHost {
         SavedHost {
+            kind: None,
+            params_json: None,
             proxy_jump_host_id: Some(jump_id.to_string()),
             ..sample_host(id)
         }

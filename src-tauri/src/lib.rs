@@ -5,18 +5,21 @@ mod editors;
 mod import;
 mod portable;
 mod portforward;
+mod remote;
 mod s3;
 mod scp;
 mod sftp;
 mod snippets;
 mod ssh;
 pub mod telemetry;
+mod term;
 pub mod transfer_common;
 mod types;
 mod vault;
 
 use db::HostDb;
 use portforward::manager::PortForwardManager;
+use remote::bridge::BridgeManager;
 use s3::transfer_manager::S3TransferManager;
 use s3::S3Manager;
 use scp::transfer_manager::ScpTransferManager;
@@ -215,6 +218,9 @@ pub fn run() {
             let pf_manager = Arc::new(PortForwardManager::new(app.handle().clone()));
             app.manage(pf_manager);
 
+            // WS bridge for remote graphics (VNC now, RDP in P4)
+            app.manage(BridgeManager::new());
+
             let s3_manager = Arc::new(S3Manager::new());
             let s3_transfer_manager = Arc::new(S3TransferManager::new(
                 s3_manager.clone(),
@@ -392,6 +398,19 @@ pub fn run() {
             snippets::commands::list_snippet_folders,
             snippets::commands::delete_snippet_folder,
             snippets::commands::snippet_execute,
+            // Term — character-stream sessions (telnet / serial / local PTY)
+            term::commands::term_open,
+            term::commands::term_send,
+            term::commands::term_resize,
+            term::commands::term_set_encoding,
+            term::commands::term_close,
+            term::commands::serial_list_ports,
+            term::commands::serial_start_hotplug,
+            // Remote graphics (WS bridge)
+            remote::commands::vnc_open,
+            remote::commands::vnc_close,
+            remote::commands::rd_open,
+            remote::commands::rd_close,
             // Build info
             is_release_build,
             // Portable mode

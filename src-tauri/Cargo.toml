@@ -102,7 +102,24 @@ dirs = "6"
 # Local timestamps for terminal session logs (file naming, line stamps)
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
+# Local terminal (P1a): cross-platform PTY (ConPTY on Windows, forkpty on
+# Unix) for the `term` layer's local backend.
+portable-pty = "0.9"
+
+# Telnet login scripts (P1b): byte-oriented regex for the expect steps.
+regex = "1"
+
+# Serial (P2): cross-platform serial port enumeration + I/O. MPL-2.0.
+# On Linux the udev feature is optional (needed for USB metadata only).
+serialport = { version = "4", default-features = false }
+tokio-tungstenite = "0.30.0"
+futures-util = "0.3.34"
+ironrdp-rdcleanpath = "=0.2.2"
+tokio-rustls = { version = "0.26.5", default-features = false, features = ["ring", "tls12"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "tls12", "logging"] }
+
 [dev-dependencies]
+rcgen = "0.14.10"
 tempfile = "3"
 
 
