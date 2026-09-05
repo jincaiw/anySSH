@@ -86,9 +86,10 @@ describe("interactive password prompt", () => {
 
         await waitForPasswordPrompt();
 
-        // The dual-factor hint is part of the prompt's guidance.
-        const hint = await $("[data-testid='password-prompt-hint']");
-        await hint.waitForDisplayed({ timeout: 5_000 });
+        // The remember checkbox marks the plain (non-armed) prompt variant —
+        // the dialog deliberately carries no fine-print hint paragraphs.
+        const remember = await $("[data-testid='password-prompt-modal'] input[type='checkbox']");
+        await remember.waitForDisplayed({ timeout: 5_000 });
 
         await submitPromptPassword("");
 

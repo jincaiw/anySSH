@@ -1002,18 +1002,6 @@ export function HostsDashboard() {
                 }
               : undefined
           }
-          onDisableAuto={
-            passwordPrompt.armed
-              ? () => {
-                  const { hostId } = passwordPrompt;
-                  useSettingsStore.getState().unmarkHostDualFactor(hostId);
-                  toast.success(t("dashboard.connect.dualFactorDisabled"));
-                  // Stay open (the user still needs to log in), but as a
-                  // normal prompt — no further background attempts.
-                  setPasswordPrompt((p) => (p ? { ...p, armed: false } : null));
-                }
-              : undefined
-          }
           onSubmit={(password, remember) => {
             const prompt = passwordPrompt;
             setPasswordPrompt(null);

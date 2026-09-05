@@ -50,11 +50,10 @@ export default {
   "connect.passwordPromptTitle": "Authentication",
   "connect.passwordLabel": "Password",
   "connect.passwordPlaceholder": "Enter your password",
+  "connect.passwordArmedLabel": "Static password + code",
+  "connect.passwordArmedPlaceholder": "Type static password + code, concatenated",
   "connect.passwordRemember": "Remember password",
-  "connect.passwordDualFactorHint": "Dual-factor bastion: type static password + dynamic code (concatenated, no spaces). No SMS yet? Connect once with an empty password to trigger the code delivery",
-  "connect.passwordPromptArmedHint": "SMS / OTP dispatch triggered: type static password + dynamic code (concatenated, no spaces). No SMS yet? Click “Resend SMS”",
   "connect.passwordResend": "Resend SMS",
-  "connect.passwordDisableAuto": "Stop triggering the SMS automatically",
   "connect.dualFactorDisabled": "Automatic SMS triggering is now off for this host",
   "connect.dualFactorTriggerFailed": "Could not reach the bastion — the SMS / OTP code was probably not dispatched. Check connectivity and try again",
   "connect.dualFactorTriggered": "Dual-factor trigger sent: once the SMS / OTP code arrives, click Retry and type static password + dynamic code (concatenated, no spaces)",
@@ -76,6 +75,7 @@ export default {
   "hostCard.via": "via {name}",
   "hostCard.deleteTitle": "Delete this host?",
   "hostCard.deleteMessage": "This host will be permanently removed.",
+  "hostCard.disableDualFactor": "Stop auto SMS code trigger",
 
   // ─── Health check (HostHealthStatus discriminants) ──────────────────────
   "health.checking": "Pinging...",

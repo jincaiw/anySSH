@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { Activity, Pencil, TerminalSquare, Copy, Trash2, FolderOpen, Waypoints } from "lucide-react";
+import { Activity, Pencil, TerminalSquare, Copy, Trash2, FolderOpen, Waypoints, BellOff } from "lucide-react";
 import type { SavedHost } from "../../types";
 import { CardActionButton, CardActionStrip } from "./CardActionButton";
 import { relativeTime } from "../../utils/time";
@@ -7,6 +7,8 @@ import { ContextMenu } from "../shared/ContextMenu";
 import { ConfirmDangerDialog } from "../shared/ConfirmDangerDialog";
 import { useHealthStore, IDLE_HEALTH, type HealthStatus } from "../../stores/health-store";
 import { useHostsStore } from "../../stores/hosts-store";
+import { useSettingsStore } from "../../stores/settings-store";
+import { toast } from "../../stores/toast-store";
 import { useTranslation } from "../../i18n";
 
 // Single source of truth for status → colour, shared by the button and the label.
@@ -114,6 +116,10 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
     setContextMenu({ x: e.clientX, y: e.clientY });
   };
 
+  // Dual-factor bastion marker (drives the auto SMS trigger on connect).
+  // Reactive so the context-menu item appears/disappears without a remount.
+  const dualFactorMarked = useSettingsStore((s) => s.dualFactorHostIds.includes(host.id));
+
   const contextItems = [
     {
       label: t("dashboard.hostCard.ping"),
@@ -140,6 +146,17 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
       icon: Copy,
       onClick: () => onDuplicate(host),
     },
+    ...(dualFactorMarked
+      ? [{
+          label: t("dashboard.hostCard.disableDualFactor"),
+          icon: BellOff,
+          separator: true as const,
+          onClick: () => {
+            useSettingsStore.getState().unmarkHostDualFactor(host.id);
+            toast.success(t("dashboard.connect.dualFactorDisabled"));
+          },
+        }]
+      : []),
     {
       label: t("common.delete"),
       icon: Trash2,

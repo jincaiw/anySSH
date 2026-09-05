@@ -10,10 +10,11 @@ import { useTranslation } from "../../i18n";
  * when the user ticks "remember".
  *
  * Dual-factor armed mode (`dualFactorArmed`): the SMS/OTP dispatch has just
- * been fired in the background, so the copy leads with "type
- * <static password><dynamic code>" and offers a resend button; the
- * "remember" checkbox is hidden (an OTP-concatenated string must never be
- * saved as the host password).
+ * been fired in the background. The input label itself carries the
+ * instruction (static password + code, concatenated) — deliberately no
+ * fine-print paragraphs; the Resend button covers the "no SMS arrived" case.
+ * The "remember" checkbox is hidden (an OTP-concatenated string must never
+ * be saved as the host password).
  */
 export function PasswordPromptModal(props: {
   /** Subtitle shown under the title, e.g. "420102-7@29.10.122". */
@@ -23,8 +24,6 @@ export function PasswordPromptModal(props: {
   dualFactorArmed?: boolean;
   /** Refire the SMS dispatch (armed mode only). */
   onResend?: () => void;
-  /** Stop auto-firing the SMS trigger for this host (armed mode only). */
-  onDisableAuto?: () => void;
   onSubmit: (password: string, remember: boolean) => void;
   onClose: () => void;
 }) {
@@ -54,10 +53,7 @@ export function PasswordPromptModal(props: {
   const submit = () => {
     // An EMPTY password is a valid submission: dual-factor bastions (堡垒机)
     // deliver the SMS / OTP code only after receiving a password response,
-    // and connecting once with an empty password is the documented way to
-    // trigger that delivery (see the hint below). The backend's dual-factor
-    // retry answers the bastion's trigger prompt with a non-empty placeholder
-    // when the password is empty.
+    // and connecting once with an empty password triggers that delivery.
     props.onSubmit(password, remember);
   };
 
@@ -114,7 +110,9 @@ export function PasswordPromptModal(props: {
         }}
       >
         <label className="block text-[length:var(--text-xs)] font-medium text-text-secondary mb-1" htmlFor="password-prompt-input">
-          {t("dashboard.connect.passwordLabel")}
+          {armed
+            ? t("dashboard.connect.passwordArmedLabel")
+            : t("dashboard.connect.passwordLabel")}
         </label>
         <div className="relative">
           <input
@@ -125,7 +123,9 @@ export function PasswordPromptModal(props: {
             onChange={(e) => {
               setPassword(e.target.value);
             }}
-            placeholder={t("dashboard.connect.passwordPlaceholder")}
+            placeholder={armed
+              ? t("dashboard.connect.passwordArmedPlaceholder")
+              : t("dashboard.connect.passwordPlaceholder")}
             autoComplete="off"
             disabled={props.busy}
             className="w-full pr-10 px-3 py-2 rounded-lg text-[length:var(--text-sm)] bg-bg-base border border-border text-text-primary placeholder:text-text-muted outline-none focus:border-border-focus focus:ring-2 focus:ring-ring transition-[border-color,box-shadow] duration-[var(--duration-fast)] disabled:opacity-50"
@@ -139,11 +139,6 @@ export function PasswordPromptModal(props: {
             {show ? <EyeOff size={16} /> : <Eye size={16} />}
           </button>
         </div>
-        <p className="mt-2 text-[length:var(--text-xs)] text-text-muted" data-testid="password-prompt-hint">
-          {armed
-            ? t("dashboard.connect.passwordPromptArmedHint")
-            : t("dashboard.connect.passwordDualFactorHint")}
-        </p>
         {!armed && (
           <label className="mt-3 flex items-center gap-2 text-[length:var(--text-sm)] text-text-secondary cursor-pointer select-none w-fit">
             <input
@@ -155,19 +150,6 @@ export function PasswordPromptModal(props: {
             />
             {t("dashboard.connect.passwordRemember")}
           </label>
-        )}
-        {armed && props.onDisableAuto && (
-          // Escape hatch: a host is armed automatically on the first failed
-          // empty-password connect, and without this it stayed armed forever
-          // (every click fired a background SSH attempt).
-          <button
-            type="button"
-            onClick={props.onDisableAuto}
-            disabled={props.busy}
-            className="mt-3 text-[length:var(--text-xs)] text-text-muted underline decoration-dotted hover:text-text-primary transition-colors"
-          >
-            {t("dashboard.connect.passwordDisableAuto")}
-          </button>
         )}
       </form>
     </ModalShell>
