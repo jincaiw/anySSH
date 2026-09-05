@@ -1,2 +1,11 @@
 @import "./theme.css";
 @import "tailwindcss";
+
+/* WebView2 (Windows) injects its own native "reveal password" glyph into
+   every input[type=password], which shows up next to the app's custom eye
+   toggle (two eyes in the auth dialog). Hide the native one everywhere —
+   unknown pseudo-elements are simply ignored on macOS/Linux WebKit. */
+input[type="password"]::-ms-reveal,
+input[type="password"]::-ms-clear {
+  display: none;
+}
