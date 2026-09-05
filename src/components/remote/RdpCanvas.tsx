@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, AlertTriangle, Unplug } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "../../i18n";
+import { cancelDeferredClose, deferClose } from "./deferred-close";
 
 interface RdpCanvasProps {
   /** RDP session id — the one-time bridge token handed out by `rd_open`. */
@@ -71,6 +73,9 @@ export function RdpCanvas({
   const [errorMsg, setErrorMsg] = useState<string>("");
 
   useEffect(() => {
+    // StrictMode double-mount: cancel a pending teardown from the previous
+    // mount before (re)connecting, so the one-time token stays valid.
+    cancelDeferredClose(`rdp:${sessionId}`);
     const host = containerRef.current;
     if (!host) return;
 
@@ -147,14 +152,13 @@ export function RdpCanvas({
       elementRef.current?.remove();
       elementRef.current = null;
       apiRef.current = null;
-      void (async () => {
-        try {
-          const { invoke } = await import("@tauri-apps/api/core");
-          await invoke("rd_close", { token: sessionId });
-        } catch {
+      // Deferred (see deferred-close.ts) so a StrictMode remount that runs
+      // this effect again doesn't revoke the token the new mount needs.
+      deferClose(`rdp:${sessionId}`, () =>
+        invoke("rd_close", { token: sessionId }).catch(() => {
           /* bridge already cleaned it up */
-        }
-      })();
+        }),
+      );
     };
   }, [wsUrl, destination, username, password, sessionId]);
 

@@ -29,6 +29,7 @@ import { UpdateDialog } from "../updater/UpdateDialog";
 import { Toaster } from "../shared/Toaster";
 import { SessionLogViewer } from "../terminal/SessionLogViewer";
 import { useTranslation } from "../../i18n";
+import { disconnectSession } from "../../lib/disconnect-session";
 
 export function AppShell() {
   const { t } = useTranslation();
@@ -102,12 +103,8 @@ export function AppShell() {
             const isInSplit = termTab && termTab.layout.type === "split";
 
             void (async () => {
-              try {
-                const { invoke } = await import("@tauri-apps/api/core");
-                await invoke("ssh_disconnect", { sessionId: activeSessionId });
-              } catch {
-                /* already disconnected */
-              }
+              // Kind-aware: term sessions (telnet/serial/local) go through term_close.
+              await disconnectSession(activeSessionId);
 
               if (isInSplit) {
                 unsplitPane(activeSessionId);

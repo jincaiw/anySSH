@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from "react";
 import { Loader2, AlertTriangle, Unplug } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "../../i18n";
+import { cancelDeferredClose, deferClose } from "./deferred-close";
 
 // RFB type comes from src/types/novnc.d.ts (noVNC ships no types).
 type RfbInstance = import("@novnc/novnc").default;
@@ -37,6 +39,9 @@ export function VncCanvas({ sessionId, wsUrl, isActive }: VncCanvasProps) {
 
   // Connect once per (token, endpoint).
   useEffect(() => {
+    // StrictMode double-mount: cancel a pending teardown from the previous
+    // mount before (re)connecting, so the one-time token stays valid.
+    cancelDeferredClose(`vnc:${sessionId}`);
     let rfb: RfbInstance | null = null;
     let cancelled = false;
 
@@ -87,14 +92,13 @@ export function VncCanvas({ sessionId, wsUrl, isActive }: VncCanvasProps) {
       }
       rfbRef.current = null;
       // Revoke the one-time token; tears down pending route or live pumps.
-      void (async () => {
-        try {
-          const { invoke } = await import("@tauri-apps/api/core");
-          await invoke("vnc_close", { token: sessionId });
-        } catch {
+      // Deferred (see deferred-close.ts) so a StrictMode remount that runs
+      // this effect again doesn't revoke the token the new mount needs.
+      deferClose(`vnc:${sessionId}`, () =>
+        invoke("vnc_close", { token: sessionId }).catch(() => {
           /* bridge already cleaned it up */
-        }
-      })();
+        }),
+      );
     };
   }, [wsUrl, sessionId]);
 

@@ -4,6 +4,7 @@ import type { HostConfig, SessionId } from "../../types";
 import { useSessionStore } from "../../stores/session-store";
 import { useTabStore } from "../../stores/tab-store";
 import { useTranslation } from "../../i18n";
+import { disconnectSession } from "../../lib/disconnect-session";
 
 interface DisconnectOverlayProps {
   sessionId: SessionId;
@@ -26,6 +27,12 @@ export function DisconnectOverlay({
   const [reconnectError, setReconnectError] = useState<string | null>(null);
 
   const isError = status === "Error";
+
+  // Term sessions (telnet/serial/local) have no SSH-driven reconnect path —
+  // hide the Reconnect button for them; Close is the only way out.
+  const sessionKind = useSessionStore((s) => s.sessions.get(sessionId)?.kind);
+  const isTermSession =
+    sessionKind === "telnet" || sessionKind === "serial" || sessionKind === "local";
 
   async function handleReconnect() {
     setIsReconnecting(true);
@@ -81,11 +88,9 @@ export function DisconnectOverlay({
   function handleClose() {
     void (async () => {
       // Tear down the (already dead) backend session so it doesn't linger in
-      // the manager's session map — mirrors the tab X button and ⌘W.
-      try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("ssh_disconnect", { sessionId });
-      } catch { /* already disconnected */ }
+      // the manager's session map — mirrors the tab X button and ⌘W. Kind-aware:
+      // term sessions (telnet/serial/local) go through term_close.
+      await disconnectSession(sessionId);
 
       useSessionStore.getState().removeSession(sessionId);
 
@@ -133,7 +138,8 @@ export function DisconnectOverlay({
         {/* Divider */}
         <div className="w-px h-4 bg-border shrink-0" aria-hidden="true" />
 
-        {/* Reconnect */}
+        {/* Reconnect — SSH-only (term sessions reconnect from the hosts page) */}
+        {!isTermSession && (
         <button
           type="button"
           onClick={handleReconnect}
@@ -149,6 +155,7 @@ export function DisconnectOverlay({
           />
           {isReconnecting ? t("terminal.state.connecting") : t("terminal.disconnect.reconnect")}
         </button>
+        )}
 
         {/* Close */}
         <button

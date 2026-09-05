@@ -7,7 +7,8 @@ import { useTranslation } from "../../i18n";
 /**
  * Runtime per-session encoding switcher, anchored to the bottom-right corner
  * of a terminal pane. Switching rebuilds the backend stream converters via
- * `ssh_set_session_encoding` and mirrors the new label into the session
+ * `ssh_set_session_encoding` (SSH) or `term_set_encoding` (telnet/serial/
+ * local term sessions) and mirrors the new label into the session
  * store. Runtime-only by design: nothing is persisted, and a reconnect (or a
  * new session) falls back to the global encoding setting.
  *
@@ -28,7 +29,14 @@ export function EncodingSwitcher({ sessionId }: { sessionId: string }) {
   const handleChange = (next: string) => {
     void (async () => {
       try {
-        await invoke("ssh_set_session_encoding", { sessionId, encoding: next });
+        // Term sessions (telnet/serial/local) run their converters in the
+        // term module; only SSH sessions live in SshManager.
+        const isTerm =
+          session.kind === "telnet" || session.kind === "serial" || session.kind === "local";
+        await invoke(
+          isTerm ? "term_set_encoding" : "ssh_set_session_encoding",
+          { sessionId, encoding: next },
+        );
         // Only commit on success so a failed switch keeps the old label
         // (and therefore the old value shown in the selector).
         setSessionEncoding(sessionId, next);

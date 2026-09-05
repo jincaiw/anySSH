@@ -23,6 +23,7 @@ import { useTabStore, type UnifiedTab, type PageId } from "../../stores/tab-stor
 import { useSessionStore, countPanes, getTopDirection } from "../../stores/session-store";
 import { useUiStore } from "../../stores/ui-store";
 import { useTranslation } from "../../i18n";
+import { disconnectSession } from "../../lib/disconnect-session";
 
 // ─── Icon mapping ───────────────────────────────────────────────────────────
 
@@ -131,7 +132,7 @@ export function UnifiedTabBar() {
       if (termTab) {
         const sessionIds = collectLayoutIds(termTab.layout);
         for (const sid of sessionIds) {
-          try { await invoke("ssh_disconnect", { sessionId: sid }); } catch { /* ok */ }
+          await disconnectSession(sid);
           useSessionStore.getState().removeSession(sid);
         }
       }

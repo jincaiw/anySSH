@@ -95,6 +95,8 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
   // Protocol kind (P5): non-SSH saved hosts show the protocol as the first
   // subtitle segment; only SSH entries offer the SFTP explorer.
   const isSsh = !host.kind || host.kind === "ssh" || host.kind === "s3";
+  // Health check dials SSH — meaningless for telnet/serial/VNC/RDP entries.
+  const isSshProtocol = !host.kind || host.kind === "ssh";
   const kindLabels: Record<string, string> = {
     telnet: t("dashboard.action.newTelnet"),
     serial: t("dashboard.action.newSerial"),
@@ -134,11 +136,15 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
   const dualFactorMarked = useSettingsStore((s) => s.dualFactorHostIds.includes(host.id));
 
   const contextItems = [
-    {
-      label: t("dashboard.hostCard.ping"),
-      icon: Activity,
-      onClick: () => void checkHealth(host.id),
-    },
+    ...(isSshProtocol
+      ? [
+          {
+            label: t("dashboard.hostCard.ping"),
+            icon: Activity,
+            onClick: () => void checkHealth(host.id),
+          },
+        ]
+      : []),
     {
       label: t("dashboard.hostCard.terminal"),
       icon: TerminalSquare,
@@ -234,17 +240,19 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
 
         {/* Action buttons (top-right) */}
         <CardActionStrip>
-          <CardActionButton
-            icon={Activity}
-            label={t("dashboard.hostCard.ping")}
-            onClick={() => void checkHealth(host.id)}
-            ariaLabel={t("dashboard.hostCard.pingAria", { name: displayName })}
-            detail={health.message ?? undefined}
-            testId={`host-card-${host.id}-health`}
-            disabled={health.status === "checking"}
-            busy={health.status === "checking"}
-            colorClass={statusColor(health.status)}
-          />
+          {isSshProtocol && (
+            <CardActionButton
+              icon={Activity}
+              label={t("dashboard.hostCard.ping")}
+              onClick={() => void checkHealth(host.id)}
+              ariaLabel={t("dashboard.hostCard.pingAria", { name: displayName })}
+              detail={health.message ?? undefined}
+              testId={`host-card-${host.id}-health`}
+              disabled={health.status === "checking"}
+              busy={health.status === "checking"}
+              colorClass={statusColor(health.status)}
+            />
+          )}
           <CardActionButton
             icon={TerminalSquare}
             label={t("dashboard.hostCard.terminal")}

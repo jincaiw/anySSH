@@ -2,6 +2,7 @@ import { Columns2, Rows2, Maximize2, Minimize2, X } from "lucide-react";
 import { useSessionStore } from "../../stores/session-store";
 import { useTabStore } from "../../stores/tab-store";
 import { useTranslation } from "../../i18n";
+import { disconnectSession } from "../../lib/disconnect-session";
 
 interface PaneHeaderProps {
   sessionId: string;
@@ -46,10 +47,8 @@ export function PaneHeader({ sessionId, tabId }: PaneHeaderProps) {
 
   const handleClose = () => {
     void (async () => {
-      try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("ssh_disconnect", { sessionId });
-      } catch { /* already disconnected */ }
+      // Kind-aware: term sessions (telnet/serial/local) go through term_close.
+      await disconnectSession(sessionId);
 
       const store = useSessionStore.getState();
       if (hasSplits) {
