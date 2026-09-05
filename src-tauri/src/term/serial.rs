@@ -13,6 +13,10 @@
 //!   when the user plugs in a USB-serial adapter.
 
 use std::io::ErrorKind as IoErrorKind;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 use std::time::Duration;
 
 use serialport::{
@@ -32,6 +36,8 @@ const READ_TIMEOUT: Duration = Duration::from_millis(50);
 pub struct SerialIo {
     writer: Box<dyn serialport::SerialPort>,
     rx: mpsc::Receiver<Vec<u8>>,
+    stop: Arc<AtomicBool>,
+    reader_thread: Option<std::thread::JoinHandle<()>>,
 }
 
 impl SerialIo {
@@ -62,16 +68,22 @@ impl SerialIo {
                 _ => TermError::Io(format!("open {path}: {e}")),
             })?;
 
+        Self::from_port(port, path)
+    }
+
+    fn from_port(port: Box<dyn serialport::SerialPort>, path: &str) -> Result<Self, TermError> {
         let mut reader = port
             .try_clone()
             .map_err(|e| TermError::Io(format!("clone {path}: {e}")))?;
 
         let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
-        std::thread::Builder::new()
+        let stop = Arc::new(AtomicBool::new(false));
+        let reader_stop = stop.clone();
+        let reader_thread = std::thread::Builder::new()
             .name(format!("serial-read:{path}"))
             .spawn(move || {
                 let mut buf = vec![0u8; 4096];
-                loop {
+                while !reader_stop.load(Ordering::Acquire) {
                     match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
@@ -93,7 +105,12 @@ impl SerialIo {
             })
             .map_err(|e| TermError::Io(format!("spawn reader: {e}")))?;
 
-        Ok(Self { writer: port, rx })
+        Ok(Self {
+            writer: port,
+            rx,
+            stop,
+            reader_thread: Some(reader_thread),
+        })
     }
 }
 
@@ -122,8 +139,18 @@ impl TermIo for SerialIo {
     }
 
     async fn shutdown(&mut self) {
-        // Dropping `self` closes both port handles; the reader thread exits
-        // on the resulting error/timeout-error path.
+        self.stop.store(true, Ordering::Release);
+        self.rx.close();
+        if let Some(reader) = self.reader_thread.take() {
+            let _ = tokio::task::spawn_blocking(move || reader.join()).await;
+        }
+    }
+}
+
+impl Drop for SerialIo {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Release);
+        self.rx.close();
     }
 }
 
@@ -281,5 +308,52 @@ mod tests {
             assert!(!p.path.is_empty());
             assert!(["usb", "pci", "bluetooth", "unknown"].contains(&p.kind.as_str()));
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod lifecycle_tests {
+    use super::*;
+    use serialport::SerialPort;
+    use std::io::{Read, Write};
+
+    #[tokio::test]
+    async fn serial_reader_transfers_bytes_and_joins_on_shutdown() {
+        let (mut master, mut slave) = serialport::TTYPort::pair().unwrap();
+        master.set_timeout(Duration::from_secs(1)).unwrap();
+        slave.set_timeout(READ_TIMEOUT).unwrap();
+        let mut io = SerialIo::from_port(Box::new(slave), "test-pty").unwrap();
+        master.write_all(b"serial-banner").unwrap();
+        let mut buffer = [0; 64];
+        let n = tokio::time::timeout(Duration::from_secs(1), io.read(&mut buffer))
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(&buffer[..n], b"serial-banner");
+        io.write(b"serial-input").await.unwrap();
+        let n = master.read(&mut buffer).unwrap();
+        assert_eq!(&buffer[..n], b"serial-input");
+        tokio::time::timeout(Duration::from_secs(1), io.shutdown())
+            .await
+            .unwrap();
+        assert!(io.reader_thread.is_none());
+        assert!(io.stop.load(Ordering::Acquire));
+    }
+
+    #[tokio::test]
+    async fn dropping_idle_serial_session_stops_timeout_reader() {
+        let (_master, mut slave) = serialport::TTYPort::pair().unwrap();
+        slave.set_timeout(READ_TIMEOUT).unwrap();
+        let mut io = SerialIo::from_port(Box::new(slave), "test-idle-pty").unwrap();
+        let thread = io.reader_thread.take().unwrap();
+        drop(io);
+        tokio::time::timeout(
+            Duration::from_secs(1),
+            tokio::task::spawn_blocking(move || thread.join()),
+        )
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
     }
 }

@@ -34,6 +34,7 @@ impl LocalPtyIo {
         start_directory: Option<&str>,
         cols: u16,
         rows: u16,
+        term: &str,
     ) -> Result<Self, TermError> {
         let pty_system = native_pty_system();
         let pair = pty_system
@@ -47,13 +48,19 @@ impl LocalPtyIo {
 
         let shell_path = resolve_shell(shell)?;
         let mut cmd = CommandBuilder::new(&shell_path);
+        cmd.env("TERM", term);
         // No `-i`/login flags: stdin/stdout are a PTY, which is what makes
         // every major shell (zsh/bash/powershell/cmd) go interactive on its
         // own. Keep the spawn minimal and portable.
-        if let Some(dir) = start_directory {
-            if Path::new(dir).is_dir() {
-                cmd.cwd(dir);
+        if let Some(dir) = start_directory.filter(|s| !s.is_empty()) {
+            if !Path::new(dir).is_dir() {
+                return Err(TermError::InvalidParams(format!(
+                    "directory does not exist: {dir}"
+                )));
             }
+            cmd.cwd(dir);
+        } else if let Some(home) = dirs::home_dir() {
+            cmd.cwd(home);
         }
 
         let child = pair
@@ -131,6 +138,7 @@ impl TermIo for LocalPtyIo {
     async fn shutdown(&mut self) {
         if let Some(mut child) = self.child.take() {
             let _ = child.kill();
+            let _ = tokio::task::spawn_blocking(move || child.wait()).await;
         }
         // Dropping `self` drops the master, which closes the PTY and ends
         // the reader thread.

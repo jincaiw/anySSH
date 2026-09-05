@@ -146,7 +146,7 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
         ]
       : []),
     {
-      label: t("dashboard.hostCard.terminal"),
+      label: isSsh ? t("dashboard.hostCard.terminal") : t("dashboard.protocol.connect"),
       icon: TerminalSquare,
       onClick: () => onConnect(host),
     },
@@ -255,9 +255,9 @@ export function HostCard({ host, onConnect, onExplore, onEdit, onDelete, onDupli
           )}
           <CardActionButton
             icon={TerminalSquare}
-            label={t("dashboard.hostCard.terminal")}
+            label={isSsh ? t("dashboard.hostCard.terminal") : t("dashboard.protocol.connect")}
             onClick={() => onConnect(host)}
-            ariaLabel={t("dashboard.hostCard.openTerminalFor", { name: displayName })}
+            ariaLabel={isSsh ? t("dashboard.hostCard.openTerminalFor", { name: displayName }) : `${t("dashboard.protocol.connect")} ${displayName}`}
             testId={`host-card-${host.id}-terminal`}
           />
           {isSsh && (

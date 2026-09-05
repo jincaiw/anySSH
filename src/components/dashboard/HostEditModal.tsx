@@ -1,3 +1,5 @@
+import { ProtocolConnectModal } from "./ProtocolConnectModal";
+import type { ProtocolHostKind } from "../../lib/protocol-hosts";
 import { useState, useCallback, useEffect, useRef } from "react";
 import { Monitor } from "lucide-react";
 import { ModalShell, BTN_GHOST, BTN_SECONDARY, BTN_PRIMARY } from "../shared/ModalShell";
@@ -146,6 +148,15 @@ function SectionHeader({ children }: { children: React.ReactNode }) {
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function HostEditModal() {
+  const editingHostId = useUiStore(state => state.editingHostId);
+  const host = useHostsStore(state => state.hosts.find(host => host.id === editingHostId));
+  if (host?.kind && host.kind !== "ssh" && host.kind !== "s3") {
+    return <ProtocolConnectModal key={host.id} kind={host.kind as ProtocolHostKind} initial={host} onClose={() => useUiStore.getState().setEditingHostId(null)} />;
+  }
+  return <SshHostEditModal />;
+}
+
+function SshHostEditModal() {
   const { t } = useTranslation();
   const editingHostId = useUiStore((s) => s.editingHostId);
   const setEditingHostId = useUiStore((s) => s.setEditingHostId);

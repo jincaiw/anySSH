@@ -42,6 +42,10 @@ function useChannelOutput(
         return;
       }
       unlisten = un;
+      if (channel === "term") {
+        const { invoke } = await import("@tauri-apps/api/core");
+        if (!cancelled) await invoke("term_start", { sessionId }).catch(() => {});
+      }
     })();
 
     return () => {

@@ -234,6 +234,7 @@ pub fn run() {
             Ok(())
         })
         .manage(SshManager::new())
+        .manage(term::TermManager::new())
         .invoke_handler(tauri::generate_handler![
             // SFTP — session & filesystem
             sftp::commands::sftp_open,
@@ -400,6 +401,11 @@ pub fn run() {
             snippets::commands::snippet_execute,
             // Term — character-stream sessions (telnet / serial / local PTY)
             term::commands::term_open,
+            term::commands::term_start,
+            term::commands::term_duplicate,
+            term::commands::term_session_log_status,
+            term::commands::term_start_session_log,
+            term::commands::term_stop_session_log,
             term::commands::term_send,
             term::commands::term_resize,
             term::commands::term_set_encoding,
@@ -410,6 +416,8 @@ pub fn run() {
             remote::commands::vnc_open,
             remote::commands::vnc_close,
             remote::commands::rd_open,
+            remote::commands::rd_inspect_certificate,
+            remote::commands::rd_trust_certificate,
             remote::commands::rd_close,
             // Build info
             is_release_build,

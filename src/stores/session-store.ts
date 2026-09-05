@@ -273,6 +273,7 @@ export const useSessionStore = create<SessionState>((set) => ({
         sessions.set(newSessionId, {
           id: newSessionId,
           hostConfig: sourceSession.hostConfig,
+          kind: sourceSession.kind,
           status: "Connected",
           label: sourceSession.label,
           // Mirrors the backend: a split pane inherits the source session's

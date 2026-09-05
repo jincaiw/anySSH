@@ -1,3 +1,4 @@
+import { duplicateTerminal } from "../../lib/terminal-transport";
 import { useState } from "react";
 import { WifiOff, AlertTriangle, RefreshCw, X } from "lucide-react";
 import type { HostConfig, SessionId } from "../../types";
@@ -28,8 +29,6 @@ export function DisconnectOverlay({
 
   const isError = status === "Error";
 
-  // Term sessions (telnet/serial/local) have no SSH-driven reconnect path —
-  // hide the Reconnect button for them; Close is the only way out.
   const sessionKind = useSessionStore((s) => s.sessions.get(sessionId)?.kind);
   const isTermSession =
     sessionKind === "telnet" || sessionKind === "serial" || sessionKind === "local";
@@ -40,18 +39,16 @@ export function DisconnectOverlay({
     try {
       const { invoke } = await import("@tauri-apps/api/core");
 
-      // Try to find a saved host matching this connection — use connect_saved_host
-      // which reads credentials from the OS keychain
-      const hosts = await invoke<{ id: string; host: string; port: number; username: string }[]>("list_hosts");
-      const savedHost = hosts.find(
-        (h) => h.host === hostConfig.host && h.port === hostConfig.port && h.username === hostConfig.username,
-      );
-
       let newSessionId: string;
-      if (savedHost) {
-        newSessionId = await invoke<string>("connect_saved_host", { hostId: savedHost.id });
+      if (isTermSession) {
+        newSessionId = await duplicateTerminal(sessionId, true);
       } else {
-        newSessionId = await invoke<string>("ssh_connect", { hostConfig });
+        const hosts = await invoke<import("../../types").SavedHost[]>("list_hosts");
+        const savedHost = hosts.find((h) => (!h.kind || h.kind === "ssh") && h.host === hostConfig.host && h.port === hostConfig.port && h.username === hostConfig.username);
+        newSessionId = savedHost
+          ? await invoke<string>("connect_saved_host", { hostId: savedHost.id })
+          : await invoke<string>("ssh_connect", { hostConfig });
+        await disconnectSession(sessionId);
       }
 
       const { removeSession, addSession } = useSessionStore.getState();
@@ -73,7 +70,7 @@ export function DisconnectOverlay({
       // The reconnected session becomes its own pane/tab. (addSession always
       // builds a fresh single-pane tab; re-inserting back into the original
       // split would need a targeted layout edit.)
-      addSession(newSessionId as SessionId, hostConfig);
+      addSession(newSessionId as SessionId, hostConfig, sessionKind);
       useTabStore.getState().addTab({ type: "terminal", id: newSessionId, label });
     } catch (err) {
       const msg =
@@ -139,7 +136,7 @@ export function DisconnectOverlay({
         <div className="w-px h-4 bg-border shrink-0" aria-hidden="true" />
 
         {/* Reconnect — SSH-only (term sessions reconnect from the hosts page) */}
-        {!isTermSession && (
+        {(
         <button
           type="button"
           onClick={handleReconnect}

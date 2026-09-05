@@ -1,3 +1,6 @@
+import { ProtocolConnectModal } from "../dashboard/ProtocolConnectModal";
+import type { ProtocolHostKind } from "../../lib/protocol-hosts";
+import type { SavedHost } from "../../types";
 import { useEffect, useState, useRef, useCallback } from "react";
 import { Search, Clock, ChevronDown, Loader2, TerminalSquare, FolderOpen, Trash2 } from "lucide-react";
 import { toast } from "../../stores/toast-store";
@@ -55,6 +58,7 @@ export function HistoryPage() {
   const { t } = useTranslation();
   const hosts = useHostsStore((s) => s.hosts);
   const loadHosts = useHostsStore((s) => s.loadHosts);
+  const [protocolHost, setProtocolHost] = useState<SavedHost | null>(null);
   const [entries, setEntries] = useState<ConnectionHistoryEntry[]>([]);
   const [query, setQuery] = useState("");
   const [hostFilter, setHostFilter] = useState<string | null>(null);
@@ -114,6 +118,8 @@ export function HistoryPage() {
   const totalCount = entries.length + (hasMore ? "+" : "");
 
   const handleTerminal = useCallback(async (entry: ConnectionHistoryEntry) => {
+    const saved = useHostsStore.getState().hosts.find(host => host.id === entry.host_id);
+    if (saved?.kind && saved.kind !== "ssh" && saved.kind !== "s3") { setProtocolHost(saved); return; }
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const sessionId = await invoke<string>("connect_saved_host", { hostId: entry.host_id });
@@ -125,6 +131,7 @@ export function HistoryPage() {
         label: entry.host_label || undefined,
         // Read through the store (not the render-scope value) so the callback
         // stays referentially stable.
+        terminal_encoding: saved?.terminal_encoding || undefined,
         terminal_theme: useHostsStore.getState().hosts.find((h) => h.id === entry.host_id)?.terminal_theme || undefined,
         backspace_sends_ctrl_h: useHostsStore.getState().hosts.find((h) => h.id === entry.host_id)?.backspace_sends_ctrl_h ?? undefined,
         auth_method: { type: "password", password: "" },
@@ -141,6 +148,8 @@ export function HistoryPage() {
   };
 
   const handleExplorer = useCallback(async (entry: ConnectionHistoryEntry) => {
+    const kind = useHostsStore.getState().hosts.find(host => host.id === entry.host_id)?.kind;
+    if (kind && kind !== "ssh") return;
     try {
       const { invoke } = await import("@tauri-apps/api/core");
       const sessionId = await invoke<string>("connect_saved_host_no_pty", { hostId: entry.host_id });
@@ -185,12 +194,13 @@ export function HistoryPage() {
 
   const buildContextItems = (entry: ConnectionHistoryEntry): ContextMenuItem[] => [
     {
-      label: t("history.terminal"),
+      label: hosts.find(host => host.id === entry.host_id)?.kind && hosts.find(host => host.id === entry.host_id)?.kind !== "ssh" ? t("dashboard.protocol.connect") : t("history.terminal"),
       icon: TerminalSquare,
       onClick: () => void handleTerminal(entry),
     },
     {
       label: t("history.explorer"),
+      disabled: Boolean(hosts.find(host => host.id === entry.host_id)?.kind && hosts.find(host => host.id === entry.host_id)?.kind !== "ssh"),
       icon: FolderOpen,
       onClick: () => void handleExplorer(entry),
     },
@@ -214,6 +224,7 @@ export function HistoryPage() {
 
   return (
     <>
+      {protocolHost && <ProtocolConnectModal kind={protocolHost.kind as ProtocolHostKind} initial={protocolHost} onClose={() => setProtocolHost(null)} />}
       <div className="flex flex-col h-full overflow-y-scroll bg-bg-base">
         <div className="max-w-4xl w-full mx-auto px-8 py-8 flex flex-col gap-8">
 

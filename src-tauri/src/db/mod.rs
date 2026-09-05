@@ -855,7 +855,7 @@ impl HostDb {
                 host.lang,
                 host.terminal_encoding,
                 host.terminal_theme,
-                host.force_session_log,
+                host.force_session_log.unwrap_or(false),
                 host.backspace_sends_ctrl_h,
                 // Legacy SSH rows: NULL kind → the column default 'ssh'
                 // (an explicit NULL would violate NOT NULL without hitting
@@ -2240,6 +2240,22 @@ mod tests {
             last_connected_at: None,
             connection_count: Some(0),
         }
+    }
+
+    #[test]
+    fn protocol_host_without_log_preset_uses_database_default() {
+        let directory = tempfile::tempdir().unwrap();
+        let db = HostDb::new(directory.path()).unwrap();
+        let mut host = sample_host("protocol-no-log-preset");
+        host.kind = Some("serial".into());
+        host.host = "/dev/ttyUSB0".into();
+        host.port = 0;
+        host.force_session_log = None;
+        db.save_host_validated(&host).unwrap();
+        assert_eq!(
+            db.get_host(&host.id).unwrap().unwrap().force_session_log,
+            Some(false)
+        );
     }
 
     fn sample_group(id: &str) -> HostGroup {

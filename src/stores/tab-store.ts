@@ -1,3 +1,5 @@
+import type { SavedHost } from "../types";
+import { t } from "../i18n";
 import { create } from "zustand";
 import { useSessionStore } from "./session-store";
 import { useSftpStore } from "./sftp-store";
@@ -11,8 +13,8 @@ export type UnifiedTab =
   | { type: "terminal"; id: string; label: string }
   | { type: "sftp"; id: string; label: string; transport?: "sftp" | "scp" }
   | { type: "s3"; id: string; label: string }
-  | { type: "vnc"; id: string; label: string; wsUrl: string }
-  | { type: "rdp"; id: string; label: string; wsUrl: string; destination: string; username: string; password: string }
+  | { type: "vnc"; id: string; label: string; wsUrl: string; savedHost?: SavedHost }
+  | { type: "rdp"; id: string; label: string; wsUrl: string; destination: string; username: string; password: string; savedHost?: SavedHost }
   | { type: "page"; id: string; label: string; page: PageId };
 
 export function getTabType(tab: UnifiedTab): string {
@@ -46,7 +48,7 @@ export function pageTabId(page: PageId): string {
 
 export const useTabStore = create<TabState>((set, get) => ({
   tabs: new Map<string, UnifiedTab>([
-    [pageTabId("hosts"), { type: "page", id: pageTabId("hosts"), label: "Hosts", page: "hosts" }],
+    [pageTabId("hosts"), { type: "page", id: pageTabId("hosts"), label: t("tabs.page.hosts"), page: "hosts" }],
   ]),
   tabOrder: [pageTabId("hosts")],
   activeTabId: pageTabId("hosts"),
@@ -78,7 +80,7 @@ export const useTabStore = create<TabState>((set, get) => ({
         // Ensure hosts tab exists as fallback
         if (!tabs.has(activeTabId)) {
           const hostsId = pageTabId("hosts");
-          const hostsTab: UnifiedTab = { type: "page", id: hostsId, label: "Hosts", page: "hosts" };
+          const hostsTab: UnifiedTab = { type: "page", id: hostsId, label: t("tabs.page.hosts"), page: "hosts" };
           tabs.set(hostsId, hostsTab);
           if (!tabOrder.includes(hostsId)) tabOrder.push(hostsId);
           activeTabId = hostsId;

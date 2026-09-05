@@ -1,3 +1,4 @@
+import { terminalCommand } from "../lib/terminal-transport";
 import { Terminal as XTerm } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { registerSearchAddon, unregisterSearchAddon } from "./terminal-registry";
@@ -211,8 +212,8 @@ function createEntry(sessionId: string): TerminalEntry {
   const sendBytes = (data: string) => {
     void (async () => {
       const { invoke } = await import("@tauri-apps/api/core");
-      await invoke("ssh_send_input", { sessionId, data: Array.from(new TextEncoder().encode(data)) });
-    })();
+      await invoke(terminalCommand(sessionId, "ssh_send_input", "term_send"), { sessionId, data: Array.from(new TextEncoder().encode(data)) });
+    })().catch((err) => console.error("Terminal input failed:", err));
   };
 
   // Load search addon asynchronously.
@@ -296,7 +297,7 @@ function createEntry(sessionId: string): TerminalEntry {
       entry.resizeTimer = null;
       (async () => {
         const { invoke } = await import("@tauri-apps/api/core");
-        await invoke("ssh_resize_pty", { sessionId, cols, rows });
+        await invoke(terminalCommand(sessionId, "ssh_resize_pty", "term_resize"), { sessionId, cols, rows });
       })().catch(() => {
         /* session may have been torn down between schedule and fire */
       });

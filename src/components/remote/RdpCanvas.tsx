@@ -2,6 +2,10 @@ import { useEffect, useRef, useState } from "react";
 import { Loader2, AlertTriangle, Unplug } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "../../i18n";
+import type { SavedHost } from "../../types";
+import { persistProtocolHost } from "../../lib/protocol-hosts";
+import { useHostsStore } from "../../stores/hosts-store";
+import { withNativeClipboard } from "./rdp-native-clipboard";
 import { cancelDeferredClose, deferClose } from "./deferred-close";
 
 interface RdpCanvasProps {
@@ -13,10 +17,14 @@ interface RdpCanvasProps {
   username: string;
   password: string;
   isActive: boolean;
+  savedHost?: SavedHost;
 }
 
 /** Minimal shape of the component's PublicAPI (config builder chains). */
 interface RdpPublicApi {
+  setVisibility: (visible: boolean) => void;
+  setEnableClipboard: (enable: boolean) => void;
+  ctrlAltDel: () => void;
   shutdown: () => void;
   connect: (config: unknown) => Promise<{ run: () => Promise<unknown> }>;
   configBuilder: () => {
@@ -56,19 +64,26 @@ type RdpStatus = "loading" | "connecting" | "connected" | "disconnected" | "erro
  * Cleanup: `shutdown()` the session and `rd_close(token)` to tear down the
  * bridge tunnel.
  */
+let backendInitialization: Promise<unknown> | undefined;
+
 export function RdpCanvas({
   sessionId,
   wsUrl,
   destination,
   username,
   password,
+  isActive,
+  savedHost,
 }: RdpCanvasProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const elementRef = useRef<HTMLElement | null>(null);
-  const apiRef = useRef<{
-    shutdown: () => void;
-  } | null>(null);
+  const apiRef = useRef<RdpPublicApi | null>(null);
+  const activeRef = useRef(isActive);
+  activeRef.current = isActive;
+  const savedHostRef = useRef(savedHost);
+  const pasteRef = useRef<(() => Promise<void>) | null>(null);
+  useEffect(() => { apiRef.current?.setVisibility(isActive); }, [isActive]);
   const [status, setStatus] = useState<RdpStatus>("loading");
   const [errorMsg, setErrorMsg] = useState<string>("");
 
@@ -87,7 +102,7 @@ export function RdpCanvas({
         const rdp = await import("@devolutions/iron-remote-desktop-rdp");
         // Registers the <iron-remote-desktop> custom element (side effect).
         await import("@devolutions/iron-remote-desktop");
-        await rdp.init("warn");
+        await (backendInitialization ??= rdp.init("warn").catch((error: unknown) => { backendInitialization = undefined; throw error; }));
         if (cancelled) return;
 
         const el = document.createElement(
@@ -95,9 +110,20 @@ export function RdpCanvas({
         ) as HTMLElement & { module?: unknown };
         el.style.width = "100%";
         el.style.height = "100%";
-        el.module = rdp.Backend;
+        el.module = withNativeClipboard(rdp.Backend, session => {
+          pasteRef.current = async () => {
+            const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
+            const text = await readText();
+            if (cancelled || !activeRef.current) return;
+            const data = new rdp.Backend.ClipboardData();
+            data.addText("text/plain", text);
+            await session.onClipboardPaste(data);
+          };
+        }, () => !cancelled && activeRef.current, error => {
+          if (!cancelled) setErrorMsg(String(error));
+        });
         elementRef.current = el;
-        host.appendChild(el);
+
 
         el.addEventListener("ready", (event) => {
           if (cancelled) return;
@@ -105,6 +131,7 @@ export function RdpCanvas({
             event as CustomEvent<{ irgUserInteraction: RdpPublicApi }>
           ).detail.irgUserInteraction;
           apiRef.current = api;
+          api.setEnableClipboard(false);
 
           const config = api
             .configBuilder()
@@ -119,8 +146,14 @@ export function RdpCanvas({
           void api
             .connect(config)
             .then((sessionInfo) => {
-              if (cancelled) return;
+              if (cancelled) { api.shutdown(); return; }
+              api.setVisibility(activeRef.current);
               setStatus("connected");
+              const bookmark = savedHostRef.current;
+              if (bookmark) {
+                savedHostRef.current = undefined;
+                void persistProtocolHost(bookmark).then(() => useHostsStore.getState().recordConnection(bookmark.id));
+              }
               // Resolves when the RDP session terminates.
               return sessionInfo.run();
             })
@@ -135,6 +168,7 @@ export function RdpCanvas({
               setStatus("error");
             });
         });
+        host.appendChild(el);
       } catch (err) {
         if (cancelled) return;
         setErrorMsg(err instanceof Error ? err.message : String(err ?? ""));
@@ -152,6 +186,7 @@ export function RdpCanvas({
       elementRef.current?.remove();
       elementRef.current = null;
       apiRef.current = null;
+      pasteRef.current = null;
       // Deferred (see deferred-close.ts) so a StrictMode remount that runs
       // this effect again doesn't revoke the token the new mount needs.
       deferClose(`rdp:${sessionId}`, () =>
@@ -164,6 +199,11 @@ export function RdpCanvas({
 
   return (
     <div className="absolute inset-0 flex flex-col bg-bg-base">
+      {status === "connected" && <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1 text-xs text-text-secondary">
+        <button className="rounded px-2 py-1 hover:bg-bg-subtle" onClick={() => apiRef.current?.ctrlAltDel()}>Ctrl+Alt+Del</button>
+        <button className="rounded px-2 py-1 hover:bg-bg-subtle" onClick={() => void pasteRef.current?.().catch(error => setErrorMsg(String(error)))}>{t("dashboard.protocol.pasteClipboard")}</button>
+        {errorMsg && <span role="alert" className="truncate text-status-error">{errorMsg}</span>}
+      </div>}
       <div ref={containerRef} className="flex-1 min-h-0 relative" />
 
       {status !== "connected" && (

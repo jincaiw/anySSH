@@ -9,10 +9,9 @@
 //! 2. Proxy writes the X.224 Connection Request to the upstream RDP server
 //!    and reads the X.224 Connection Confirm (TPKT-framed).
 //! 3. Proxy performs the TLS handshake with the server itself, using a
-//!    lenient verifier (self-signed certs are the norm on RDP); the peer
-//!    chain is captured and handed to the client in the response PDU, which
-//!    pins it for the session (RDP TOFU semantics per §5.5 — no system root
-//!    store involved).
+//!    fingerprint explicitly approved and persisted before route creation.
+//!    TLS handshake signatures are verified; the peer certificate chain is
+//!    also forwarded to the client for CredSSP channel binding.
 //! 4. Proxy replies `RDCleanPathPdu::new_response(server_addr, x224_confirm,
 //!    cert_chain)` (DER over WS), then pipes raw bytes between the WS and
 //!    the established TLS session. The client runs CredSSP/NLA end-to-end
@@ -44,73 +43,111 @@ use tokio_util::sync::CancellationToken;
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
 const X224_MAX: usize = 1024;
 
-/// Lenient server certificate verifier: RDP servers overwhelmingly present
-/// self-signed certificates. We accept anything and forward the chain to the
-/// client, which pins it (TOFU) for the remainder of the session. See §5.5.
+/// Self-signed RDP certificates require explicit, persistent fingerprint trust.
+/// The inspection connection supplies no credentials; authenticated sessions
+/// require the exact fingerprint approved by the user.
 #[derive(Debug)]
-struct AcceptAnyServer;
+struct PinnedServer(Option<String>);
 
-impl ServerCertVerifier for AcceptAnyServer {
+pub fn certificate_fingerprint(cert: &[u8]) -> String {
+    use sha2::{Digest, Sha256};
+    format!("{:x}", Sha256::digest(cert))
+}
+
+impl ServerCertVerifier for PinnedServer {
     fn verify_server_cert(
         &self,
-        _end_entity: &CertificateDer<'_>,
-        _intermediates: &[CertificateDer<'_>],
-        _server_name: &ServerName<'_>,
-        _ocsp_response: &[u8],
-        _now: UnixTime,
+        cert: &CertificateDer<'_>,
+        _: &[CertificateDer<'_>],
+        _: &ServerName<'_>,
+        _: &[u8],
+        _: UnixTime,
     ) -> Result<ServerCertVerified, TlsError> {
+        if self
+            .0
+            .as_ref()
+            .is_some_and(|expected| *expected != certificate_fingerprint(cert.as_ref()))
+        {
+            return Err(TlsError::General(
+                "RDP certificate changed; explicit confirmation required".into(),
+            ));
+        }
         Ok(ServerCertVerified::assertion())
     }
-
     fn verify_tls12_signature(
         &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, TlsError> {
-        Ok(HandshakeSignatureValid::assertion())
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
     }
-
     fn verify_tls13_signature(
         &self,
-        _message: &[u8],
-        _cert: &CertificateDer<'_>,
-        _dss: &DigitallySignedStruct,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
     ) -> Result<HandshakeSignatureValid, TlsError> {
-        Ok(HandshakeSignatureValid::assertion())
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &rustls::crypto::ring::default_provider().signature_verification_algorithms,
+        )
     }
-
     fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
-        vec![
-            SignatureScheme::RSA_PKCS1_SHA256,
-            SignatureScheme::RSA_PKCS1_SHA384,
-            SignatureScheme::RSA_PKCS1_SHA512,
-            SignatureScheme::RSA_PSS_SHA256,
-            SignatureScheme::RSA_PSS_SHA384,
-            SignatureScheme::RSA_PSS_SHA512,
-            SignatureScheme::ECDSA_NISTP256_SHA256,
-            SignatureScheme::ECDSA_NISTP384_SHA384,
-            SignatureScheme::ED25519,
-        ]
+        rustls::crypto::ring::default_provider()
+            .signature_verification_algorithms
+            .supported_schemes()
     }
+}
+
+pub async fn inspect_certificate(host: &str, port: u16) -> Result<String, BridgeError> {
+    tokio::time::timeout(Duration::from_secs(30), async {
+        let mut tcp = TcpStream::connect((host, port))
+            .await
+            .map_err(|e| BridgeError::Upstream(e.to_string()))?;
+        tcp.write_all(&[3, 0, 0, 19, 14, 224, 0, 0, 0, 0, 0, 1, 0, 8, 0, 3, 0, 0, 0])
+            .await
+            .map_err(|e| BridgeError::Upstream(e.to_string()))?;
+        read_tpkt(&mut tcp).await?;
+        let tls = TlsConnector::from(pinned_client_config(None))
+            .connect(server_name_for(host), tcp)
+            .await
+            .map_err(|e| BridgeError::Upstream(e.to_string()))?;
+        let cert = tls
+            .get_ref()
+            .1
+            .peer_certificates()
+            .and_then(|certs| certs.first())
+            .ok_or_else(|| BridgeError::Upstream("server supplied no certificate".into()))?;
+        Ok(certificate_fingerprint(cert.as_ref()))
+    })
+    .await
+    .map_err(|_| BridgeError::Upstream("certificate inspection timed out".into()))?
 }
 
 /// TLS 1.2-only client config: CredSSP/NLA on Windows requires TLS 1.2
 /// (netbird forces the same); TLS 1.3 is never offered.
-fn lenient_client_config() -> Arc<rustls::ClientConfig> {
+fn pinned_client_config(fingerprint: Option<String>) -> Arc<rustls::ClientConfig> {
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = rustls::ClientConfig::builder_with_provider(provider)
         .with_protocol_versions(&[&rustls::version::TLS12])
         .expect("TLS 1.2 must be supported by the ring provider")
         .dangerous()
-        .with_custom_certificate_verifier(Arc::new(AcceptAnyServer))
+        .with_custom_certificate_verifier(Arc::new(PinnedServer(fingerprint)))
         .with_no_client_auth();
     Arc::new(config)
 }
 
 /// ServerName for the TLS client hello. IP literals parse directly; anything
 /// else that rustls rejects (shouldn't happen for real hostnames) falls back
-/// to a fixed syntactically-valid name — the lenient verifier ignores it.
+/// to a fixed syntactically-valid name — certificate identity is checked by its approved fingerprint.
 fn server_name_for(host: &str) -> ServerName<'static> {
     ServerName::try_from(host.to_string())
         .or_else(|_| ServerName::try_from("anyssh-bridge".to_string()))
@@ -156,6 +193,7 @@ pub async fn handle_rdp_client(
     mut ws: WebSocketStream<TcpStream>,
     host: String,
     port: u16,
+    fingerprint: String,
     shared: Arc<Shared>,
     token: String,
 ) {
@@ -164,8 +202,13 @@ pub async fn handle_rdp_client(
     // Register as active before the handshake so `rd_close` can cancel us.
     let cancel = CancellationToken::new();
     shared.active.insert(token.clone(), cancel.clone());
+    let _guard = super::bridge::ActiveSessionGuard(shared.clone(), token.clone());
 
-    let result = run_handshake(&mut ws, &host, port, &cancel).await;
+    let result = tokio::select! {
+        _ = cancel.cancelled() => return,
+        result = tokio::time::timeout(Duration::from_secs(40), run_handshake(&mut ws, &host, port, &cancel, &fingerprint)) =>
+            result.unwrap_or_else(|_| Err(BridgeError::Upstream("RDP handshake timed out".into()))),
+    };
 
     if let Err(_err) = result {
         // Tell the WASM client why it failed (it surfaces RDCleanPathErr).
@@ -186,7 +229,7 @@ pub async fn handle_rdp_client(
     let up_cancel = cancel.clone();
     let down_cancel = cancel.clone();
 
-    let mut up = tokio::spawn(async move {
+    let up = tokio::spawn(async move {
         let mut buf = vec![0u8; super::bridge::PUMP_BUF];
         loop {
             tokio::select! {
@@ -203,7 +246,7 @@ pub async fn handle_rdp_client(
         }
     });
 
-    let mut down = tokio::spawn(async move {
+    let down = tokio::spawn(async move {
         loop {
             tokio::select! {
                 _ = down_cancel.cancelled() => break,
@@ -218,15 +261,7 @@ pub async fn handle_rdp_client(
         }
     });
 
-    tokio::select! {
-        _ = &mut up => {},
-        _ = &mut down => {},
-    }
-    cancel.cancel();
-    let _ = up.await;
-    let _ = down.await;
-    shared.active.remove(&token);
-    shared.touch();
+    super::bridge::finish_pumps(up, down, cancel).await;
 }
 
 /// Handshake half of `handle_rdp_client`: returns the established TLS
@@ -236,6 +271,7 @@ async fn run_handshake(
     host: &str,
     port: u16,
     cancel: &CancellationToken,
+    fingerprint: &str,
 ) -> Result<tokio_rustls::client::TlsStream<TcpStream>, BridgeError> {
     // ── 1. First WS message = client RDCleanPath request ────────────────
     let first = tokio::select! {
@@ -265,7 +301,7 @@ async fn run_handshake(
     // ── 2. Dial upstream (route host, not the client-supplied destination —
     //       the route registration is the trust anchor) ────────────────────
     let target = format!("{host}:{port}");
-    let mut tcp = tokio::time::timeout(STEP_TIMEOUT, TcpStream::connect(&target))
+    let mut tcp = tokio::time::timeout(STEP_TIMEOUT, TcpStream::connect((host, port)))
         .await
         .map_err(|_| BridgeError::Upstream(format!("connect {target}: timed out")))?
         .map_err(|e| BridgeError::Upstream(format!("connect {target}: {e}")))?;
@@ -277,8 +313,8 @@ async fn run_handshake(
         .map_err(|e| BridgeError::Upstream(format!("write X.224 request: {e}")))?;
     let x224_confirm = read_tpkt(&mut tcp).await?;
 
-    // ── 4. TLS handshake with the server (lenient, TLS 1.2) ──────────────
-    let connector = TlsConnector::from(lenient_client_config());
+    // ── 4. TLS handshake with the server (pinned, TLS 1.2) ──────────────
+    let connector = TlsConnector::from(pinned_client_config(Some(fingerprint.to_owned())));
     let name = server_name_for(host);
     let tls = tokio::time::timeout(STEP_TIMEOUT, connector.connect(name, tcp))
         .await
@@ -391,6 +427,30 @@ mod tests {
         (addr.ip().to_string(), addr.port(), cert_der)
     }
 
+    #[tokio::test]
+    async fn certificate_inspection_returns_leaf_fingerprint_without_credentials() {
+        let (host, port, cert) = spawn_fake_rdp_server().await;
+        assert_eq!(
+            inspect_certificate(&host, port).await.unwrap(),
+            certificate_fingerprint(&cert)
+        );
+    }
+
+    #[tokio::test]
+    async fn changed_certificate_is_rejected_before_tunneling() {
+        let (host, port, _) = spawn_fake_rdp_server().await;
+        let mut tcp = TcpStream::connect((host.as_str(), port)).await.unwrap();
+        tcp.write_all(&dummy_x224_request()).await.unwrap();
+        read_tpkt(&mut tcp).await.unwrap();
+        let result = TlsConnector::from(pinned_client_config(Some("0".repeat(64))))
+            .connect(server_name_for(&host), tcp)
+            .await;
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("certificate changed"));
+    }
+
     fn dummy_x224_request() -> Vec<u8> {
         // Minimal X.224 Connection Request (TPKT + CR TPDU, class 0).
         vec![
@@ -403,7 +463,12 @@ mod tests {
         let (host, port, cert_der) = spawn_fake_rdp_server().await;
         let mgr = super::super::bridge::BridgeManager::new();
         let listener_port = mgr.ensure_listener().await.unwrap();
-        let ep = mgr.open_rdp(host.clone(), port, listener_port);
+        let ep = mgr.open_rdp(
+            host.clone(),
+            port,
+            listener_port,
+            certificate_fingerprint(&cert_der),
+        );
 
         let (mut ws, _) = tokio_tungstenite::connect_async(ep.ws_url.as_str())
             .await
@@ -468,7 +533,7 @@ mod tests {
         // RDCleanPath error PDU instead of closing the socket silently.
         let mgr = super::super::bridge::BridgeManager::new();
         let listener_port = mgr.ensure_listener().await.unwrap();
-        let ep = mgr.open_rdp("127.0.0.1".into(), 1, listener_port); // port 1: reserved/unbound
+        let ep = mgr.open_rdp("127.0.0.1".into(), 1, listener_port, "0".repeat(64)); // port 1: reserved/unbound
 
         let (mut ws, _) = tokio_tungstenite::connect_async(ep.ws_url.as_str())
             .await

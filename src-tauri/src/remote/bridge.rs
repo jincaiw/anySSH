@@ -29,7 +29,11 @@ pub enum Route {
     Vnc { host: String, port: u16 },
     /// RDCleanPath proxy (X.224 + TLS cert capture, then byte passthrough
     /// inside the proxy-terminated TLS session). See `remote/rdp.rs`.
-    Rdp { host: String, port: u16 },
+    Rdp {
+        host: String,
+        port: u16,
+        fingerprint: String,
+    },
 }
 
 #[derive(Debug, Error)]
@@ -104,6 +108,7 @@ struct ListenerHandle {
 /// Registry + loopback listener owner. Managed state; VNC and (later) RDP
 /// share one listener.
 pub struct BridgeManager {
+    start_lock: tokio::sync::Mutex<()>,
     inner: Mutex<Option<ListenerHandle>>,
     shared: Arc<Shared>,
 }
@@ -117,6 +122,7 @@ impl Default for BridgeManager {
 impl BridgeManager {
     pub fn new() -> Self {
         Self {
+            start_lock: tokio::sync::Mutex::new(()),
             inner: Mutex::new(None),
             shared: Arc::new(Shared {
                 pending: DashMap::new(),
@@ -142,11 +148,22 @@ impl BridgeManager {
 
     /// Register an RDP route and return the loopback WS endpoint for the
     /// ironrdp-web WASM client (it performs the RDCleanPath handshake).
-    pub fn open_rdp(&self, host: String, port: u16, listener_port: u16) -> WsEndpoint {
+    pub fn open_rdp(
+        &self,
+        host: String,
+        port: u16,
+        listener_port: u16,
+        fingerprint: String,
+    ) -> WsEndpoint {
         let token = new_token();
-        self.shared
-            .pending
-            .insert(token.clone(), Route::Rdp { host, port });
+        self.shared.pending.insert(
+            token.clone(),
+            Route::Rdp {
+                host,
+                port,
+                fingerprint,
+            },
+        );
         self.shared.touch();
         WsEndpoint {
             ws_url: format!("ws://127.0.0.1:{listener_port}/rdp/{token}"),
@@ -180,6 +197,7 @@ impl BridgeManager {
     /// A listener the watchdog already shut down is detected by its finished
     /// accept task and replaced.
     pub async fn ensure_listener(&self) -> Result<u16, BridgeError> {
+        let _start = self.start_lock.lock().await;
         {
             let mut guard = self.inner.lock().unwrap();
             match guard.as_ref() {
@@ -284,19 +302,22 @@ async fn accept_loop(
 async fn handle_connection(stream: TcpStream, shared: Arc<Shared>) {
     let path = Arc::new(Mutex::<Option<String>>::new(None));
     let path_cb = path.clone();
-    let ws = tokio_tungstenite::accept_hdr_async(
-        stream,
-        move |req: &Request, resp: Response| -> std::result::Result<Response, ErrorResponse> {
-            if let Ok(mut p) = path_cb.lock() {
-                *p = Some(req.uri().path().to_string());
-            }
-            Ok(resp)
-        },
+    let ws = tokio::time::timeout(
+        CONNECT_TIMEOUT,
+        tokio_tungstenite::accept_hdr_async(
+            stream,
+            move |req: &Request, resp: Response| -> std::result::Result<Response, ErrorResponse> {
+                if let Ok(mut p) = path_cb.lock() {
+                    *p = Some(req.uri().path().to_string());
+                }
+                Ok(resp)
+            },
+        ),
     )
     .await;
     let ws = match ws {
-        Ok(ws) => ws,
-        Err(_) => return,
+        Ok(Ok(ws)) => ws,
+        _ => return,
     };
     let path = path.lock().ok().and_then(|p| p.clone()).unwrap_or_default();
 
@@ -318,21 +339,29 @@ async fn handle_connection(stream: TcpStream, shared: Arc<Shared>) {
 
     let (host, port) = match route {
         Route::Vnc { host, port } => (host, port),
-        Route::Rdp { host, port } => {
-            super::rdp::handle_rdp_client(ws, host, port, shared, token.to_string()).await;
+        Route::Rdp {
+            host,
+            port,
+            fingerprint,
+        } => {
+            super::rdp::handle_rdp_client(ws, host, port, fingerprint, shared, token.to_string())
+                .await;
             return;
         }
     };
 
-    let target = format!("{host}:{port}");
-
-    let tcp = match tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect(&target)).await {
+    let sess_cancel = CancellationToken::new();
+    shared.active.insert(token.to_string(), sess_cancel.clone());
+    let _guard = ActiveSessionGuard(shared.clone(), token.to_string());
+    let dial = tokio::time::timeout(CONNECT_TIMEOUT, TcpStream::connect((host.as_str(), port)));
+    let tcp = match tokio::select! {
+        _ = sess_cancel.cancelled() => return,
+        result = dial => result,
+    } {
         Ok(Ok(tcp)) => tcp,
         _ => return, // upstream unreachable — client sees an abrupt close
     };
 
-    let sess_cancel = CancellationToken::new();
-    shared.active.insert(token.to_string(), sess_cancel.clone());
     shared.touch();
 
     let (mut ws_tx, mut ws_rx) = ws.split();
@@ -341,7 +370,7 @@ async fn handle_connection(stream: TcpStream, shared: Arc<Shared>) {
     let up_cancel = sess_cancel.clone();
     let down_cancel = sess_cancel.clone();
 
-    let mut up = tokio::spawn(async move {
+    let up = tokio::spawn(async move {
         loop {
             tokio::select! {
                 _ = up_cancel.cancelled() => break,
@@ -356,7 +385,7 @@ async fn handle_connection(stream: TcpStream, shared: Arc<Shared>) {
         }
     });
 
-    let mut down = tokio::spawn(async move {
+    let down = tokio::spawn(async move {
         let mut buf = vec![0u8; PUMP_BUF];
         loop {
             tokio::select! {
@@ -374,15 +403,31 @@ async fn handle_connection(stream: TcpStream, shared: Arc<Shared>) {
     });
 
     // Whichever direction ends first takes the whole session down.
-    tokio::select! {
-        _ = &mut up => {},
-        _ = &mut down => {},
+    finish_pumps(up, down, sess_cancel).await;
+}
+
+pub(crate) struct ActiveSessionGuard(pub Arc<Shared>, pub String);
+impl Drop for ActiveSessionGuard {
+    fn drop(&mut self) {
+        self.0.active.remove(&self.1);
+        self.0.touch();
     }
-    sess_cancel.cancel();
-    let _ = up.await;
-    let _ = down.await;
-    shared.active.remove(token);
-    shared.touch();
+}
+
+pub(crate) async fn finish_pumps(
+    mut up: JoinHandle<()>,
+    mut down: JoinHandle<()>,
+    cancel: CancellationToken,
+) {
+    tokio::select! {
+        _ = &mut up => { down.abort(); let _ = down.await; },
+        _ = &mut down => { up.abort(); let _ = up.await; },
+        _ = cancel.cancelled() => {
+            up.abort(); down.abort();
+            let _ = up.await; let _ = down.await;
+        }
+    }
+    cancel.cancel();
 }
 
 // ---------------------------------------------------------------------------
@@ -419,6 +464,60 @@ mod tests {
             }
         });
         (addr.ip().to_string(), addr.port())
+    }
+
+    #[tokio::test]
+    async fn concurrent_listener_initialization_uses_one_port() {
+        let manager = BridgeManager::new();
+        let (one, two, three) = tokio::join!(
+            manager.ensure_listener(),
+            manager.ensure_listener(),
+            manager.ensure_listener()
+        );
+        assert_eq!(one.as_ref().unwrap(), two.as_ref().unwrap());
+        assert_eq!(one.unwrap(), three.unwrap());
+    }
+
+    #[tokio::test]
+    async fn completed_pump_cancels_pending_peer_without_double_poll() {
+        for upstream_finishes in [true, false] {
+            let cancel = CancellationToken::new();
+            let finished = tokio::spawn(async {});
+            let waiting = tokio::spawn(std::future::pending::<()>());
+            let (up, down) = if upstream_finishes {
+                (finished, waiting)
+            } else {
+                (waiting, finished)
+            };
+            tokio::time::timeout(
+                Duration::from_secs(2),
+                finish_pumps(up, down, cancel.clone()),
+            )
+            .await
+            .unwrap();
+            assert!(cancel.is_cancelled());
+        }
+    }
+
+    #[tokio::test]
+    async fn completed_vnc_session_removes_active_entry() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let manager = BridgeManager::new();
+        let bridge_port = manager.ensure_listener().await.unwrap();
+        let endpoint = manager.open_vnc("127.0.0.1".into(), port, bridge_port);
+        let (_ws, _) = tokio_tungstenite::connect_async(&endpoint.ws_url)
+            .await
+            .unwrap();
+        let (tcp, _) = listener.accept().await.unwrap();
+        drop(tcp);
+        tokio::time::timeout(Duration::from_secs(2), async {
+            while !manager.shared.active.is_empty() {
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("finished tunnel must release its active session");
     }
 
     #[tokio::test]

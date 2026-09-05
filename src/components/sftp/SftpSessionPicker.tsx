@@ -25,7 +25,7 @@ export function SftpSessionPicker() {
   const [error, setError] = useState<string | null>(null);
 
   const connectedSessions = Array.from(sessions.values()).filter(
-    (s) => s.status === "Connected",
+    (s) => s.status === "Connected" && (!s.kind || s.kind === "ssh"),
   );
 
   const handleOpenSftp = async (sshSessionId: string, label: string, username: string) => {

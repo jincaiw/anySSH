@@ -7,7 +7,7 @@
 
 export default {
   // ─── Modal shell ────────────────────────────────────────────────────────
-  "title.new": "New Host",
+  "title.new": "New SSH Connection",
   "title.edit": "Edit Host",
   "action.connecting": "Connecting…",
   "action.saving": "Saving…",

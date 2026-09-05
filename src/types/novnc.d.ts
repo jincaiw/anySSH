@@ -9,7 +9,9 @@ declare module "@novnc/novnc" {
       options?: Record<string, unknown>,
     );
     disconnect(): void;
-    sendClipboard(text: string): void;
+    clipboardPasteFrom(text: string): void;
+    sendCredentials(credentials: Record<string, string>): void;
+    sendCtrlAltDel(): void;
     focus(options?: { preventScroll?: boolean }): void;
     blur(): void;
     scaleViewport: boolean;

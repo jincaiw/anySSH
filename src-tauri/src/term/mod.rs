@@ -20,6 +20,7 @@
 #![allow(dead_code)]
 
 pub mod commands;
+pub mod credentials;
 pub mod local;
 pub mod serial;
 pub mod telnet;
@@ -109,6 +110,8 @@ pub enum TermParams {
         /// Optional auto-login script, executed once the TCP stream is up.
         #[serde(default)]
         login_script: Option<Vec<LoginScriptStep>>,
+        #[serde(default)]
+        script_credential_id: Option<String>,
         /// Per-session encoding override (encoding_rs label); `None` falls
         /// back to the global `terminal_encoding` setting.
         #[serde(default)]
@@ -251,6 +254,7 @@ pub trait TermIo: Send {
 
 /// Commands sent from the frontend (via the manager) to the session loop.
 enum TermCmd {
+    Start,
     Data(Vec<u8>),
     Resize {
         cols: u32,
@@ -269,12 +273,14 @@ enum TermCmd {
 pub struct TermHandle {
     pub kind: TermKind,
     cmd_tx: mpsc::UnboundedSender<TermCmd>,
-    reader_task: JoinHandle<()>,
+    reader_task: Option<JoinHandle<()>>,
     /// The encoding this session currently transcodes with (shared with the
     /// loop so `encoding()` reads the live value).
     current_encoding: Arc<RwLock<String>>,
     /// Handle copy used by `close()` to flush + stop the session log.
     logger: SessionLogger,
+    context: SessionLogContext,
+    params: Option<TermParams>,
 }
 
 impl TermHandle {
@@ -291,6 +297,9 @@ impl TermHandle {
     }
 
     fn set_encoding(&self, label: &str) -> Result<(), TermError> {
+        if encoding_rs::Encoding::for_label(label.as_bytes()).is_none() {
+            return Err(TermError::InvalidEncoding(label.to_string()));
+        }
         if let Ok(mut cur) = self.current_encoding.write() {
             *cur = label.to_string();
         }
@@ -310,10 +319,12 @@ impl TermHandle {
 
     /// Gracefully close: stop the session log (flushing it), signal the loop,
     /// and wait for the backend `shutdown()` to run.
-    async fn close(self) {
+    async fn close(&mut self) {
         self.logger.stop();
         let _ = self.cmd_tx.send(TermCmd::Close);
-        let _ = self.reader_task.await;
+        if let Some(task) = self.reader_task.take() {
+            let _ = task.await;
+        }
     }
 }
 
@@ -354,10 +365,13 @@ pub fn spawn_session(
 
     let reader_task = tokio::spawn(async move {
         let mut buf = vec![0u8; 8192];
+        // The webview must subscribe before any banner or short-lived process
+        // output is emitted. Start is idempotent across StrictMode remounts.
+        let mut started = false;
 
         loop {
             tokio::select! {
-                n = io.read(&mut buf) => {
+                n = io.read(&mut buf), if started => {
                     let is_eof_or_err = matches!(&n, Ok(0)) || n.is_err();
                     if is_eof_or_err {
                         // Clean EOF or backend failure — either way the
@@ -389,6 +403,7 @@ pub fn spawn_session(
                 }
                 cmd = cmd_rx.recv() => {
                     match cmd {
+                        Some(TermCmd::Start) => started = true,
                         Some(TermCmd::Data(data)) => {
                             if task_logger.is_active() {
                                 if let Ok(text) = std::str::from_utf8(&data) {
@@ -416,7 +431,6 @@ pub fn spawn_session(
                             }
                         }
                         Some(TermCmd::Close) | None => {
-                            io.shutdown().await;
                             let payload = TermStatusPayload {
                                 session_id: reader_session_id.clone(),
                                 status: ConnectionStatus::Disconnected,
@@ -428,6 +442,8 @@ pub fn spawn_session(
                 }
             }
         }
+        io.shutdown().await;
+        task_logger.stop();
     });
 
     let _ = app.emit(
@@ -441,9 +457,11 @@ pub fn spawn_session(
     TermHandle {
         kind,
         cmd_tx,
-        reader_task,
+        reader_task: Some(reader_task),
         current_encoding,
         logger,
+        context: log,
+        params: None,
     }
 }
 
@@ -471,20 +489,54 @@ impl TermManager {
         }
     }
 
-    pub fn insert(&self, session_id: String, handle: TermHandle) {
+    pub fn insert(&self, session_id: String, mut handle: TermHandle, params: TermParams) {
+        handle.params = Some(params);
         self.sessions.insert(session_id, handle);
+    }
+
+    pub fn start(&self, id: &str) -> Result<(), TermError> {
+        self.sessions
+            .get(id)
+            .ok_or_else(|| TermError::SessionNotFound(id.into()))?
+            .cmd_tx
+            .send(TermCmd::Start)
+            .map_err(|_| TermError::SessionNotFound(id.into()))
+    }
+
+    pub fn params(&self, id: &str) -> Result<TermParams, TermError> {
+        self.sessions
+            .get(id)
+            .and_then(|s| s.params.clone())
+            .ok_or_else(|| TermError::SessionNotFound(id.into()))
+    }
+
+    pub fn contains(&self, id: &str) -> bool {
+        self.sessions.contains_key(id)
+    }
+
+    pub fn session_log_context(&self, id: &str) -> Option<SessionLogContext> {
+        self.sessions.get(id).map(|s| s.context.clone())
     }
 
     /// Close a session and drop its handle. Returns the kind, or `None` when
     /// the id was already gone.
     pub async fn close(&self, session_id: &str) -> Option<TermKind> {
         match self.sessions.remove(session_id) {
-            Some((_, handle)) => {
+            Some((_, mut handle)) => {
                 let kind = handle.kind;
                 handle.close().await;
                 Some(kind)
             }
             None => None,
+        }
+    }
+
+    /// Retain connection settings after a failed retry, including exclusive
+    /// serial devices whose old reader must be stopped before opening again.
+    pub async fn stop_for_reconnect(&self, id: &str) {
+        if let Some((key, mut handle)) = self.sessions.remove(id) {
+            handle.close().await;
+            self.sessions.insert(key, handle);
         }
     }
 

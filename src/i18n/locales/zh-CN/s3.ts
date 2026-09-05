@@ -21,8 +21,8 @@ export default {
   "page.deleteMessage": "该连接将被永久移除。",
 
   // ─── Connect / edit dialog (S3ConnectDialog) ─────────────────────────────
-  "dialog.titleNew": "连接到 S3",
-  "dialog.titleEdit": "编辑连接",
+  "dialog.titleNew": "连接对象存储",
+  "dialog.titleEdit": "编辑对象存储连接",
   "dialog.saving": "保存中…",
   "dialog.connecting": "连接中…",
   "dialog.saveFailed": "保存失败",

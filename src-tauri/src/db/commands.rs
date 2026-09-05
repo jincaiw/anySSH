@@ -11,12 +11,15 @@ use super::{ConnectionHistoryEntry, DbError, HostDb, HostGroup, RecentConnection
 /// ProxyJump cycles, self-references, and dangling tunnel-host targets are
 /// rejected atomically with the write inside [`HostDb::save_host_validated`].
 #[tauri::command]
-#[instrument(skip(state), fields(id = %host.id))]
-pub async fn save_host(host: SavedHost, state: State<'_, Arc<HostDb>>) -> Result<(), DbError> {
+#[instrument(skip(state, host), fields(id = %host.id))]
+pub async fn save_host(mut host: SavedHost, state: State<'_, Arc<HostDb>>) -> Result<(), DbError> {
     let db = Arc::clone(&state);
-    task::spawn_blocking(move || db.save_host_validated(&host))
-        .await
-        .map_err(|e| DbError::InitError(format!("task panicked: {e}")))?
+    task::spawn_blocking(move || {
+        crate::term::credentials::protect_script(&mut host)?;
+        db.save_host_validated(&host)
+    })
+    .await
+    .map_err(|e| DbError::InitError(format!("task panicked: {e}")))?
 }
 
 /// Return all saved hosts, ordered by label.
@@ -24,9 +27,19 @@ pub async fn save_host(host: SavedHost, state: State<'_, Arc<HostDb>>) -> Result
 #[instrument(skip(state))]
 pub async fn list_hosts(state: State<'_, Arc<HostDb>>) -> Result<Vec<SavedHost>, DbError> {
     let db = Arc::clone(&state);
-    task::spawn_blocking(move || db.list_hosts())
-        .await
-        .map_err(|e| DbError::InitError(format!("task panicked: {e}")))?
+    task::spawn_blocking(move || {
+        let mut hosts = db.list_hosts()?;
+        for host in &mut hosts {
+            let previous = host.params_json.clone();
+            crate::term::credentials::protect_script(host)?;
+            if host.params_json != previous {
+                db.save_host_validated(host)?;
+            }
+        }
+        Ok(hosts)
+    })
+    .await
+    .map_err(|e| DbError::InitError(format!("task panicked: {e}")))?
 }
 
 /// Permanently delete a saved host by its UUID string.

@@ -143,17 +143,23 @@ pub async fn delete_snippet_folder(
 /// calling this command.  The resolved command must never be executed without
 /// explicit user confirmation when `is_dangerous` is true.
 #[tauri::command]
-#[instrument(skip(ssh, db), fields(session_id = %session_id))]
+#[instrument(skip(ssh, term, db, resolved_command), fields(session_id = %session_id))]
 pub async fn snippet_execute(
     session_id: String,
     resolved_command: String,
     snippet_id: Option<String>,
     ssh: State<'_, SshManager>,
+    term: State<'_, crate::term::TermManager>,
     db: State<'_, Arc<HostDb>>,
 ) -> Result<(), SshError> {
     // 1. Write the command followed by a newline to the PTY.
     let bytes = format!("{}\n", resolved_command).into_bytes();
-    ssh.send_input(&session_id, &bytes).await?;
+    if term.contains(&session_id) {
+        term.send(&session_id, &bytes)
+            .map_err(|e| SshError::IoError(e.to_string()))?;
+    } else {
+        ssh.send_input(&session_id, &bytes).await?;
+    }
 
     // 2. Record usage statistics in the background — a failure here must not
     //    propagate back to the frontend as an error.

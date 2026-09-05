@@ -21,8 +21,8 @@ export default {
   "page.deleteMessage": "This connection will be permanently removed.",
 
   // ─── Connect / edit dialog (S3ConnectDialog) ─────────────────────────────
-  "dialog.titleNew": "Connect to S3",
-  "dialog.titleEdit": "Edit Connection",
+  "dialog.titleNew": "Connect to Object Storage",
+  "dialog.titleEdit": "Edit Object Storage Connection",
   "dialog.saving": "Saving…",
   "dialog.connecting": "Connecting…",
   "dialog.saveFailed": "Save failed",

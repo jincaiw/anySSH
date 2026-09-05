@@ -1,3 +1,5 @@
+import { toast } from "../stores/toast-store";
+import { t } from "../i18n";
 import { useHostsStore } from "../stores/hosts-store";
 import type { SavedHost } from "../types";
 
@@ -54,7 +56,7 @@ export function buildProtocolHost(
     font_size: null,
     last_connected_at: null,
     connection_count: null,
-    force_session_log: null,
+    force_session_log: false,
     kind,
     params_json: JSON.stringify(params),
   };
@@ -70,6 +72,7 @@ export async function persistProtocolHost(host: SavedHost): Promise<void> {
     await invoke("save_host", { host });
     await useHostsStore.getState().loadHosts();
   } catch (err) {
+    toast.error(t("dashboard.protocol.saveFailed"));
     console.error("Failed to save protocol host:", err);
   }
 }
@@ -77,4 +80,16 @@ export async function persistProtocolHost(host: SavedHost): Promise<void> {
 /** True when the host card is an SSH (or legacy untyped) entry. */
 export function isSshHost(host: SavedHost): boolean {
   return !host.kind || host.kind === "ssh" || host.kind === "s3";
+}
+
+/** Displayed address and protocol parameters have one canonical source. */
+export function protocolParams(host: SavedHost): Record<string, unknown> {
+  const stored = host.params_json ? JSON.parse(host.params_json) as Record<string, unknown> : {};
+  if (!stored || typeof stored !== "object" || Array.isArray(stored)) throw new Error(t("dashboard.protocol.invalidParams"));
+  const encoding = host.terminal_encoding || stored.encoding;
+  switch (host.kind) {
+    case "serial": return { ...stored, kind: "serial", port: host.host, ...(encoding ? { encoding } : {}) };
+    case "local": return { ...stored, kind: "local", ...(encoding ? { encoding } : {}) };
+    default: return { ...stored, kind: host.kind, host: host.host, port: host.port, username: host.username, ...(encoding ? { encoding } : {}) };
+  }
 }

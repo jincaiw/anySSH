@@ -40,14 +40,14 @@ fn log_context(db: &HostDb, host: String, user: String) -> SessionLogContext {
 fn finish_open(
     state: &TermManager,
     io: Box<dyn TermIo>,
-    kind: TermKind,
+    backend: (TermKind, TermParams),
     encoding: &str,
     session_id: String,
     app_handle: AppHandle,
     log: SessionLogContext,
 ) -> String {
-    let handle = spawn_session(session_id.clone(), kind, io, app_handle, encoding, log);
-    state.insert(session_id.clone(), handle);
+    let handle = spawn_session(session_id.clone(), backend.0, io, app_handle, encoding, log);
+    state.insert(session_id.clone(), handle, backend.1);
     session_id
 }
 
@@ -62,7 +62,23 @@ pub async fn term_open(
 ) -> Result<String, TermError> {
     // Global terminal settings (encoding default comes from the same
     // settings the SSH layer reads; per-session override wins).
+    if cols == 0 || rows == 0 || cols > u16::MAX as u32 || rows > u16::MAX as u32 {
+        return Err(TermError::InvalidParams(
+            "terminal dimensions must be between 1 and 65535".into(),
+        ));
+    }
+    let selected_encoding = match &params {
+        TermParams::Local { encoding, .. }
+        | TermParams::Telnet { encoding, .. }
+        | TermParams::Serial { encoding, .. } => encoding,
+    };
+    if let Some(label) = selected_encoding {
+        if encoding_rs::Encoding::for_label(label.as_bytes()).is_none() {
+            return Err(TermError::InvalidEncoding(label.clone()));
+        }
+    }
     let settings = session_settings_from_db(&db);
+    let saved_params = params.clone();
 
     match params {
         TermParams::Local {
@@ -76,6 +92,7 @@ pub async fn term_open(
                 start_directory.as_deref(),
                 cols as u16,
                 rows as u16,
+                &settings.term,
             )?;
             let user = std::env::var("USER")
                 .or_else(|_| std::env::var("USERNAME"))
@@ -85,7 +102,7 @@ pub async fn term_open(
             Ok(finish_open(
                 &state,
                 Box::new(io),
-                TermKind::Local,
+                (TermKind::Local, saved_params),
                 &encoding,
                 session_id,
                 app_handle,
@@ -96,16 +113,26 @@ pub async fn term_open(
             host,
             port,
             login_script,
+            script_credential_id,
             encoding,
         } => {
             let encoding = encoding.unwrap_or_else(|| settings.encoding.clone());
+            let login_script = if let Some(id) = script_credential_id {
+                Some(
+                    tokio::task::spawn_blocking(move || crate::term::credentials::load_script(&id))
+                        .await
+                        .map_err(|e| TermError::Io(e.to_string()))??,
+                )
+            } else {
+                login_script
+            };
             let io = TelnetIo::connect(&host, port, login_script, cols as u16, rows as u16).await?;
             let log = log_context(&db, format!("{host}:{port}"), "telnet".to_string());
             let session_id = SessionId::new().0;
             Ok(finish_open(
                 &state,
                 Box::new(io),
-                TermKind::Telnet,
+                (TermKind::Telnet, saved_params),
                 &encoding,
                 session_id,
                 app_handle,
@@ -128,7 +155,7 @@ pub async fn term_open(
             Ok(finish_open(
                 &state,
                 Box::new(io),
-                TermKind::Serial,
+                (TermKind::Serial, saved_params),
                 &encoding,
                 session_id,
                 app_handle,
@@ -200,4 +227,102 @@ pub async fn serial_list_ports() -> Result<Vec<super::serial::PortInfo>, TermErr
 #[tauri::command]
 pub async fn serial_start_hotplug(app_handle: AppHandle) {
     super::serial::ensure_hotplug_watcher(app_handle);
+}
+
+#[tauri::command]
+pub async fn term_start(
+    session_id: String,
+    state: State<'_, TermManager>,
+) -> Result<(), TermError> {
+    state.start(&session_id)
+}
+
+#[tauri::command]
+pub async fn term_duplicate(
+    source_session_id: String,
+    reconnect: bool,
+    state: State<'_, TermManager>,
+    db: State<'_, Arc<HostDb>>,
+    app_handle: AppHandle,
+) -> Result<String, TermError> {
+    let mut params = state.params(&source_session_id)?;
+    if matches!(params, TermParams::Serial { .. }) && !reconnect {
+        return Err(TermError::InvalidParams(
+            "Serial ports cannot be shared by split panes".into(),
+        ));
+    }
+    let encoding = state.encoding(&source_session_id)?;
+    match &mut params {
+        TermParams::Local {
+            encoding: value, ..
+        }
+        | TermParams::Telnet {
+            encoding: value, ..
+        }
+        | TermParams::Serial {
+            encoding: value, ..
+        } => *value = Some(encoding),
+    }
+    if reconnect {
+        state.stop_for_reconnect(&source_session_id).await;
+    }
+    let result = term_open(params, 80, 24, state.clone(), db, app_handle).await;
+    if reconnect && result.is_ok() {
+        state.close(&source_session_id).await;
+    }
+    result
+}
+
+#[tauri::command]
+pub async fn term_session_log_status(
+    session_id: String,
+    state: State<'_, TermManager>,
+) -> Result<crate::ssh::commands::SessionLogStatus, TermError> {
+    let entry = state
+        .session_log_context(&session_id)
+        .ok_or(TermError::SessionNotFound(session_id))?;
+    Ok(crate::ssh::commands::SessionLogStatus {
+        active: entry.logger.is_active(),
+        path: entry
+            .logger
+            .info()
+            .map(|i| i.path.to_string_lossy().to_string()),
+        host: entry.host,
+        user: entry.user,
+    })
+}
+
+#[tauri::command]
+pub async fn term_start_session_log(
+    session_id: String,
+    path: Option<String>,
+    state: State<'_, TermManager>,
+    db: State<'_, Arc<HostDb>>,
+) -> Result<String, TermError> {
+    let entry = state
+        .session_log_context(&session_id)
+        .ok_or(TermError::SessionNotFound(session_id))?;
+    entry
+        .logger
+        .start(
+            sessionlog::session_log_options_from_db(&db),
+            &entry.host,
+            &entry.user,
+            path.map(std::path::PathBuf::from),
+        )
+        .map(|p| p.display().to_string())
+        .map_err(|e| TermError::Io(e.to_string()))
+}
+
+#[tauri::command]
+pub async fn term_stop_session_log(
+    session_id: String,
+    state: State<'_, TermManager>,
+) -> Result<(), TermError> {
+    state
+        .session_log_context(&session_id)
+        .ok_or(TermError::SessionNotFound(session_id))?
+        .logger
+        .stop();
+    Ok(())
 }

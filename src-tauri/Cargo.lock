@@ -126,6 +126,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serialport",
+ "sha2",
  "ssh2-config",
  "tauri",
  "tauri-build",

@@ -1,3 +1,4 @@
+import { ProtocolConnectModal } from "./ProtocolConnectModal";
 import {
   useState,
   useEffect,
@@ -5,7 +6,7 @@ import {
   useCallback,
   useMemo,
 } from "react";
-import { Search, Plus, ArrowLeft, FolderPlus, Import, Cloud, SquareTerminal, Network, Cable, MonitorUp, MonitorPlay } from "lucide-react";
+import { Search, Terminal, ArrowLeft, FolderPlus, Import, Cloud, SquareTerminal, Network, Cable, MonitorUp, MonitorPlay } from "lucide-react";
 import {
   DndContext,
   closestCenter,
@@ -49,7 +50,7 @@ import { PasswordPromptModal } from "./PasswordPromptModal";
 import { RecentConnections } from "./RecentConnections";
 import { toast } from "../../stores/toast-store";
 import { useTranslation } from "../../i18n";
-import { isSshHost } from "../../lib/protocol-hosts";
+import { protocolParams, isSshHost } from "../../lib/protocol-hosts";
 
 // Abort an in-flight SSH connection attempt on the Rust side. Best-effort:
 // the attempt may already have settled, in which case the backend reports it
@@ -92,7 +93,8 @@ export function HostsDashboard() {
   const [serialModalOpen, setSerialModalOpen] = useState(false);
   const [vncModalOpen, setVncModalOpen] = useState(false);
   const [rdpModalOpen, setRdpModalOpen] = useState(false);
-  const [rdpPrefill, setRdpPrefill] = useState<{ host?: string; port?: string; username?: string } | undefined>(undefined);
+  const [rdpPrefill, setRdpPrefill] = useState<SavedHost | undefined>(undefined);
+  const [protocolEdit, setProtocolEdit] = useState<SavedHost | null>(null);
 
   // Group delete dialog state
   const [deletingGroup, setDeletingGroup] = useState<{
@@ -306,9 +308,7 @@ export function HostsDashboard() {
     const { invoke } = await import("@tauri-apps/api/core");
     try {
       if (host.kind === "telnet" || host.kind === "serial" || host.kind === "local") {
-        const params = host.params_json
-          ? (JSON.parse(host.params_json) as Record<string, unknown>)
-          : null;
+        const params = protocolParams(host);
         if (!params) throw new Error("missing saved parameters");
         const sessionId = await invoke<string>("term_open", {
           params,
@@ -321,12 +321,16 @@ export function HostsDashboard() {
           {
             host: host.host,
             port: host.port,
-            username: "",
+            username: host.username,
+            terminal_encoding: typeof params.encoding === "string" ? params.encoding : undefined,
+            terminal_theme: host.terminal_theme ?? undefined,
+            backspace_sends_ctrl_h: host.backspace_sends_ctrl_h ?? undefined,
             auth_method: { type: "password", password: "" },
             label,
           },
           host.kind,
         );
+        void useHostsStore.getState().recordConnection(host.id);
         useTabStore.getState().addTab({ type: "terminal", id: sessionId, label });
       } else if (host.kind === "vnc") {
         const { wsUrl, token } = await invoke<{ wsUrl: string; token: string }>(
@@ -338,16 +342,10 @@ export function HostsDashboard() {
           id: token,
           label: host.label || `vnc://${host.host}:${host.port}`,
           wsUrl,
+          savedHost: host,
         });
       } else if (host.kind === "rdp") {
-        const saved = host.params_json
-          ? (JSON.parse(host.params_json) as { username?: string })
-          : {};
-        setRdpPrefill({
-          host: host.host,
-          port: String(host.port || 3389),
-          username: saved.username ?? "",
-        });
+        setRdpPrefill(host);
         setRdpModalOpen(true);
       }
     } catch (err) {
@@ -426,7 +424,7 @@ export function HostsDashboard() {
         setConnectingHost({ label, error: msg, retry: () => void connectToHost(host, secrets), cancel: null });
       }
     },
-    [t, ensurePasswordOrPrompt],
+    [t, ensurePasswordOrPrompt, connectProtocolHost],
   );
 
   // Open a local terminal (P1a): backend resolves the shell ($SHELL → zsh →
@@ -466,7 +464,9 @@ export function HostsDashboard() {
       // Recent entries don't carry auth_type — look it up from the saved host
       // so key-auth hosts don't get a password prompt. Unknown (deleted host)
       // falls through to the vault check, which fails into the prompt anyway.
-      const authType = hosts.find((h) => h.id === conn.host_id)?.auth_type;
+      const saved = hosts.find((h) => h.id === conn.host_id);
+      if (saved && !isSshHost(saved)) { await connectProtocolHost(saved); return; }
+      const authType = saved?.auth_type;
       if (
         !secrets &&
         !(await ensurePasswordOrPrompt(
@@ -528,7 +528,7 @@ export function HostsDashboard() {
     // undefined for recent connections, so key-auth hosts got a bogus
     // password prompt and every per-host override (encoding / colour theme /
     // Backspace) was silently dropped.
-    [t, hosts, ensurePasswordOrPrompt],
+    [t, hosts, ensurePasswordOrPrompt, connectProtocolHost],
   );
 
   // Explore: connect SSH + open a file browser + switch to Files page.
@@ -607,7 +607,7 @@ export function HostsDashboard() {
         setConnectingHost({ label, error: msg, retry: () => void exploreHost(host, secrets), cancel: null });
       }
     },
-    [t, ensurePasswordOrPrompt],
+    [t, ensurePasswordOrPrompt, connectProtocolHost],
   );
 
   // ─── Host action handlers ──────────────────────────────────────────────────
@@ -830,6 +830,37 @@ export function HostsDashboard() {
             />
           </div>
 
+          {/* ── Connection actions ── */}
+          <div className="flex flex-wrap gap-2">
+            {[
+              { id: "local-terminal", label: "localTerminal", icon: SquareTerminal, open: () => void openLocalTerminal() },
+              { id: "host", label: "newServer", icon: Terminal, open: () => setEditingHostId("__new__") },
+              { id: "telnet", label: "newTelnet", icon: Network, open: () => setTelnetModalOpen(true) },
+              { id: "rdp", label: "newRdp", icon: MonitorPlay, open: () => setRdpModalOpen(true) },
+              { id: "vnc", label: "newVnc", icon: MonitorUp, open: () => setVncModalOpen(true) },
+              { id: "serial", label: "newSerial", icon: Cable, open: () => setSerialModalOpen(true) },
+              { id: "s3", label: "newS3", icon: Cloud, open: () => setS3DialogOpen(true) },
+            ].map((item) => (
+              <button
+                key={item.id}
+                type="button"
+                data-testid={`new-${item.id}-button`}
+                onClick={item.open}
+                title={t(`dashboard.action.${item.label}Hint`)}
+                className={[
+                  "flex h-9 shrink-0 items-center justify-center gap-2 whitespace-nowrap rounded-lg px-3 text-xs font-medium",
+                  "border border-border bg-bg-surface text-text-secondary",
+                  "hover:border-border-focus hover:text-accent hover:bg-bg-overlay",
+                  "transition-colors duration-[var(--duration-fast)]",
+                  "focus-visible:outline-none focus-visible:border-border-focus focus-visible:ring-2 focus-visible:ring-ring",
+                ].join(" ")}
+              >
+                <item.icon size={14} strokeWidth={2} aria-hidden="true" />
+                {t(`dashboard.action.${item.label}`)}
+              </button>
+            ))}
+          </div>
+
           {/* ── Recent connections ── */}
           {recentConnections.length > 0 && (
             <RecentConnections
@@ -837,153 +868,6 @@ export function HostsDashboard() {
               onConnect={(conn) => void handleRecentConnect(conn)}
             />
           )}
-
-          {/* ── Action buttons ── */}
-          <div className="flex gap-2">
-            <button
-              data-testid="new-host-button"
-              onClick={() => setEditingHostId("__new__")}
-              className={[
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
-                "bg-bg-surface border border-border text-text-secondary",
-                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
-                "transition-all duration-[var(--duration-fast)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              ].join(" ")}
-              title={t("dashboard.action.newServerHint")}
-            >
-              <Plus size={14} strokeWidth={2.2} aria-hidden="true" />
-              {t("dashboard.action.newServer")}
-            </button>
-
-            <button
-              data-testid="new-local-terminal-button"
-              onClick={() => void openLocalTerminal()}
-              className={[
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
-                "bg-bg-surface border border-border text-text-secondary",
-                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
-                "transition-all duration-[var(--duration-fast)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              ].join(" ")}
-              title={t("dashboard.action.localTerminalHint")}
-            >
-              <SquareTerminal size={14} strokeWidth={2} aria-hidden="true" />
-              {t("dashboard.action.localTerminal")}
-            </button>
-
-            <button
-              data-testid="new-telnet-button"
-              onClick={() => setTelnetModalOpen(true)}
-              className={[
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
-                "bg-bg-surface border border-border text-text-secondary",
-                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
-                "transition-all duration-[var(--duration-fast)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              ].join(" ")}
-              title={t("dashboard.action.newTelnetHint")}
-            >
-              <Network size={14} strokeWidth={2} aria-hidden="true" />
-              {t("dashboard.action.newTelnet")}
-            </button>
-
-            <button
-              data-testid="new-serial-button"
-              onClick={() => setSerialModalOpen(true)}
-              className={[
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
-                "bg-bg-surface border border-border text-text-secondary",
-                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
-                "transition-all duration-[var(--duration-fast)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              ].join(" ")}
-              title={t("dashboard.action.newSerialHint")}
-            >
-              <Cable size={14} strokeWidth={2} aria-hidden="true" />
-              {t("dashboard.action.newSerial")}
-            </button>
-
-            <button
-              data-testid="new-vnc-button"
-              onClick={() => setVncModalOpen(true)}
-              className={[
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
-                "bg-bg-surface border border-border text-text-secondary",
-                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
-                "transition-all duration-[var(--duration-fast)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              ].join(" ")}
-              title={t("dashboard.action.newVncHint")}
-            >
-              <MonitorUp size={14} strokeWidth={2} aria-hidden="true" />
-              {t("dashboard.action.newVnc")}
-            </button>
-
-            <button
-              data-testid="new-rdp-button"
-              onClick={() => setRdpModalOpen(true)}
-              className={[
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
-                "bg-bg-surface border border-border text-text-secondary",
-                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
-                "transition-all duration-[var(--duration-fast)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              ].join(" ")}
-              title={t("dashboard.action.newRdpHint")}
-            >
-              <MonitorPlay size={14} strokeWidth={2} aria-hidden="true" />
-              {t("dashboard.action.newRdp")}
-            </button>
-
-            <button
-              data-testid="new-s3-button"
-              onClick={() => setS3DialogOpen(true)}
-              className={[
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
-                "bg-bg-surface border border-border text-text-secondary",
-                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
-                "transition-all duration-[var(--duration-fast)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              ].join(" ")}
-              title={t("dashboard.action.newS3Hint")}
-            >
-              <Cloud size={14} strokeWidth={2} aria-hidden="true" />
-              {t("dashboard.action.newS3")}
-            </button>
-
-            <button
-              data-testid="new-group-button"
-              onClick={() => setGroupModalOpen(true)}
-              className={[
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
-                "bg-bg-surface border border-border text-text-secondary",
-                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
-                "transition-all duration-[var(--duration-fast)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              ].join(" ")}
-              title={t("dashboard.action.newGroup")}
-            >
-              <FolderPlus size={14} strokeWidth={2} aria-hidden="true" />
-              {t("dashboard.action.newGroup")}
-            </button>
-
-            <button
-              data-testid="import-ssh-config-button"
-              onClick={() => setImportModalOpen(true)}
-              className={[
-                "flex items-center gap-2 px-4 py-2 rounded-lg text-xs font-medium uppercase tracking-wide",
-                "bg-bg-surface border border-border text-text-secondary",
-                "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
-                "transition-all duration-[var(--duration-fast)]",
-                "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
-              ].join(" ")}
-              title={t("dashboard.action.importHint")}
-            >
-              <Import size={14} strokeWidth={2} aria-hidden="true" />
-              {t("dashboard.action.import")}
-            </button>
-          </div>
 
           {/* ── Groups section ── */}
           {groups.length > 0 && (
@@ -1003,7 +887,7 @@ export function HostsDashboard() {
                   items={groups.map((g) => g.id)}
                   strategy={rectSortingStrategy}
                 >
-                  <div className="grid grid-cols-3 gap-2.5">
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,260px),1fr))] gap-2.5">
                     {groups.map((group) => (
                       <SortableCard key={group.id} id={group.id}>
                         <GroupCard
@@ -1023,29 +907,64 @@ export function HostsDashboard() {
 
           {/* ── Hosts section ── */}
           <section aria-labelledby="hosts-heading">
-            <div className="flex items-center gap-3 mb-3">
-              {/* Breadcrumb back button when a group is selected */}
-              {activeGroup && (
-                <button
-                  onClick={() => setSelectedGroupId(null)}
-                  className={[
-                    "flex items-center gap-1.5 text-[length:var(--text-xs)] text-text-muted",
-                    "hover:text-text-secondary transition-colors duration-[var(--duration-fast)]",
-                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded",
-                  ].join(" ")}
-                  aria-label={t("dashboard.action.backToAllHosts")}
-                >
-                  <ArrowLeft size={13} strokeWidth={2.2} aria-hidden="true" />
-                  {t("dashboard.action.allHosts")}
-                </button>
-              )}
+            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
+              <div className="flex min-w-0 items-center gap-3">
+                {/* Breadcrumb back button when a group is selected */}
+                {activeGroup && (
+                  <button
+                    onClick={() => setSelectedGroupId(null)}
+                    className={[
+                      "flex items-center gap-1.5 text-[length:var(--text-xs)] text-text-muted",
+                      "hover:text-text-secondary transition-colors duration-[var(--duration-fast)]",
+                      "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring rounded",
+                    ].join(" ")}
+                    aria-label={t("dashboard.action.backToAllHosts")}
+                  >
+                    <ArrowLeft size={13} strokeWidth={2.2} aria-hidden="true" />
+                    {t("dashboard.action.allHosts")}
+                  </button>
+                )}
 
-              <h2
-                id="hosts-heading"
-                className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted"
-              >
-                {activeGroup ? activeGroup.name : t("dashboard.heading.hosts")}
-              </h2>
+                <h2
+                  id="hosts-heading"
+                  className="text-[length:var(--text-xs)] font-semibold uppercase tracking-widest text-text-muted"
+                >
+                  {activeGroup ? activeGroup.name : t("dashboard.heading.hosts")}
+                </h2>
+              </div>
+              <div className="flex flex-wrap items-center gap-2">
+                <button
+                  data-testid="new-group-button"
+                  onClick={() => setGroupModalOpen(true)}
+                  className={[
+                    "flex items-center gap-2 whitespace-nowrap px-3 py-2 rounded-lg text-xs font-medium",
+                    "bg-bg-surface border border-border text-text-secondary",
+                    "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
+                    "transition-all duration-[var(--duration-fast)]",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  ].join(" ")}
+                  title={t("dashboard.action.newGroup")}
+                >
+                  <FolderPlus size={14} strokeWidth={2} aria-hidden="true" />
+                  {t("dashboard.action.newGroup")}
+                </button>
+
+                <button
+                  data-testid="import-ssh-config-button"
+                  onClick={() => setImportModalOpen(true)}
+                  className={[
+                    "flex items-center gap-2 whitespace-nowrap px-3 py-2 rounded-lg text-xs font-medium",
+                    "bg-bg-surface border border-border text-text-secondary",
+                    "hover:border-border-focus hover:text-text-primary hover:bg-bg-overlay",
+                    "transition-all duration-[var(--duration-fast)]",
+                    "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring",
+                  ].join(" ")}
+                  title={t("dashboard.action.importHint")}
+                >
+                  <Import size={14} strokeWidth={2} aria-hidden="true" />
+                  {t("dashboard.action.import")}
+                </button>
+              </div>
             </div>
 
             {/* Host grid or empty state */}
@@ -1059,14 +978,14 @@ export function HostsDashboard() {
                   items={filteredHosts.map((h) => h.id)}
                   strategy={rectSortingStrategy}
                 >
-                  <div className="grid grid-cols-3 gap-2.5">
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,260px),1fr))] gap-2.5">
                     {filteredHosts.map((host) => (
                       <SortableCard key={host.id} id={host.id}>
                         <HostCard
                           host={host}
                           onConnect={(h) => void connectToHost(h)}
                           onExplore={(h) => void exploreHost(h)}
-                          onEdit={setEditingHostId}
+                          onEdit={(id) => { const host = hosts.find(h => h.id === id); if (host && !isSshHost(host)) setProtocolEdit(host); else setEditingHostId(id); }}
                           onDelete={(id) => void handleDeleteHost(id)}
                           onDuplicate={(h) => void handleDuplicateHost(h)}
                         />
@@ -1102,7 +1021,7 @@ export function HostsDashboard() {
                   items={filteredS3.map((c) => c.id)}
                   strategy={rectSortingStrategy}
                 >
-                  <div className="grid grid-cols-3 gap-2.5">
+                  <div className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,260px),1fr))] gap-2.5">
                     {filteredS3.map((conn) => (
                       <SortableCard key={conn.id} id={conn.id}>
                         <S3Card
@@ -1143,6 +1062,7 @@ export function HostsDashboard() {
         <S3ConnectDialog onClose={() => { setS3DialogOpen(false); void loadS3Connections(); }} />
       )}
 
+      {protocolEdit && <ProtocolConnectModal key={protocolEdit.id} kind={protocolEdit.kind as "telnet" | "serial" | "local" | "vnc" | "rdp"} initial={protocolEdit} onClose={() => setProtocolEdit(null)} />}
       {telnetModalOpen && <TelnetConnectModal onClose={() => setTelnetModalOpen(false)} />}
 
       {serialModalOpen && <SerialConnectModal onClose={() => setSerialModalOpen(false)} />}

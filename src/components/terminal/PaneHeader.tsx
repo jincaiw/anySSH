@@ -1,3 +1,4 @@
+import { duplicateTerminal } from "../../lib/terminal-transport";
 import { Columns2, Rows2, Maximize2, Minimize2, X } from "lucide-react";
 import { useSessionStore } from "../../stores/session-store";
 import { useTabStore } from "../../stores/tab-store";
@@ -34,10 +35,7 @@ export function PaneHeader({ sessionId, tabId }: PaneHeaderProps) {
   const handleSplit = (direction: "horizontal" | "vertical") => {
     void (async () => {
       try {
-        const { invoke } = await import("@tauri-apps/api/core");
-        const newId = await invoke<string>("ssh_split_session", {
-          sourceSessionId: sessionId,
-        });
+        const newId = await duplicateTerminal(sessionId);
         useSessionStore.getState().splitPane(direction, sessionId, newId);
       } catch (err) {
         console.error("Split failed:", err);
@@ -71,7 +69,7 @@ export function PaneHeader({ sessionId, tabId }: PaneHeaderProps) {
   };
 
   const btnClass =
-    "inline-flex items-center justify-center w-5 h-5 rounded text-text-muted hover:text-text-primary hover:bg-bg-muted transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
+    "inline-flex items-center justify-center w-5 h-5 rounded disabled:opacity-30 disabled:pointer-events-none text-text-muted hover:text-text-primary hover:bg-bg-muted transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring";
 
   return (
     <div
@@ -105,13 +103,13 @@ export function PaneHeader({ sessionId, tabId }: PaneHeaderProps) {
         ].join(" ")}
       >
         {/* Split horizontal */}
-        <button type="button" onClick={() => handleSplit("horizontal")} className={btnClass}
+        <button type="button" disabled={session.kind === "serial"} onClick={() => handleSplit("horizontal")} className={btnClass}
           aria-label={t("terminal.pane.splitRight")} title={t("terminal.pane.splitRightHint")}>
           <Columns2 size={13} strokeWidth={1.8} aria-hidden="true" />
         </button>
 
         {/* Split vertical */}
-        <button type="button" onClick={() => handleSplit("vertical")} className={btnClass}
+        <button type="button" disabled={session.kind === "serial"} onClick={() => handleSplit("vertical")} className={btnClass}
           aria-label={t("terminal.pane.splitDown")} title={t("terminal.pane.splitDownHint")}>
           <Rows2 size={13} strokeWidth={1.8} aria-hidden="true" />
         </button>
@@ -141,7 +139,7 @@ export function PaneHeader({ sessionId, tabId }: PaneHeaderProps) {
         {/* Close pane */}
         {hasSplits && (
           <button type="button" onClick={handleClose}
-            className="inline-flex items-center justify-center w-5 h-5 rounded text-text-muted hover:text-status-error hover:bg-status-error/10 transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            className="inline-flex items-center justify-center w-5 h-5 rounded disabled:opacity-30 disabled:pointer-events-none text-text-muted hover:text-status-error hover:bg-status-error/10 transition-colors duration-[var(--duration-fast)] focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
             aria-label={t("terminal.pane.close")} title={t("terminal.pane.closeHint")}>
             <X size={12} strokeWidth={2} aria-hidden="true" />
           </button>

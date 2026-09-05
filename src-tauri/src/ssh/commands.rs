@@ -829,6 +829,12 @@ fn build_host_config_blocking(
         .map_err(|e| SshError::IoError(e.to_string()))?
         .ok_or_else(|| SshError::SessionNotFound(format!("host not found: {host_id}")))?;
 
+    if saved_host.kind.as_deref().is_some_and(|kind| kind != "ssh") {
+        return Err(SshError::ConnectionFailed(
+            "This bookmark requires its own protocol connector".into(),
+        ));
+    }
+
     let auth_method = resolve_auth_method(
         host_id,
         &saved_host.auth_type,

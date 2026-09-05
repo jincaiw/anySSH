@@ -1,4 +1,4 @@
-import { useState, useEffect, useId } from "react";
+import { useState, useEffect, useId, useRef } from "react";
 import { X } from "lucide-react";
 import { ModalBackdrop } from "./ModalBackdrop";
 import { useTranslation } from "../../i18n";
@@ -90,6 +90,7 @@ export function ModalShell({
   dataAttributes,
 }: ModalShellProps) {
   const titleId = useId();
+  const panelRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(false);
   const { t } = useTranslation();
 
@@ -101,11 +102,29 @@ export function ModalShell({
   useEffect(() => {
     if (!open) return;
     const handler = (e: KeyboardEvent) => {
-      if (e.key === "Escape" && !busy) onClose();
+      const dialogs = document.querySelectorAll('[role="dialog"][aria-modal="true"]');
+      if (dialogs[dialogs.length - 1] !== panelRef.current) return;
+      if (e.key === "Escape" && !busy) { e.preventDefault(); e.stopImmediatePropagation(); onClose(); }
+      if (e.key === "Tab") {
+        const fields = Array.from(panelRef.current?.querySelectorAll<HTMLElement>('button:not(:disabled),input:not(:disabled),select:not(:disabled),textarea:not(:disabled),a[href],[tabindex="0"]') ?? []).filter(el => el.getClientRects().length > 0);
+        const first = fields[0], last = fields[fields.length - 1];
+        if (!first) { e.preventDefault(); panelRef.current?.focus(); }
+        else if (e.shiftKey && (document.activeElement === first || !panelRef.current?.contains(document.activeElement))) { e.preventDefault(); last.focus(); }
+        else if (!e.shiftKey && (document.activeElement === last || !panelRef.current?.contains(document.activeElement))) { e.preventDefault(); first.focus(); }
+      }
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [open, busy, onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const previous = document.activeElement as HTMLElement | null;
+    const frame = requestAnimationFrame(() => {
+      if (!panelRef.current?.contains(document.activeElement)) panelRef.current?.querySelector<HTMLElement>('input:not(:disabled),button:not(:disabled)')?.focus();
+    });
+    return () => { cancelAnimationFrame(frame); if (previous?.isConnected) previous.focus(); };
+  }, [open]);
 
   if (!open) return null;
 
@@ -131,12 +150,14 @@ export function ModalShell({
       onClose={onClose}
       closeDisabled={busy}
       className={[
-        "fixed inset-0 z-50 flex items-start justify-center pt-[8vh]",
+        "fixed inset-0 z-50 flex items-start justify-center px-4 pt-[8vh]",
         "transition-[background-color,backdrop-filter] duration-[var(--duration-base)]",
         visible ? "bg-black/50 backdrop-blur-sm" : "bg-black/0 backdrop-blur-none",
       ].join(" ")}
     >
       <div
+        ref={panelRef}
+        tabIndex={-1}
         data-testid={testId}
         {...dataAttributes}
         aria-modal="true"
@@ -189,7 +210,7 @@ export function ModalShell({
         {/* ── Footer ── */}
         {hasFooter && (
           <div className={[
-            "px-6 py-3 flex items-center gap-2 border-t border-border shrink-0",
+            "px-6 py-3 flex flex-wrap items-center gap-2 border-t border-border shrink-0",
             footerStart ? "justify-between" : "justify-end",
           ].join(" ")}>
             {footerStart && <div>{footerStart}</div>}

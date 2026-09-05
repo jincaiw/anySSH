@@ -7,7 +7,7 @@
 
 export default {
   // ─── Modal shell ────────────────────────────────────────────────────────
-  "title.new": "新建主机",
+  "title.new": "新建 SSH 连接",
   "title.edit": "编辑主机",
   "action.connecting": "正在连接…",
   "action.saving": "正在保存…",

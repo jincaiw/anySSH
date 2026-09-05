@@ -1,3 +1,4 @@
+import { terminalCommand } from "./terminal-transport";
 import { t } from "../i18n";
 import { useUiStore } from "../stores/ui-store";
 
@@ -38,7 +39,7 @@ export async function getSessionLogStatus(
 ): Promise<SessionLogStatus | null> {
   try {
     const { invoke } = await import("@tauri-apps/api/core");
-    return await invoke<SessionLogStatus>("ssh_session_log_status", { sessionId });
+    return await invoke<SessionLogStatus>(terminalCommand(sessionId, "ssh_session_log_status", "term_session_log_status"), { sessionId });
   } catch {
     return null;
   }
@@ -59,9 +60,9 @@ export async function toggleSessionLog(
   try {
     const { invoke } = await import("@tauri-apps/api/core");
     if (before?.active) {
-      await invoke("ssh_stop_session_log", { sessionId });
+      await invoke(terminalCommand(sessionId, "ssh_stop_session_log", "term_stop_session_log"), { sessionId });
     } else {
-      await invoke("ssh_start_session_log", { sessionId, path: path ?? null });
+      await invoke(terminalCommand(sessionId, "ssh_start_session_log", "term_start_session_log"), { sessionId, path: path ?? null });
     }
   } catch {
     /* session gone or command unavailable */

@@ -1,3 +1,4 @@
+import { duplicateTerminal } from "../../lib/terminal-transport";
 import { useEffect, useLayoutEffect, useMemo, useRef } from "react";
 import { useTabStore } from "../../stores/tab-store";
 import { useSessionStore } from "../../stores/session-store";
@@ -185,10 +186,7 @@ export function AppShell() {
           if (!activeSessionId) return;
           void (async () => {
             try {
-              const { invoke } = await import("@tauri-apps/api/core");
-              const newId = await invoke<string>("ssh_split_session", {
-                sourceSessionId: activeSessionId,
-              });
+              const newId = await duplicateTerminal(activeSessionId);
               useSessionStore
                 .getState()
                 .splitPane("horizontal", activeSessionId, newId);
@@ -212,10 +210,7 @@ export function AppShell() {
           if (!activeSessionId) return;
           void (async () => {
             try {
-              const { invoke } = await import("@tauri-apps/api/core");
-              const newId = await invoke<string>("ssh_split_session", {
-                sourceSessionId: activeSessionId,
-              });
+              const newId = await duplicateTerminal(activeSessionId);
               useSessionStore
                 .getState()
                 .splitPane("vertical", activeSessionId, newId);
@@ -490,6 +485,7 @@ export function AppShell() {
                       <VncCanvas
                         sessionId={tabId}
                         wsUrl={tab.wsUrl}
+                        savedHost={tab.savedHost}
                         isActive={isVisible}
                       />
                     ) : null}
@@ -512,6 +508,7 @@ export function AppShell() {
                       <RdpCanvas
                         sessionId={tabId}
                         wsUrl={tab.wsUrl}
+                        savedHost={tab.savedHost}
                         destination={tab.destination}
                         username={tab.username}
                         password={tab.password}
