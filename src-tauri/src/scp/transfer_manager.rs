@@ -929,6 +929,13 @@ async fn run_download_dir(
         .map_err(|e| ScpError::LocalIoError(e.to_string()))?;
 
     let mut tree = exec::enumerate_tree(handle.clone(), flavor, remote_root).await?;
+    // The server controls every component of each rel_path (it comes from a
+    // remote `find`-style listing). Validate before `Path::join`: on Windows a
+    // `\` inside a Unix filename acts as a separator, so a hostile server could
+    // otherwise escape the local download root (e.g. `..\..\evil`).
+    for entry in &tree {
+        validate_tree_rel_path(&entry.rel_path)?;
+    }
     // Create directories before files: shallower paths first.
     tree.sort_by_key(|e| (!e.is_dir, e.rel_path.matches('/').count()));
 
@@ -978,5 +985,57 @@ fn join_under(base: &str, rel: &Path) -> String {
         // Normalize Windows separators just in case (local paths on Windows).
         let rel_norm = rel_str.replace('\\', "/");
         format!("{}/{}", base.trim_end_matches('/'), rel_norm)
+    }
+}
+
+/// Validate a server-supplied relative path from a recursive tree listing
+/// before joining it onto the local download root. Every component must be a
+/// plain name: no leading `/`, no `\` (a legal Unix filename character but a
+/// Windows path separator), no NUL, no empty/`.`/`..` components.
+fn validate_tree_rel_path(rel_path: &str) -> Result<(), ScpError> {
+    let unsafe_path = || ScpError::ParseError(format!("server returned an unsafe tree path: {rel_path:?}"));
+    if rel_path.is_empty()
+        || rel_path.starts_with('/')
+        || rel_path.contains('\\')
+        || rel_path.contains('\0')
+    {
+        return Err(unsafe_path());
+    }
+    for comp in rel_path.split('/') {
+        if comp.is_empty() || comp == "." || comp == ".." {
+            return Err(unsafe_path());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tree_rel_path_accepts_normal_paths() {
+        for ok in ["file.txt", "sub/file.txt", "a/b/c", "dir with space/x"] {
+            assert!(validate_tree_rel_path(ok).is_ok(), "{ok} should pass");
+        }
+    }
+
+    #[test]
+    fn tree_rel_path_rejects_traversal_and_separators() {
+        for bad in [
+            "../evil",
+            "a/../../evil",
+            "..\\..\\evil",
+            "back\\slash.txt",
+            "/absolute/path",
+            "",
+            "a//b",
+            "a/./b",
+            "a/\0b",
+            "./hidden",
+            "..",
+        ] {
+            assert!(validate_tree_rel_path(bad).is_err(), "{bad:?} should fail");
+        }
     }
 }
