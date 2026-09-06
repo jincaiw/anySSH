@@ -9,6 +9,7 @@ declare module "@novnc/novnc" {
       options?: Record<string, unknown>,
     );
     disconnect(): void;
+    approveServer(): void;
     clipboardPasteFrom(text: string): void;
     sendCredentials(credentials: Record<string, string>): void;
     sendCtrlAltDel(): void;

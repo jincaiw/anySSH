@@ -1,5 +1,5 @@
-import { useEffect, useRef, useState } from "react";
-import { Loader2, AlertTriangle, Unplug } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Loader2, AlertTriangle, Unplug, RefreshCw, Pencil } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "../../i18n";
 import type { SavedHost } from "../../types";
@@ -17,6 +17,8 @@ interface VncCanvasProps {
   wsUrl: string;
   isActive: boolean;
   savedHost?: SavedHost;
+  onReconnect?: () => Promise<void>;
+  onEdit?: () => void;
 }
 
 type VncStatus = "connecting" | "connected" | "disconnected" | "error";
@@ -34,18 +36,43 @@ type VncStatus = "connecting" | "connected" | "disconnected" | "error";
  * tauri-plugin-clipboard-manager (navigator.clipboard.readText is blocked in
  * the macOS WKWebView); local → remote pushed to the server on window focus.
  */
-export function VncCanvas({ sessionId, wsUrl, isActive, savedHost }: VncCanvasProps) {
+export function VncCanvas({ sessionId, wsUrl, isActive, savedHost, onReconnect, onEdit }: VncCanvasProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
   const rfbRef = useRef<RfbInstance | null>(null);
   const [status, setStatus] = useState<VncStatus>("connecting");
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const [serverFingerprint, setServerFingerprint] = useState<string>("");
 
   const activeRef = useRef(isActive);
   activeRef.current = isActive;
   const savedHostRef = useRef(savedHost);
   const [credentialTypes, setCredentialTypes] = useState<string[]>([]);
   const [credentials, setCredentials] = useState<Record<string, string>>({});
+  const statusRef = useRef(status);
+  statusRef.current = status;
+
+  const pushClipboard = useCallback(async () => {
+    const rfb = rfbRef.current;
+    if (!rfb || !activeRef.current || statusRef.current !== "connected") return;
+    try {
+      const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
+      const text = await readText();
+      if (activeRef.current && rfbRef.current === rfb && statusRef.current === "connected") {
+        rfb.clipboardPasteFrom(text);
+      }
+    } catch {
+      /* clipboard unavailable */
+    }
+  }, []);
+
+  const reconnect = async () => {
+    if (!onReconnect) return;
+    setErrorMsg("");
+    setStatus("connecting");
+    try { await onReconnect(); }
+    catch (error) { setErrorMsg(String(error)); setStatus("error"); }
+  };
 
   // Connect once per (token, endpoint).
   useEffect(() => {
@@ -71,6 +98,9 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost }: VncCanvasPr
         if (cancelled) return;
         setCredentialTypes([]);
         setStatus("connected");
+        statusRef.current = "connected";
+        setServerFingerprint("");
+        void pushClipboard();
         const bookmark = savedHostRef.current;
         if (bookmark) {
           savedHostRef.current = undefined;
@@ -80,6 +110,22 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost }: VncCanvasPr
 
       rfb.addEventListener("credentialsrequired", (event) => {
         if (!cancelled) setCredentialTypes((event.detail as { types?: string[] }).types ?? ["password"]);
+      });
+
+      rfb.addEventListener("serververification", (event) => {
+        const publickey = (event.detail as { publickey?: Uint8Array }).publickey;
+        if (!publickey) {
+          setErrorMsg(t("dashboard.vnc.verificationUnavailable"));
+          setStatus("error");
+          return;
+        }
+        void crypto.subtle.digest("SHA-256", publickey).then(digest => {
+          if (cancelled) return;
+          const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join(":");
+          setServerFingerprint(fingerprint);
+        }).catch(error => {
+          if (!cancelled) { setErrorMsg(String(error)); setStatus("error"); }
+        });
       });
 
       rfb.addEventListener("disconnect", (e) => {
@@ -125,41 +171,36 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost }: VncCanvasPr
         }),
       );
     };
-  }, [wsUrl, sessionId]);
+  }, [wsUrl, sessionId, pushClipboard, t]);
 
   // Local → remote clipboard on window focus (VNC has no push mechanism;
   // re-announcing the local clipboard when the window regains focus is the
   // same approach noVNC's own UI uses).
   useEffect(() => {
-    const pushClipboard = async () => {
-      const rfb = rfbRef.current;
-      if (!rfb || !activeRef.current || status !== "connected") return;
-      try {
-        const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
-        const text = await readText();
-        if (activeRef.current && rfbRef.current === rfb) rfb.clipboardPasteFrom(text);
-      } catch {
-        /* clipboard unavailable */
-      }
-    };
     window.addEventListener("focus", pushClipboard);
     return () => window.removeEventListener("focus", pushClipboard);
-  }, [status]);
+  }, [pushClipboard]);
 
   // Focus the RFB keyboard sink when the tab becomes active, so keystrokes
   // land in the remote desktop immediately after a tab switch.
   useEffect(() => {
-    if (isActive && status === "connected") rfbRef.current?.focus();
+    if (isActive && status === "connected") {
+      rfbRef.current?.focus();
+      void pushClipboard();
+    }
     else rfbRef.current?.blur();
-  }, [isActive, status]);
+  }, [isActive, status, pushClipboard]);
 
   return (
     <div className="absolute inset-0 flex flex-col bg-bg-base">
+      {status === "connected" && <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1 text-xs text-text-secondary">
+        <button className="rounded px-2 py-1 hover:bg-bg-subtle" onClick={() => void pushClipboard()}>{t("dashboard.protocol.pasteClipboard")}</button>
+      </div>}
       <div ref={containerRef} className="flex-1 min-h-0 relative" />
 
       {status !== "connected" && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg-base/85 backdrop-blur-sm">
-          {status === "connecting" && credentialTypes.length === 0 && (
+          {status === "connecting" && credentialTypes.length === 0 && !serverFingerprint && (
             <>
               <Loader2 size={28} strokeWidth={2} className="text-text-muted motion-safe:animate-spin" aria-hidden="true" />
               <p className="text-[length:var(--text-sm)] text-text-secondary">
@@ -167,7 +208,7 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost }: VncCanvasPr
               </p>
             </>
           )}
-          {credentialTypes.length > 0 && <form className="w-72 space-y-3" onSubmit={(event) => {
+          {credentialTypes.length > 0 && !serverFingerprint && <form className="w-72 space-y-3" onSubmit={(event) => {
             event.preventDefault();
             rfbRef.current?.sendCredentials(credentials);
             setCredentials({});
@@ -181,12 +222,21 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost }: VncCanvasPr
             </label>)}
             <button type="submit" className="w-full rounded-md bg-accent p-2 text-white">{t("dashboard.protocol.connect")}</button>
           </form>}
+          {serverFingerprint && <div role="alert" className="w-[32rem] max-w-[calc(100%-2rem)] space-y-3 rounded-lg border border-border bg-bg-surface p-4 text-sm">
+            <p className="text-text-primary">{t("dashboard.vnc.verifyServer")}</p>
+            <p className="break-all font-mono text-xs text-text-muted">SHA-256 {serverFingerprint}</p>
+            <div className="flex justify-end gap-2">
+              <button type="button" className="rounded px-3 py-1.5 text-text-secondary hover:bg-bg-subtle" onClick={() => { rfbRef.current?.disconnect(); setServerFingerprint(""); setStatus("error"); }}>{t("common.cancel")}</button>
+              <button type="button" className="rounded bg-accent px-3 py-1.5 text-white" onClick={() => { rfbRef.current?.approveServer(); setServerFingerprint(""); }}>{t("dashboard.vnc.trustServer")}</button>
+            </div>
+          </div>}
           {status === "disconnected" && (
             <>
               <Unplug size={28} strokeWidth={2} className="text-text-muted" aria-hidden="true" />
               <p className="text-[length:var(--text-sm)] text-text-secondary">
                 {t("dashboard.vnc.statusDisconnected")}
               </p>
+              <div className="flex gap-2">{onReconnect && <button className="flex items-center gap-1 rounded bg-accent px-3 py-1.5 text-sm text-white" onClick={() => void reconnect()}><RefreshCw size={14} />{t("common.retry")}</button>}{onEdit && <button className="flex items-center gap-1 rounded px-3 py-1.5 text-sm text-text-secondary hover:bg-bg-subtle" onClick={onEdit}><Pencil size={14} />{t("common.edit")}</button>}</div>
             </>
           )}
           {status === "error" && (
@@ -200,6 +250,7 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost }: VncCanvasPr
                   {errorMsg}
                 </p>
               )}
+              <div className="flex gap-2">{onReconnect && <button className="flex items-center gap-1 rounded bg-accent px-3 py-1.5 text-sm text-white" onClick={() => void reconnect()}><RefreshCw size={14} />{t("common.retry")}</button>}{onEdit && <button className="flex items-center gap-1 rounded px-3 py-1.5 text-sm text-text-secondary hover:bg-bg-subtle" onClick={onEdit}><Pencil size={14} />{t("common.edit")}</button>}</div>
             </>
           )}
         </div>

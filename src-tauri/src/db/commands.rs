@@ -1,10 +1,37 @@
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock, Mutex};
 
 use tauri::State;
 use tokio::task;
 use tracing::instrument;
 
 use super::{ConnectionHistoryEntry, DbError, HostDb, HostGroup, RecentConnection, SavedHost};
+
+/// Serializes host/database writes with their external vault mutations so a
+/// failed validation cannot expose a credential from an uncommitted edit.
+static HOST_WRITE_LOCK: LazyLock<Mutex<()>> = LazyLock::new(|| Mutex::new(()));
+
+fn vault_error(error: crate::vault::VaultError) -> DbError {
+    DbError::InitError(error.to_string())
+}
+
+fn credential_snapshot(id: &str) -> Result<Option<crate::vault::StoredCredential>, DbError> {
+    match crate::vault::get_credential(id) {
+        Ok(credential) => Ok(Some(credential)),
+        Err(crate::vault::VaultError::NotFound(_)) => Ok(None),
+        Err(error) => Err(vault_error(error)),
+    }
+}
+
+fn restore_credential(
+    id: &str,
+    credential: Option<crate::vault::StoredCredential>,
+) -> Result<(), DbError> {
+    match credential {
+        Some(credential) => crate::vault::save_credential(id, &credential),
+        None => crate::vault::delete_credential(id),
+    }
+    .map_err(vault_error)
+}
 
 /// Persist (insert or update) a host entry.
 ///
@@ -15,8 +42,15 @@ use super::{ConnectionHistoryEntry, DbError, HostDb, HostGroup, RecentConnection
 pub async fn save_host(mut host: SavedHost, state: State<'_, Arc<HostDb>>) -> Result<(), DbError> {
     let db = Arc::clone(&state);
     task::spawn_blocking(move || {
-        crate::term::credentials::protect_script(&mut host)?;
-        db.save_host_validated(&host)
+        let _guard = HOST_WRITE_LOCK
+            .lock()
+            .map_err(|e| DbError::InitError(format!("host write lock poisoned: {e}")))?;
+        let change = crate::term::credentials::protect_script(&mut host)?;
+        if let Err(error) = db.save_host_validated(&host) {
+            change.rollback()?;
+            return Err(error);
+        }
+        Ok(())
     })
     .await
     .map_err(|e| DbError::InitError(format!("task panicked: {e}")))?
@@ -28,12 +62,18 @@ pub async fn save_host(mut host: SavedHost, state: State<'_, Arc<HostDb>>) -> Re
 pub async fn list_hosts(state: State<'_, Arc<HostDb>>) -> Result<Vec<SavedHost>, DbError> {
     let db = Arc::clone(&state);
     task::spawn_blocking(move || {
+        let _guard = HOST_WRITE_LOCK
+            .lock()
+            .map_err(|e| DbError::InitError(format!("host write lock poisoned: {e}")))?;
         let mut hosts = db.list_hosts()?;
         for host in &mut hosts {
             let previous = host.params_json.clone();
-            crate::term::credentials::protect_script(host)?;
+            let change = crate::term::credentials::protect_script(host)?;
             if host.params_json != previous {
-                db.save_host_validated(host)?;
+                if let Err(error) = db.save_host_validated(host) {
+                    change.rollback()?;
+                    return Err(error);
+                }
             }
         }
         Ok(hosts)
@@ -47,9 +87,20 @@ pub async fn list_hosts(state: State<'_, Arc<HostDb>>) -> Result<Vec<SavedHost>,
 #[instrument(skip(state), fields(id = %id))]
 pub async fn delete_host(id: String, state: State<'_, Arc<HostDb>>) -> Result<(), DbError> {
     let db = Arc::clone(&state);
-    task::spawn_blocking(move || db.delete_host(&id))
-        .await
-        .map_err(|e| DbError::InitError(format!("task panicked: {e}")))?
+    task::spawn_blocking(move || {
+        let _guard = HOST_WRITE_LOCK
+            .lock()
+            .map_err(|e| DbError::InitError(format!("host write lock poisoned: {e}")))?;
+        let previous = credential_snapshot(&id)?;
+        crate::vault::delete_credential(&id).map_err(vault_error)?;
+        if let Err(error) = db.delete_host(&id) {
+            restore_credential(&id, previous)?;
+            return Err(error);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbError::InitError(format!("task panicked: {e}")))?
 }
 
 /// Persist a manual host ordering produced by drag-and-drop on the dashboard.
@@ -148,9 +199,38 @@ pub async fn delete_group_with_hosts(
     state: State<'_, Arc<HostDb>>,
 ) -> Result<(), DbError> {
     let db = Arc::clone(&state);
-    task::spawn_blocking(move || db.delete_group_with_hosts(&id))
-        .await
-        .map_err(|e| DbError::InitError(format!("task panicked: {e}")))?
+    task::spawn_blocking(move || {
+        let _guard = HOST_WRITE_LOCK
+            .lock()
+            .map_err(|e| DbError::InitError(format!("host write lock poisoned: {e}")))?;
+        let host_ids = db
+            .list_hosts()?
+            .into_iter()
+            .filter(|host| host.group_id.as_deref() == Some(id.as_str()))
+            .map(|host| host.id)
+            .collect::<Vec<_>>();
+        let snapshots = host_ids
+            .iter()
+            .map(|host_id| Ok((host_id.clone(), credential_snapshot(host_id)?)))
+            .collect::<Result<Vec<_>, DbError>>()?;
+        for (index, host_id) in host_ids.iter().enumerate() {
+            if let Err(error) = crate::vault::delete_credential(host_id).map_err(vault_error) {
+                for (restore_id, credential) in snapshots.iter().take(index) {
+                    restore_credential(restore_id, credential.clone())?;
+                }
+                return Err(error);
+            }
+        }
+        if let Err(error) = db.delete_group_with_hosts(&id) {
+            for (host_id, credential) in snapshots {
+                restore_credential(&host_id, credential)?;
+            }
+            return Err(error);
+        }
+        Ok(())
+    })
+    .await
+    .map_err(|e| DbError::InitError(format!("task panicked: {e}")))?
 }
 
 /// Record a successful connection for the given host id.  Also prunes the

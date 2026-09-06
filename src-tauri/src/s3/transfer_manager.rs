@@ -45,6 +45,9 @@ pub enum TransferJobKind {
 pub struct TransferJobState {
     pub transfer_id: String,
     pub s3_session_id: String,
+    /// Immutable bucket snapshot captured when the job is queued. Switching
+    /// the visible session bucket must never redirect an in-flight job.
+    pub bucket: Box<s3::Bucket>,
     pub name: String,
     pub direction: S3TransferDirection,
     pub kind: TransferJobKind,
@@ -148,7 +151,6 @@ impl S3TransferManager {
             let jobs = self.jobs.clone();
             let finished_order = self.finished_order.clone();
             let semaphore = self.semaphore.clone();
-            let s3_manager = self.s3_manager.clone();
             let app_handle = self.app_handle.clone();
 
             tokio::spawn(async move {
@@ -161,12 +163,10 @@ impl S3TransferManager {
 
                     let jobs = jobs.clone();
                     let finished_order = finished_order.clone();
-                    let s3_manager = s3_manager.clone();
                     let app_handle = app_handle.clone();
 
                     tokio::spawn(async move {
-                        execute_transfer(&jobs, &finished_order, &job_id, &s3_manager, &app_handle)
-                            .await;
+                        execute_transfer(&jobs, &finished_order, &job_id, &app_handle).await;
                         drop(permit);
                     });
                 }
@@ -207,6 +207,7 @@ impl S3TransferManager {
         prefix: String,
     ) -> Result<Vec<String>, S3Error> {
         self.ensure_worker_spawned();
+        let bucket = self.s3_manager.get_bucket(&s3_session_id)?;
         let mut ids = Vec::with_capacity(local_paths.len());
 
         for local_path in local_paths {
@@ -249,6 +250,7 @@ impl S3TransferManager {
             let job = TransferJobState {
                 transfer_id: transfer_id.clone(),
                 s3_session_id: s3_session_id.clone(),
+                bucket: bucket.clone(),
                 name: name.clone(),
                 direction: S3TransferDirection::Upload,
                 kind,
@@ -362,6 +364,7 @@ impl S3TransferManager {
         let job = TransferJobState {
             transfer_id: transfer_id.clone(),
             s3_session_id: s3_session_id.to_string(),
+            bucket: Box::new(bucket.clone()),
             name,
             direction: S3TransferDirection::Download,
             kind: TransferJobKind::DownloadFile { key, local_path },
@@ -523,7 +526,6 @@ async fn execute_transfer(
     jobs: &Arc<DashMap<String, TransferJobState>>,
     finished_order: &Arc<std::sync::Mutex<VecDeque<String>>>,
     job_id: &str,
-    s3_manager: &Arc<S3Manager>,
     app_handle: &AppHandle,
 ) {
     // Check if it was cancelled before we even got the semaphore permit.
@@ -556,34 +558,8 @@ async fn execute_transfer(
         app_handle,
     );
 
-    // Retrieve the bucket — bail with an error if the session is gone.
-    let bucket = {
-        let s3_session_id = {
-            let job = match jobs.get(job_id) {
-                Some(j) => j,
-                None => return,
-            };
-            job.s3_session_id.clone()
-        };
-
-        match s3_manager.get_bucket(&s3_session_id) {
-            Ok(b) => b,
-            Err(e) => {
-                set_job_status(
-                    jobs,
-                    finished_order,
-                    job_id,
-                    S3TransferStatus::Failed(e.to_string()),
-                    Some(e.to_string()),
-                    app_handle,
-                );
-                return;
-            }
-        }
-    };
-
     // Extract the kind descriptor without holding the DashMap lock across awaits.
-    let (kind_desc, cancel_token) = {
+    let (kind_desc, cancel_token, bucket) = {
         let job = match jobs.get(job_id) {
             Some(j) => j,
             None => return,
@@ -605,7 +581,7 @@ async fn execute_transfer(
                 local_path: local_path.clone(),
             },
         };
-        (desc, cancel_token)
+        (desc, cancel_token, job.bucket.clone())
     };
 
     let result = match kind_desc {

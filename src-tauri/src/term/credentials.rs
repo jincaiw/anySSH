@@ -4,8 +4,49 @@
 use super::{LoginScriptStep, TermError};
 use crate::{
     db::{DbError, SavedHost},
-    vault::{self, StoredCredential},
+    vault::{self, StoredCredential, VaultError},
 };
+
+#[derive(Debug)]
+pub struct CredentialChange {
+    host_id: String,
+    previous: Option<StoredCredential>,
+    changed: bool,
+}
+
+impl CredentialChange {
+    fn unchanged(host_id: &str) -> Self {
+        Self {
+            host_id: host_id.to_string(),
+            previous: None,
+            changed: false,
+        }
+    }
+
+    /// Restore the vault state that existed before [`protect_script`].
+    pub fn rollback(self) -> Result<(), DbError> {
+        if !self.changed {
+            return Ok(());
+        }
+        match self.previous {
+            Some(credential) => vault::save_credential(&self.host_id, &credential),
+            None => vault::delete_credential(&self.host_id),
+        }
+        .map_err(vault_error)
+    }
+}
+
+fn vault_error(error: VaultError) -> DbError {
+    DbError::InitError(error.to_string())
+}
+
+fn current_credential(id: &str) -> Result<Option<StoredCredential>, DbError> {
+    match vault::get_credential(id) {
+        Ok(credential) => Ok(Some(credential)),
+        Err(VaultError::NotFound(_)) => Ok(None),
+        Err(error) => Err(vault_error(error)),
+    }
+}
 
 pub fn load_script(id: &str) -> Result<Vec<LoginScriptStep>, TermError> {
     match vault::get_credential(id).map_err(|e| TermError::Io(e.to_string()))? {
@@ -17,12 +58,12 @@ pub fn load_script(id: &str) -> Result<Vec<LoginScriptStep>, TermError> {
     }
 }
 
-pub fn protect_script(host: &mut SavedHost) -> Result<(), DbError> {
+pub fn protect_script(host: &mut SavedHost) -> Result<CredentialChange, DbError> {
     if host.kind.as_deref() != Some("telnet") {
-        return Ok(());
+        return Ok(CredentialChange::unchanged(&host.id));
     }
     let Some(json) = &host.params_json else {
-        return Ok(());
+        return Ok(CredentialChange::unchanged(&host.id));
     };
     let mut params: serde_json::Value =
         serde_json::from_str(json).map_err(|e| DbError::InitError(e.to_string()))?;
@@ -41,6 +82,7 @@ pub fn protect_script(host: &mut SavedHost) -> Result<(), DbError> {
         None
     };
     if let Some(script) = script {
+        let previous = current_credential(&host.id)?;
         if script.is_empty() {
             let object = params
                 .as_object_mut()
@@ -48,7 +90,12 @@ pub fn protect_script(host: &mut SavedHost) -> Result<(), DbError> {
             object.remove("loginScript");
             object.remove("scriptCredentialId");
             host.params_json = Some(params.to_string());
-            return Ok(());
+            vault::delete_credential(&host.id).map_err(vault_error)?;
+            return Ok(CredentialChange {
+                host_id: host.id.clone(),
+                previous,
+                changed: true,
+            });
         }
         let password =
             serde_json::to_string(&script).map_err(|e| DbError::InitError(e.to_string()))?;
@@ -60,6 +107,11 @@ pub fn protect_script(host: &mut SavedHost) -> Result<(), DbError> {
             .remove("loginScript");
         params["scriptCredentialId"] = host.id.clone().into();
         host.params_json = Some(params.to_string());
+        return Ok(CredentialChange {
+            host_id: host.id.clone(),
+            previous,
+            changed: true,
+        });
     }
-    Ok(())
+    Ok(CredentialChange::unchanged(&host.id))
 }

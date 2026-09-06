@@ -68,9 +68,16 @@ async function assertPromptStaysClosed(): Promise<void> {
 }
 
 async function waitForHostModalError(): Promise<string> {
-    const err = await $("[data-testid='host-modal-error']");
-    await err.waitForDisplayed({ timeout: 30_000 });
-    return err.getText();
+    let text = "";
+    await browser.waitUntil(async () => {
+        const trust = await $("[data-testid='ssh-host-key-trust']");
+        if (await trust.isExisting() && await trust.isDisplayed()) await trust.click();
+        const err = await $("[data-testid='host-modal-error']");
+        if (!(await err.isExisting()) || !(await err.isDisplayed())) return false;
+        text = await err.getText();
+        return true;
+    }, { timeout: 30_000, interval: 200, timeoutMsg: "host modal error did not appear" });
+    return text;
 }
 
 describe("interactive password prompt", () => {

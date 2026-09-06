@@ -30,6 +30,14 @@ pub enum SshError {
 
     #[error("Connection cancelled")]
     Cancelled,
+
+    #[error("SSH host key for {host}:{port} requires confirmation ({fingerprint})")]
+    HostKeyUntrusted {
+        host: String,
+        port: u16,
+        fingerprint: String,
+        trusted_fingerprint: Option<String>,
+    },
 }
 
 impl Serialize for SshError {
@@ -38,7 +46,12 @@ impl Serialize for SshError {
         S: serde::Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut state = serializer.serialize_struct("SshError", 2)?;
+        let field_count = if matches!(self, SshError::HostKeyUntrusted { .. }) {
+            6
+        } else {
+            2
+        };
+        let mut state = serializer.serialize_struct("SshError", field_count)?;
         let kind = match self {
             SshError::ConnectionFailed(_) => "connection_failed",
             SshError::AuthenticationFailed(_) => "authentication_failed",
@@ -49,9 +62,22 @@ impl Serialize for SshError {
             SshError::AlreadyDisconnected => "already_disconnected",
             SshError::InvalidEncoding(_) => "invalid_encoding",
             SshError::Cancelled => "cancelled",
+            SshError::HostKeyUntrusted { .. } => "host_key_untrusted",
         };
         state.serialize_field("kind", kind)?;
         state.serialize_field("message", &self.to_string())?;
+        if let SshError::HostKeyUntrusted {
+            host,
+            port,
+            fingerprint,
+            trusted_fingerprint,
+        } = self
+        {
+            state.serialize_field("host", host)?;
+            state.serialize_field("port", port)?;
+            state.serialize_field("fingerprint", fingerprint)?;
+            state.serialize_field("trustedFingerprint", trusted_fingerprint)?;
+        }
         state.end()
     }
 }
@@ -105,5 +131,21 @@ mod tests {
         let json = serde_json::to_value(SshError::Cancelled).expect("serialize");
         assert_eq!(json["kind"], "cancelled");
         assert_eq!(json["message"], "Connection cancelled");
+    }
+
+    #[test]
+    fn untrusted_host_key_serializes_confirmation_details() {
+        let json = serde_json::to_value(SshError::HostKeyUntrusted {
+            host: "server.example".into(),
+            port: 22,
+            fingerprint: "SHA256:new".into(),
+            trusted_fingerprint: Some("SHA256:old".into()),
+        })
+        .expect("serialize");
+        assert_eq!(json["kind"], "host_key_untrusted");
+        assert_eq!(json["host"], "server.example");
+        assert_eq!(json["port"], 22);
+        assert_eq!(json["fingerprint"], "SHA256:new");
+        assert_eq!(json["trustedFingerprint"], "SHA256:old");
     }
 }

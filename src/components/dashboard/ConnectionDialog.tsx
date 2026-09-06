@@ -2,7 +2,7 @@ import { useEffect } from "react";
 import { Loader2, AlertCircle, X, MessageCircle } from "lucide-react";
 import { ModalBackdrop } from "../shared/ModalBackdrop";
 import { useTranslation } from "../../i18n";
-import { dualFactorHintOf } from "../../lib/backend-errors";
+import { dualFactorHintOf, type SshHostKeyPrompt } from "../../lib/backend-errors";
 
 interface ConnectionDialogProps {
   /** Host label or user@host shown during connecting */
@@ -13,9 +13,11 @@ interface ConnectionDialogProps {
   onRetry?: () => void;
   /** Abort the in-progress attempt. When set, a Cancel button is shown while connecting. */
   onCancel?: () => void;
+  hostKey?: SshHostKeyPrompt | null;
+  onTrustHostKey?: () => void;
 }
 
-export function ConnectionDialog({ label, error, onClose, onRetry, onCancel }: ConnectionDialogProps) {
+export function ConnectionDialog({ label, error, onClose, onRetry, onCancel, hostKey, onTrustHostKey }: ConnectionDialogProps) {
   const { t } = useTranslation();
   // An empty-password connect to a dual-factor bastion ends in an expected
   // auth failure — its purpose was firing the SMS dispatch. Lead with the
@@ -75,11 +77,13 @@ export function ConnectionDialog({ label, error, onClose, onRetry, onCancel }: C
               </div>
             )}
 
-            <div className="rounded-lg bg-status-error/5 border border-status-error/20 px-3 py-2.5 mb-5">
-              <p className="text-[length:var(--text-xs)] text-status-error leading-relaxed">
-                {error}
-              </p>
-            </div>
+            {hostKey ? <div className="rounded-lg border border-status-warning/30 bg-status-warning/5 px-3 py-2.5 mb-5 space-y-2">
+              <p className="text-[length:var(--text-xs)] text-text-primary">{t(hostKey.trustedFingerprint ? "dashboard.connect.hostKeyChanged" : "dashboard.connect.hostKeyFirst")}</p>
+              <p className="break-all font-mono text-[11px] text-text-secondary">{hostKey.fingerprint}</p>
+              {hostKey.trustedFingerprint && <p className="break-all font-mono text-[11px] text-text-muted">{t("dashboard.connect.previousHostKey")}: {hostKey.trustedFingerprint}</p>}
+            </div> : <div className="rounded-lg bg-status-error/5 border border-status-error/20 px-3 py-2.5 mb-5">
+              <p className="text-[length:var(--text-xs)] text-status-error leading-relaxed">{error}</p>
+            </div>}
 
             <div className="flex justify-end gap-2">
               <button
@@ -96,6 +100,7 @@ export function ConnectionDialog({ label, error, onClose, onRetry, onCancel }: C
                   {t("common.retry")}
                 </button>
               )}
+              {hostKey && onTrustHostKey && <button data-testid="ssh-host-key-trust" onClick={onTrustHostKey} className="px-4 py-2 text-[length:var(--text-sm)] font-medium text-text-inverse bg-accent hover:bg-accent-hover rounded-lg">{t("dashboard.connect.trustHostKey")}</button>}
             </div>
           </>
         ) : (

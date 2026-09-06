@@ -13,7 +13,7 @@ export type UnifiedTab =
   | { type: "terminal"; id: string; label: string }
   | { type: "sftp"; id: string; label: string; transport?: "sftp" | "scp" }
   | { type: "s3"; id: string; label: string }
-  | { type: "vnc"; id: string; label: string; wsUrl: string; savedHost?: SavedHost }
+  | { type: "vnc"; id: string; label: string; wsUrl: string; host: string; port: number; savedHost?: SavedHost }
   | { type: "rdp"; id: string; label: string; wsUrl: string; destination: string; username: string; password: string; savedHost?: SavedHost }
   | { type: "page"; id: string; label: string; page: PageId };
 
@@ -34,6 +34,7 @@ interface TabState {
   updateTabLabel: (id: string, label: string) => void;
   /** Swap a tab's ID in-place (used by SFTP sudo toggle when session reopens). */
   replaceTabId: (oldId: string, newId: string) => void;
+  replaceTab: (oldId: string, tab: UnifiedTab) => void;
   /** Activate or create a singleton page tab. */
   openPageTab: (page: PageId, label: string) => void;
   /** Find the most recent tab of a given type and activate it. Returns false if none found. */
@@ -120,6 +121,19 @@ export const useTabStore = create<TabState>((set, get) => ({
       const tabOrder = state.tabOrder.map((t) => (t === oldId ? newId : t));
       const activeTabId = state.activeTabId === oldId ? newId : state.activeTabId;
       return { tabs, tabOrder, activeTabId };
+    }),
+
+  replaceTab: (oldId, tab) =>
+    set((state) => {
+      if (!state.tabs.has(oldId)) return state;
+      const tabs = new Map(state.tabs);
+      tabs.delete(oldId);
+      tabs.set(tab.id, tab);
+      return {
+        tabs,
+        tabOrder: state.tabOrder.map(id => id === oldId ? tab.id : id),
+        activeTabId: state.activeTabId === oldId ? tab.id : state.activeTabId,
+      };
     }),
 
   openPageTab: (page, label) => {

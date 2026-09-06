@@ -1243,7 +1243,7 @@ async fn run_upload_dir(
     jobs: &Arc<DashMap<String, TransferJobState>>,
     job_id: &str,
     sftp_arc: &Arc<tokio::sync::Mutex<russh_sftp::client::SftpSession>>,
-    local_path: &PathBuf,
+    local_path: &Path,
     remote_dir: &str,
     cancel_token: &CancellationToken,
     app_handle: &AppHandle,
@@ -1270,7 +1270,7 @@ async fn upload_dir_recursive(
     jobs: &Arc<DashMap<String, TransferJobState>>,
     job_id: &str,
     sftp_arc: &Arc<tokio::sync::Mutex<russh_sftp::client::SftpSession>>,
-    local_dir: &PathBuf,
+    local_dir: &Path,
     remote_dir: &str,
     cancel_token: &CancellationToken,
     app_handle: &AppHandle,
@@ -1334,7 +1334,7 @@ async fn run_download_file(
     job_id: &str,
     sftp_arc: &Arc<tokio::sync::Mutex<russh_sftp::client::SftpSession>>,
     remote_path: &str,
-    local_path: &PathBuf,
+    local_path: &Path,
     cancel_token: &CancellationToken,
     app_handle: &AppHandle,
 ) -> Result<(), SftpError> {
@@ -1345,24 +1345,64 @@ async fn run_download_file(
             .map_err(|e| SftpError::LocalIoError(e.to_string()))?;
     }
 
+    let temporary_path = download_temporary_path(local_path);
     let result = download_file_to_disk(
         jobs,
         job_id,
         sftp_arc,
         remote_path,
-        local_path,
+        &temporary_path,
         cancel_token,
         app_handle,
     )
     .await;
 
-    // A failed or cancelled download must not leave a half-written file that a
-    // user (or a later sync) mistakes for the complete remote file. Clean up the
-    // partial whenever the file did not finish.
-    if result.is_err() {
-        let _ = tokio::fs::remove_file(local_path).await;
+    if let Err(error) = result {
+        let _ = tokio::fs::remove_file(&temporary_path).await;
+        return Err(error);
     }
-    result
+
+    if let Err(error) = commit_download(&temporary_path, local_path).await {
+        let _ = tokio::fs::remove_file(&temporary_path).await;
+        return Err(error);
+    }
+    mark_file_done(jobs, job_id, app_handle);
+    Ok(())
+}
+
+fn download_temporary_path(target: &Path) -> PathBuf {
+    let name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("download");
+    target.with_file_name(format!(".{name}.anyssh-{}.part", uuid::Uuid::new_v4()))
+}
+
+/// Replace `target` only after the complete download has been flushed. The
+/// backup dance also works on Windows, where rename cannot replace a file.
+async fn commit_download(temporary: &Path, target: &Path) -> Result<(), SftpError> {
+    let backup = download_temporary_path(target).with_extension("backup");
+    let had_target = match tokio::fs::rename(target, &backup).await {
+        Ok(()) => true,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => false,
+        Err(error) => return Err(SftpError::LocalIoError(error.to_string())),
+    };
+
+    if let Err(error) = tokio::fs::rename(temporary, target).await {
+        if had_target {
+            if let Err(restore_error) = tokio::fs::rename(&backup, target).await {
+                return Err(SftpError::LocalIoError(format!(
+                    "failed to install download ({error}); failed to restore original ({restore_error})"
+                )));
+            }
+        }
+        return Err(SftpError::LocalIoError(error.to_string()));
+    }
+
+    if had_target {
+        let _ = tokio::fs::remove_file(&backup).await;
+    }
+    Ok(())
 }
 
 async fn download_file_to_disk(
@@ -1417,9 +1457,6 @@ async fn download_file_to_disk(
         .shutdown()
         .await
         .map_err(|e| SftpError::RemoteIoError(e.to_string()))?;
-
-    // Mark this file done.
-    mark_file_done(jobs, job_id, app_handle);
 
     Ok(())
 }
@@ -1960,5 +1997,32 @@ mod tests {
             Some(SftpError::RemoteIoError(msg)) => assert_eq!(msg, "close failed"),
             other => panic!("expected first error, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn commit_download_replaces_existing_file_only_when_complete() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("report.txt");
+        let temporary = download_temporary_path(&target);
+        tokio::fs::write(&target, b"original").await.unwrap();
+        tokio::fs::write(&temporary, b"complete").await.unwrap();
+
+        commit_download(&temporary, &target).await.unwrap();
+
+        assert_eq!(tokio::fs::read(&target).await.unwrap(), b"complete");
+        assert!(!temporary.exists());
+    }
+
+    #[tokio::test]
+    async fn abandoned_download_temporary_file_does_not_touch_existing_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("report.txt");
+        let temporary = download_temporary_path(&target);
+        tokio::fs::write(&target, b"original").await.unwrap();
+        tokio::fs::write(&temporary, b"partial").await.unwrap();
+
+        tokio::fs::remove_file(&temporary).await.unwrap();
+
+        assert_eq!(tokio::fs::read(&target).await.unwrap(), b"original");
     }
 }

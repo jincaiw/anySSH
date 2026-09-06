@@ -7,6 +7,13 @@
 
 export default {
   "protocol.pasteClipboard": "粘贴剪贴板文本",
+  "vnc.verifyServer": "发送凭据前，请核对这台 VNC 服务器。",
+  "vnc.trustServer": "信任并继续",
+  "vnc.verificationUnavailable": "无法验证 VNC 服务器密钥。",
+  "connect.hostKeyFirst": "首次连接这台 SSH 服务器，请核对主机密钥指纹后再信任。",
+  "connect.hostKeyChanged": "这台 SSH 服务器的主机密钥已变更，请向管理员核对后再继续。",
+  "connect.previousHostKey": "原指纹",
+  "connect.trustHostKey": "信任并连接",
   "protocol.connect": "连接",
   "protocol.address": "服务器地址",
   "protocol.port": "端口",

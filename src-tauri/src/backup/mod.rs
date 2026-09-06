@@ -25,7 +25,7 @@
 
 pub mod commands;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use aes_gcm::aead::{Aead, KeyInit, Payload};
 use aes_gcm::{Aes256Gcm, Key, Nonce};
@@ -33,7 +33,7 @@ use argon2::{Algorithm, Argon2, Params, Version};
 use serde::Serialize;
 
 use crate::db::HostDb;
-use crate::vault::{self, StoredCredential};
+use crate::vault::{self, StoredCredential, VaultError};
 
 // ─── Constants ─────────────────────────────────────────────────────────────────
 
@@ -312,24 +312,62 @@ fn open(password: &str, data: &[u8]) -> Result<(Vec<u8>, u8), BackupError> {
 
 // ─── Orchestration (sync — callers use spawn_blocking) ──────────────────────────
 
+fn credential_keys(db: &HostDb) -> Result<BTreeSet<String>, BackupError> {
+    let mut keys = BTreeSet::new();
+    for host in db.list_hosts()? {
+        keys.insert(host.id);
+    }
+    for connection in db.list_s3_connections()? {
+        keys.insert(format!("s3:{}", connection.id));
+    }
+    Ok(keys)
+}
+
+fn read_credentials(
+    keys: &BTreeSet<String>,
+) -> Result<BTreeMap<String, StoredCredential>, BackupError> {
+    let mut credentials = BTreeMap::new();
+    for key in keys {
+        match vault::get_credential(key) {
+            Ok(credential) => {
+                credentials.insert(key.clone(), credential);
+            }
+            Err(VaultError::NotFound(_)) => {}
+            Err(error) => return Err(BackupError::Io(error.to_string())),
+        }
+    }
+    Ok(credentials)
+}
+
+/// Continue through every key so rollback repairs as much state as possible,
+/// while still returning the first vault failure to the caller.
+fn apply_credentials(
+    keys: &BTreeSet<String>,
+    desired: &BTreeMap<String, StoredCredential>,
+) -> Result<(), BackupError> {
+    let mut first_error = None;
+    for key in keys {
+        let result = match desired.get(key) {
+            Some(credential) => vault::save_credential(key, credential),
+            None => vault::delete_credential(key),
+        };
+        if first_error.is_none() {
+            first_error = result.err();
+        }
+    }
+    match first_error {
+        Some(error) => Err(BackupError::Io(error.to_string())),
+        None => Ok(()),
+    }
+}
+
 /// Build the encrypted backup container (raw bytes) for the whole app.
 pub fn build_backup(db: &HostDb, password: &str) -> Result<Vec<u8>, BackupError> {
     let db_bytes = db.export_db_snapshot()?;
 
     // Gather every stored secret keyed by its vault key. Missing entries are
     // simply skipped (a host may have no saved credential).
-    let mut credentials: BTreeMap<String, StoredCredential> = BTreeMap::new();
-    for h in db.list_hosts()? {
-        if let Ok(c) = vault::get_credential(&h.id) {
-            credentials.insert(h.id, c);
-        }
-    }
-    for s in db.list_s3_connections()? {
-        let key = format!("s3:{}", s.id);
-        if let Ok(c) = vault::get_credential(&key) {
-            credentials.insert(key, c);
-        }
-    }
+    let credentials = read_credentials(&credential_keys(db)?)?;
 
     let creds_json =
         serde_json::to_vec(&credentials).map_err(|e| BackupError::Crypto(e.to_string()))?;
@@ -355,14 +393,35 @@ pub fn restore_backup(db: &HostDb, password: &str, container: &[u8]) -> Result<(
     let credentials: BTreeMap<String, StoredCredential> = serde_json::from_slice(creds_json)
         .map_err(|e| BackupError::Crypto(format!("payload parse failed: {e}")))?;
 
-    // 1. Replace the database (validated + migrated + transactional inside).
+    let previous_db = db.export_db_snapshot()?;
+    let previous_keys = credential_keys(db)?;
+    let previous_credentials = read_credentials(&previous_keys)?;
+
     db.import_db_snapshot(db_bytes)?;
-    // 2. Restore secrets to the OS keychain. Best-effort per entry so one bad
-    //    write doesn't abort the rest; the DB is already restored.
-    for (key, cred) in &credentials {
-        if let Err(e) = vault::save_credential(key, cred) {
-            tracing::warn!(key = %key, error = %e, "restore: failed to write credential to keychain");
+    let restored_keys = credential_keys(db)?;
+    let all_keys = previous_keys
+        .union(&restored_keys)
+        .cloned()
+        .chain(credentials.keys().cloned())
+        .collect::<BTreeSet<_>>();
+
+    if let Err(error) = apply_credentials(&all_keys, &credentials) {
+        let db_rollback = db.import_db_snapshot(&previous_db);
+        let vault_rollback = apply_credentials(&all_keys, &previous_credentials);
+        if db_rollback.is_err() || vault_rollback.is_err() {
+            return Err(BackupError::Db(format!(
+                "{error}; rollback failed (database: {}; credentials: {})",
+                db_rollback
+                    .err()
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "ok".into()),
+                vault_rollback
+                    .err()
+                    .map(|e| e.to_string())
+                    .unwrap_or_else(|| "ok".into())
+            )));
         }
+        return Err(error);
     }
     Ok(())
 }

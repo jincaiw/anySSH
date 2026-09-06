@@ -7,6 +7,13 @@
 
 export default {
   "protocol.pasteClipboard": "Paste clipboard text",
+  "vnc.verifyServer": "Verify this VNC server before sending credentials.",
+  "vnc.trustServer": "Trust and continue",
+  "vnc.verificationUnavailable": "The VNC server key could not be verified.",
+  "connect.hostKeyFirst": "First connection to this SSH server. Verify the host-key fingerprint before trusting it.",
+  "connect.hostKeyChanged": "This SSH server's host key has changed. Verify it with the administrator before continuing.",
+  "connect.previousHostKey": "Previous fingerprint",
+  "connect.trustHostKey": "Trust and connect",
   "protocol.connect": "Connect",
   "protocol.address": "Server address",
   "protocol.port": "Port",

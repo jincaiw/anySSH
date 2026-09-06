@@ -487,6 +487,8 @@ export function AppShell() {
                         wsUrl={tab.wsUrl}
                         savedHost={tab.savedHost}
                         isActive={isVisible}
+                        onReconnect={() => import("@tauri-apps/api/core").then(({ invoke }) => invoke<{ token: string; wsUrl: string }>("vnc_open", { host: tab.host, port: tab.port })).then(endpoint => useTabStore.getState().replaceTab(tabId, { ...tab, id: endpoint.token, wsUrl: endpoint.wsUrl }))}
+                        onEdit={tab.savedHost ? () => { useUiStore.getState().setEditingHostId(tab.savedHost!.id); useTabStore.getState().openPageTab("hosts", t("tabs.page.hosts")); } : undefined}
                       />
                     ) : null}
                   </div>
@@ -513,6 +515,13 @@ export function AppShell() {
                         username={tab.username}
                         password={tab.password}
                         isActive={isVisible}
+                        onReconnect={() => import("@tauri-apps/api/core").then(({ invoke }) => {
+                          const bracketed = tab.destination.match(/^\[([^\]]+)\]:(\d+)$/);
+                          const separator = tab.destination.lastIndexOf(":");
+                          const source = tab.savedHost ?? { host: bracketed?.[1] ?? tab.destination.slice(0, separator), port: Number(bracketed?.[2] ?? tab.destination.slice(separator + 1)) };
+                          return invoke<{ token: string; wsUrl: string }>("rd_open", { host: source.host, port: source.port });
+                        }).then(endpoint => useTabStore.getState().replaceTab(tabId, { ...tab, id: endpoint.token, wsUrl: endpoint.wsUrl }))}
+                        onEdit={tab.savedHost ? () => { useUiStore.getState().setEditingHostId(tab.savedHost!.id); useTabStore.getState().openPageTab("hosts", t("tabs.page.hosts")); } : undefined}
                       />
                     ) : null}
                   </div>

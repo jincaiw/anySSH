@@ -6,6 +6,7 @@ import { useSessionStore } from "../../stores/session-store";
 import { useTabStore } from "../../stores/tab-store";
 import { useTranslation } from "../../i18n";
 import { disconnectSession } from "../../lib/disconnect-session";
+import { confirmAndTrustSshHostKey } from "../../lib/backend-errors";
 
 interface DisconnectOverlayProps {
   sessionId: SessionId;
@@ -73,6 +74,11 @@ export function DisconnectOverlay({
       addSession(newSessionId as SessionId, hostConfig, sessionKind);
       useTabStore.getState().addTab({ type: "terminal", id: newSessionId, label });
     } catch (err) {
+      if (await confirmAndTrustSshHostKey(err)) {
+        setIsReconnecting(false);
+        void handleReconnect();
+        return;
+      }
       const msg =
         err instanceof Error ? err.message
         : err && typeof err === "object" && "message" in err ? String((err as { message: string }).message)

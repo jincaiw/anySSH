@@ -12,6 +12,7 @@ import {
     openNewHostModal,
     waitForModalClosed,
 } from "../helpers/host.js";
+import { waitForExplorer } from "../helpers/sftp-ops.js";
 
 const SSHD_PASS_HOST = process.env.SSHD_PASS_HOST ?? "sshd-pass";
 const SSHD_PASS_PORT = Number(process.env.SSHD_PASS_PORT ?? 2222);
@@ -47,11 +48,7 @@ describe("SFTP", () => {
         await explorerBtn.click();
 
         // An SFTP tab should appear and the file listing should render.
-        await browser.waitUntil(
-            async () =>
-                (await (await $("[data-tab-type='sftp']")).isExisting()) === true,
-            { timeout: 30_000, timeoutMsg: "SFTP tab never opened" },
-        );
+        await waitForExplorer();
 
         // The Refresh button in the explorer toolbar should be present.
         const refresh = await $("[aria-label='Refresh']");

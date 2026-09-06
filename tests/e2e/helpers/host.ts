@@ -37,7 +37,11 @@ export async function waitForModalOpen(): Promise<void> {
 export async function waitForModalClosed(): Promise<void> {
     try {
         await browser.waitUntil(
-            async () => !(await (await $("[data-testid='host-modal']")).isExisting()),
+            async () => {
+                const trust = await $("[data-testid='ssh-host-key-trust']");
+                if (await trust.isExisting() && await trust.isDisplayed()) await trust.click();
+                return !(await (await $("[data-testid='host-modal']")).isExisting());
+            },
             { timeout: 15_000, timeoutMsg: "modal did not close" },
         );
     } catch (err) {

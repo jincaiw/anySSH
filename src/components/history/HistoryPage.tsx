@@ -15,6 +15,7 @@ import type { ContextMenuItem } from "../shared/ContextMenu";
 import type { ConnectionHistoryEntry } from "../../types";
 import { parseSqliteUtc } from "../../utils/time";
 import { useTranslation, type TVars } from "../../i18n";
+import { confirmAndTrustSshHostKey } from "../../lib/backend-errors";
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -137,8 +138,9 @@ export function HistoryPage() {
         auth_method: { type: "password", password: "" },
       });
       useTabStore.getState().addTab({ type: "terminal", id: sessionId, label });
-    } catch {
-      // Connection errors show via disconnect overlay
+    } catch (error) {
+      if (await confirmAndTrustSshHostKey(error)) void handleTerminal(entry);
+      else if (!error || typeof error !== "object" || !("kind" in error) || error.kind !== "host_key_untrusted") toast.error(String((error as { message?: string })?.message ?? error));
     }
   }, []);
 
@@ -172,8 +174,9 @@ export function HistoryPage() {
 
       useSftpStore.getState().openSession(explorerSessionId, sessionId, label, entry.username);
       useTabStore.getState().addTab({ type: "sftp", id: explorerSessionId, label, transport });
-    } catch {
-      // Errors surface via SFTP page
+    } catch (error) {
+      if (await confirmAndTrustSshHostKey(error)) void handleExplorer(entry);
+      else if (!error || typeof error !== "object" || !("kind" in error) || error.kind !== "host_key_untrusted") toast.error(String((error as { message?: string })?.message ?? error));
     }
   }, []);
 

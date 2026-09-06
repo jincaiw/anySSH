@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import { t } from "../i18n";
 import type { PortForwardRule, TunnelStatus } from "../types";
+import { confirmAndTrustSshHostKey } from "../lib/backend-errors";
 
 interface PortForwardState {
   rules: PortForwardRule[];
@@ -114,6 +115,10 @@ export const usePortForwardStore = create<PortForwardState>((set, get) => ({
         return { activeTunnels: next };
       });
     } catch (err) {
+      if (await confirmAndTrustSshHostKey(err)) {
+        await get().startTunnel(ruleId, hostId, rule);
+        return;
+      }
       const msg = err && typeof err === "object" && "message" in err
         ? String((err as { message: string }).message)
         : typeof err === "string" ? err : t("portforward.startFailed");

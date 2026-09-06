@@ -229,7 +229,9 @@ pub async fn pf_start_tunnel(
         force_session_log: false,
     };
 
-    let session_id = ssh_manager.connect_no_pty(config, None).await?;
+    let session_id = ssh_manager
+        .connect_no_pty(config, None, Arc::clone(&db))
+        .await?;
     let sid = session_id.0.clone();
     let handle = ssh_manager.get_handle(&sid)?;
 

@@ -19,6 +19,43 @@ use crate::ssh::sessionlog::{self, SessionLogContext, SessionLogger};
 use crate::term::spawn_session;
 use crate::types::SessionId;
 
+/// Load only the login script referenced by a saved Telnet bookmark.  This is
+/// intentionally narrower than a generic credential-read command.
+#[tauri::command]
+pub async fn term_load_login_script(
+    host_id: String,
+    db: State<'_, Arc<HostDb>>,
+) -> Result<Vec<super::LoginScriptStep>, TermError> {
+    let database = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || {
+        let host = database
+            .get_host(&host_id)
+            .map_err(|e| TermError::Io(e.to_string()))?
+            .ok_or_else(|| TermError::InvalidParams("saved host was not found".into()))?;
+        if host.kind.as_deref() != Some("telnet") {
+            return Err(TermError::InvalidParams(
+                "saved host is not a Telnet bookmark".into(),
+            ));
+        }
+        let params: serde_json::Value =
+            serde_json::from_str(host.params_json.as_deref().unwrap_or("{}")).map_err(|_| {
+                TermError::InvalidParams("saved Telnet parameters are invalid".into())
+            })?;
+        if params
+            .get("scriptCredentialId")
+            .and_then(|value| value.as_str())
+            != Some(host_id.as_str())
+        {
+            return Err(TermError::InvalidParams(
+                "saved login script reference is invalid".into(),
+            ));
+        }
+        crate::term::credentials::load_script(&host_id)
+    })
+    .await
+    .map_err(|e| TermError::Io(format!("task panicked: {e}")))?
+}
+
 /// Session-log context for a term session: user naming metadata plus the
 /// global auto-record setting (same source the SSH layer reads; term
 /// sessions have no per-host bookmark preset).

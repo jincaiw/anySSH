@@ -939,7 +939,7 @@ pub async fn s3_edit_external(
 
     // Stage under a per-object subdir so two objects sharing a basename
     // (e.g. a/compose.yml and b/compose.yml) don't clobber each other (#76).
-    let edit_key = format!("{s3_session_id}\0{key}");
+    let edit_key = format!("{s3_session_id}\0{}\0{key}", bucket.name());
     let local_path = crate::editors::edit_temp_path(&edit_key, &file_name);
     if let Some(parent) = local_path.parent() {
         tokio::fs::create_dir_all(parent)
@@ -977,7 +977,7 @@ pub async fn s3_edit_external(
     let local_path_bg = local_path.clone();
     let app_handle_bg = app_handle.clone();
     let sid = s3_session_id.clone();
-    let s3_manager_bg = Arc::clone(&s3_manager);
+    let bucket_bg = bucket.clone();
 
     tokio::task::spawn_blocking(move || {
         use notify::{Config, Event, EventKind, RecursiveMode, Watcher};
@@ -1031,22 +1031,11 @@ pub async fn s3_edit_external(
                             let key_inner = key_bg.clone();
                             let app_handle_inner = app_handle_bg.clone();
                             let sid_inner = sid.clone();
-                            let s3_manager_inner = Arc::clone(&s3_manager_bg);
+                            let bucket_inner = bucket_bg.clone();
 
                             let rt = tokio::runtime::Handle::current();
                             rt.spawn(async move {
-                                let bucket = match s3_manager_inner.get_bucket(&sid_inner) {
-                                    Ok(b) => b,
-                                    Err(e) => {
-                                        tracing::error!(
-                                            error = %e,
-                                            "S3 session gone during edit"
-                                        );
-                                        return;
-                                    }
-                                };
-
-                                match bucket.put_object(&key_inner, &contents).await {
+                                match bucket_inner.put_object(&key_inner, &contents).await {
                                     Ok(_) => {
                                         tracing::info!(
                                             key = %key_inner,

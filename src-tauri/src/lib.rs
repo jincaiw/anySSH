@@ -293,6 +293,7 @@ pub fn run() {
             // SSH
             ssh::commands::ssh_connect,
             ssh::commands::ssh_cancel_connect,
+            ssh::commands::ssh_trust_host_key,
             ssh::commands::ssh_split_session,
             ssh::commands::ssh_disconnect,
             ssh::commands::ssh_send_input,
@@ -410,6 +411,7 @@ pub fn run() {
             term::commands::term_resize,
             term::commands::term_set_encoding,
             term::commands::term_close,
+            term::commands::term_load_login_script,
             term::commands::serial_list_ports,
             term::commands::serial_start_hotplug,
             // Remote graphics (WS bridge)

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, AlertTriangle, Unplug } from "lucide-react";
+import { Loader2, AlertTriangle, Unplug, RefreshCw, Pencil } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "../../i18n";
 import type { SavedHost } from "../../types";
@@ -18,6 +18,8 @@ interface RdpCanvasProps {
   password: string;
   isActive: boolean;
   savedHost?: SavedHost;
+  onReconnect?: () => Promise<void>;
+  onEdit?: () => void;
 }
 
 /** Minimal shape of the component's PublicAPI (config builder chains). */
@@ -74,6 +76,8 @@ export function RdpCanvas({
   password,
   isActive,
   savedHost,
+  onReconnect,
+  onEdit,
 }: RdpCanvasProps) {
   const { t } = useTranslation();
   const containerRef = useRef<HTMLDivElement>(null);
@@ -86,6 +90,13 @@ export function RdpCanvas({
   useEffect(() => { apiRef.current?.setVisibility(isActive); }, [isActive]);
   const [status, setStatus] = useState<RdpStatus>("loading");
   const [errorMsg, setErrorMsg] = useState<string>("");
+  const reconnect = async () => {
+    if (!onReconnect) return;
+    setErrorMsg("");
+    setStatus("loading");
+    try { await onReconnect(); }
+    catch (error) { setErrorMsg(String(error)); setStatus("error"); }
+  };
 
   useEffect(() => {
     // StrictMode double-mount: cancel a pending teardown from the previous
@@ -230,6 +241,7 @@ export function RdpCanvas({
               <p className="text-[length:var(--text-sm)] text-text-secondary">
                 {t("dashboard.rdp.statusDisconnected")}
               </p>
+              <div className="flex gap-2">{onReconnect && <button className="flex items-center gap-1 rounded bg-accent px-3 py-1.5 text-sm text-white" onClick={() => void reconnect()}><RefreshCw size={14} />{t("common.retry")}</button>}{onEdit && <button className="flex items-center gap-1 rounded px-3 py-1.5 text-sm text-text-secondary hover:bg-bg-subtle" onClick={onEdit}><Pencil size={14} />{t("common.edit")}</button>}</div>
             </>
           )}
           {status === "error" && (
@@ -243,6 +255,7 @@ export function RdpCanvas({
                   {errorMsg}
                 </p>
               )}
+              <div className="flex gap-2">{onReconnect && <button className="flex items-center gap-1 rounded bg-accent px-3 py-1.5 text-sm text-white" onClick={() => void reconnect()}><RefreshCw size={14} />{t("common.retry")}</button>}{onEdit && <button className="flex items-center gap-1 rounded px-3 py-1.5 text-sm text-text-secondary hover:bg-bg-subtle" onClick={onEdit}><Pencil size={14} />{t("common.edit")}</button>}</div>
             </>
           )}
         </div>

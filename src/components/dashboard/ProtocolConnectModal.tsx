@@ -11,7 +11,7 @@ import { useGroupsStore } from "../../stores/groups-store";
 import { useHostsStore } from "../../stores/hosts-store";
 import { TERMINAL_ENCODINGS, useSettingsStore } from "../../stores/settings-store";
 import { buildProtocolHost, protocolParams, type ProtocolHostKind } from "../../lib/protocol-hosts";
-import type { SavedHost, StoredCredential } from "../../types";
+import type { SavedHost } from "../../types";
 
 interface Props { kind: ProtocolHostKind; initial?: SavedHost; onClose: () => void }
 interface ScriptStep { expect: string; send: string }
@@ -43,6 +43,8 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
   const [ports, setPorts] = useState<PortInfo[]>([]);
   const [busy, setBusy] = useState(false);
   const [loadingScript, setLoadingScript] = useState(Boolean(parsed.scriptCredentialId));
+  const [scriptLoadFailed, setScriptLoadFailed] = useState(false);
+  const [scriptRetry, setScriptRetry] = useState(0);
   const [error, setError] = useState("");
   const [certificate, setCertificate] = useState<Certificate | null>(null);
   const alive = useRef(true);
@@ -74,17 +76,15 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
       })().catch(err => { if (!cancelled) setError(messageOf(err)); });
     }
     if (initial && parsed.scriptCredentialId) {
-      void invoke<StoredCredential>("vault_get_credential", { hostId: initial.id }).then(credential => {
+      void invoke<ScriptStep[]>("term_load_login_script", { hostId: initial.id }).then(script => {
         if (cancelled) return;
-        if (credential.type !== "Password") throw new Error(t("dashboard.protocol.scriptUnavailable"));
-        const script: unknown = JSON.parse(credential.password);
-        if (!Array.isArray(script) || !script.every(s => typeof s.expect === "string" && typeof s.send === "string")) throw new Error(t("dashboard.protocol.scriptUnavailable"));
         setSteps(script);
+        setScriptLoadFailed(false);
         setLoadingScript(false);
-      }).catch(err => { if (!cancelled) setError(messageOf(err)); });
+      }).catch(err => { if (!cancelled) { setLoadingScript(false); setScriptLoadFailed(true); setError(messageOf(err) || t("dashboard.protocol.scriptUnavailable")); } });
     }
     return () => { cancelled = true; alive.current = false; unlisten?.(); };
-  }, [kind, initial, parsed, t]);
+  }, [kind, initial, parsed, t, scriptRetry]);
 
   function build(): SavedHost {
     if (kind !== "local" && !host.trim()) throw new Error(t("host.validation.hostRequired"));
@@ -109,7 +109,7 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
   }
 
   async function submit(connect: boolean, trust = false) {
-    if (submitting.current || loadingScript) return;
+    if (submitting.current || loadingScript || scriptLoadFailed) return;
     submitting.current = true; setBusy(true); setError("");
     try {
       const bookmark = build();
@@ -131,7 +131,7 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
         const endpoint = await invoke<{ token: string; wsUrl: string }>(kind === "vnc" ? "vnc_open" : "rd_open", { host: bookmark.host, port: bookmark.port });
         if (!alive.current) { await invoke(kind === "vnc" ? "vnc_close" : "rd_close", { token: endpoint.token }); return; }
         const savedHost = remember ? bookmark : undefined;
-        if (kind === "vnc") useTabStore.getState().addTab({ type: "vnc", id: endpoint.token, label: bookmark.label, wsUrl: endpoint.wsUrl, savedHost });
+        if (kind === "vnc") useTabStore.getState().addTab({ type: "vnc", id: endpoint.token, label: bookmark.label, wsUrl: endpoint.wsUrl, host: bookmark.host, port: bookmark.port, savedHost });
         else useTabStore.getState().addTab({ type: "rdp", id: endpoint.token, label: bookmark.label, wsUrl: endpoint.wsUrl, savedHost,
           destination: `${bookmark.host.includes(":") ? `[${bookmark.host.replace(/^\[|\]$/g, "")}]` : bookmark.host}:${bookmark.port}`, username: username.trim(), password });
       } else {
@@ -157,10 +157,10 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
     return <label className="flex flex-col gap-1.5 min-w-0 text-[length:var(--text-xs)] font-medium text-text-secondary">{text}{input}</label>;
   }
   return <ModalShell open onClose={close} title={title} icon={kind === "serial" ? Cable : Monitor} maxWidth="lg" scrollable testId={`${kind}-connect-modal`}
-    footerStart={<button data-testid="protocol-save-button" type="button" disabled={busy || loadingScript} onClick={() => void submit(false)} className={BTN_SECONDARY}>{t("common.save")}</button>}
-    footer={<><button type="button" onClick={close} className={BTN_GHOST}>{t("common.cancel")}</button><button type="submit" form={`${kind}-connect-form`} disabled={busy || loadingScript || certificate !== null} data-testid={`${kind}-connect-button`} className={BTN_PRIMARY}>{busy ? t("dashboard.connect.connecting") : t("dashboard.protocol.connect")}</button></>}>
+    footerStart={<button data-testid="protocol-save-button" type="button" disabled={busy || loadingScript || scriptLoadFailed} onClick={() => void submit(false)} className={BTN_SECONDARY}>{t("common.save")}</button>}
+    footer={<><button type="button" onClick={close} className={BTN_GHOST}>{t("common.cancel")}</button><button type="submit" form={`${kind}-connect-form`} disabled={busy || loadingScript || scriptLoadFailed || certificate !== null} data-testid={`${kind}-connect-button`} className={BTN_PRIMARY}>{busy ? t("dashboard.connect.connecting") : t("dashboard.protocol.connect")}</button></>}>
     <form id={`${kind}-connect-form`} onSubmit={event => { event.preventDefault(); void submit(true); }} className="flex flex-col gap-4">
-      {error && <p role="alert" className="rounded-lg bg-status-error/10 px-3 py-2 text-status-error text-[length:var(--text-sm)] break-words">{error}</p>}
+      {error && <div role="alert" className="flex items-center justify-between gap-3 rounded-lg bg-status-error/10 px-3 py-2 text-status-error text-[length:var(--text-sm)] break-words"><span>{error}</span>{scriptLoadFailed && <button type="button" className={BTN_GHOST} onClick={() => { setError(""); setLoadingScript(true); setScriptLoadFailed(false); setScriptRetry(value => value + 1); }}>{t("common.retry")}</button>}</div>}
       {certificate && <div role="alert" className="rounded-lg border border-border p-3 space-y-3 text-[length:var(--text-sm)]">
         <p>{t(certificate.trustedFingerprint ? "dashboard.protocol.certificateChanged" : "dashboard.protocol.certificateFirst")}</p>
         <p className="font-mono break-all select-text">SHA-256: {certificate.fingerprint}</p>

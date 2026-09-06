@@ -407,19 +407,19 @@ impl TelnetIo {
 
         // Drain immediate-send steps (empty expect) right after connect.
         if io.login.is_some() {
-            io.drain_immediate_sends().await;
+            io.drain_immediate_sends().await?;
         }
         Ok(io)
     }
 
     /// Fire steps whose `expect` is empty (chained, e.g. a leading "send
     /// newline to wake the console" step).
-    async fn drain_immediate_sends(&mut self) {
+    async fn drain_immediate_sends(&mut self) -> std::io::Result<()> {
         while let Some(action) = self.login.as_mut().map(|login| login.step(&[])) {
             match action {
                 LoginAction::Send(bytes) => {
-                    let _ = self.write_half.write_all(&bytes).await;
-                    let _ = self.write_half.write_all(b"\r").await;
+                    self.write_half.write_all(&bytes).await?;
+                    self.write_half.write_all(b"\r").await?;
                 }
                 LoginAction::Wait => break,
             }
@@ -428,6 +428,7 @@ impl TelnetIo {
                 break;
             }
         }
+        Ok(())
     }
 
     /// Apply the negotiation policy; returns the bytes to send (if any).
@@ -501,16 +502,20 @@ impl TermIo for TelnetIo {
 
             match &mut self.login {
                 Some(login) => {
-                    match login.step(&data) {
+                    let sent = match login.step(&data) {
                         LoginAction::Send(bytes) => {
-                            let _ = self.write_half.write_all(&bytes).await;
-                            let _ = self.write_half.write_all(b"\r").await;
-                            let still = login.pending();
-                            if !still {
-                                self.login = None;
-                            }
+                            self.write_half.write_all(&bytes).await?;
+                            self.write_half.write_all(b"\r").await?;
+                            true
                         }
-                        LoginAction::Wait => {}
+                        LoginAction::Wait => false,
+                    };
+                    if sent {
+                        if login.pending() {
+                            self.drain_immediate_sends().await?;
+                        } else {
+                            self.login = None;
+                        }
                     }
                     // User still sees everything the device prints during
                     // login (prompts, banners, MOTD).
@@ -715,6 +720,38 @@ mod tests {
         }])
         .unwrap();
         assert!(matches!(r.step(&[]), LoginAction::Send(ref bytes) if bytes == b"\r"));
+    }
+
+    #[tokio::test]
+    async fn matched_step_drains_following_immediate_steps_without_server_output() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        let server = tokio::spawn(async move {
+            let (mut stream, _) = listener.accept().await.unwrap();
+            stream.write_all(b"login:").await.unwrap();
+            let mut received = [0u8; 10];
+            tokio::time::timeout(Duration::from_secs(1), stream.read_exact(&mut received))
+                .await
+                .expect("client stalled waiting for more server output")
+                .unwrap();
+            received
+        });
+        let steps = vec![
+            LoginScriptStep {
+                expect: "login:".into(),
+                send: "user".into(),
+            },
+            LoginScriptStep {
+                expect: String::new(),
+                send: "next".into(),
+            },
+        ];
+        let mut io = TelnetIo::connect("127.0.0.1", port, Some(steps), 80, 24)
+            .await
+            .unwrap();
+        let mut output = [0u8; 32];
+        assert_eq!(io.read(&mut output).await.unwrap(), 6);
+        assert_eq!(&server.await.unwrap(), b"user\rnext\r");
     }
 
     #[test]

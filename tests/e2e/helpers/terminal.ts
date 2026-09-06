@@ -6,8 +6,12 @@
 
 /** Wait until at least one terminal exists in the DOM. Returns its sessionId. */
 export async function waitForAnyTerminal(timeoutMs = 30_000): Promise<string> {
+    await browser.waitUntil(async () => {
+        const trust = await $("[data-testid='ssh-host-key-trust']");
+        if (await trust.isExisting() && await trust.isDisplayed()) await trust.click();
+        return await (await $("[data-testid^='terminal-']")).isExisting();
+    }, { timeout: timeoutMs, interval: 200, timeoutMsg: "terminal did not open" });
     const el = await $("[data-testid^='terminal-']");
-    await el.waitForExist({ timeout: timeoutMs });
     const id = await el.getAttribute("data-session-id");
     if (!id) throw new Error("terminal element missing data-session-id");
     return id;

@@ -31,6 +31,10 @@ describe("bad key path", () => {
         });
         await clickConnect();
 
+        const trust = await $("[data-testid='ssh-host-key-trust']");
+        await trust.waitForClickable({ timeout: 20_000 });
+        await trust.click();
+
         const err = await $("[data-testid='host-modal-error']");
         await err.waitForDisplayed({ timeout: 30_000 });
         const text = await err.getText();

@@ -48,8 +48,35 @@ pub async fn ssh_connect(
     // bookmark preset forcing it on (e.g. production hosts).
     let log_options = resolve_auto_log_options(&host_config.force_session_log, &db);
     state
-        .connect(host_config, app_handle, attempt_id, settings, log_options)
+        .connect(
+            host_config,
+            app_handle,
+            attempt_id,
+            settings,
+            log_options,
+            Arc::clone(&db),
+        )
         .await
+}
+
+#[tauri::command]
+pub async fn ssh_trust_host_key(
+    host: String,
+    port: u16,
+    fingerprint: String,
+    db: State<'_, Arc<HostDb>>,
+) -> Result<(), SshError> {
+    if !fingerprint.starts_with("SHA256:") || fingerprint.len() <= "SHA256:".len() {
+        return Err(SshError::ConnectionFailed(
+            "invalid SSH host-key fingerprint".into(),
+        ));
+    }
+    let key = super::manager::host_key_setting(&host, port);
+    let database = Arc::clone(&db);
+    tokio::task::spawn_blocking(move || database.save_setting(&key, &fingerprint))
+        .await
+        .map_err(|e| SshError::IoError(format!("task panicked: {e}")))?
+        .map_err(|e| SshError::IoError(e.to_string()))
 }
 
 /// Resolve the auto-start log options for a connection: `Some` when either
@@ -182,7 +209,7 @@ pub async fn ssh_health_check_saved_host(
     .await
     .map_err(|e| SshError::IoError(format!("task panicked: {e}")))??;
 
-    Ok(probe_host_health(&config).await)
+    Ok(probe_host_health(&config, &db).await)
 }
 
 /// Probe a saved host's reachability, routing through its ProxyJump host when one
@@ -191,9 +218,9 @@ pub async fn ssh_health_check_saved_host(
 /// opening a `direct-tcpip` channel to the target (mirroring how a real
 /// connection is established). Never returns an error — every failure mode maps
 /// to a structured [`HostHealthCheckResult`].
-async fn probe_host_health(config: &HostConfig) -> HostHealthCheckResult {
+async fn probe_host_health(config: &HostConfig, db: &HostDb) -> HostHealthCheckResult {
     match &config.jump_host {
-        Some(jump) => probe_via_jump(config, jump).await,
+        Some(jump) => probe_via_jump(config, jump, db).await,
         None => probe_direct(&config.host, config.port).await,
     }
 }
@@ -219,7 +246,7 @@ async fn probe_direct(host: &str, port: u16) -> HostHealthCheckResult {
     // open a second connection to the host. The handshake bound is the outer
     // `timeout`, so no `inactivity_timeout` is needed on the throwaway config.
     let russh_config = Arc::new(super::config::russh_client_config());
-    let handler = super::handler::SshClientHandler;
+    let handler = super::handler::SshClientHandler::accept_any();
     match timeout(
         HEALTH_CHECK_TIMEOUT,
         client::connect_stream(russh_config, stream, handler),
@@ -264,7 +291,11 @@ async fn probe_direct(host: &str, port: u16) -> HostHealthCheckResult {
 /// Failure stages are attributed so the result is actionable: problems reaching
 /// or authenticating a jump hop are prefixed `tunnel host …`, while a refused
 /// tunnel to the target maps to `PortClosed`.
-async fn probe_via_jump(target: &HostConfig, jump: &HostConfig) -> HostHealthCheckResult {
+async fn probe_via_jump(
+    target: &HostConfig,
+    jump: &HostConfig,
+    db: &HostDb,
+) -> HostHealthCheckResult {
     let started = Instant::now();
     let elapsed_ms = || started.elapsed().as_millis() as u64;
     // Throwaway config: no keepalive/inactivity timeout needed for a one-shot probe.
@@ -277,7 +308,7 @@ async fn probe_via_jump(target: &HostConfig, jump: &HostConfig) -> HostHealthChe
     let jump_bringup_budget = HEALTH_CHECK_TIMEOUT.saturating_mul(3);
     let (jump_handle, _chain) = match timeout(
         jump_bringup_budget,
-        SshManager::establish(jump, russh_config.clone()),
+        SshManager::establish(jump, russh_config.clone(), db),
     )
     .await
     {
@@ -341,7 +372,7 @@ async fn probe_via_jump(target: &HostConfig, jump: &HostConfig) -> HostHealthChe
         client::connect_stream(
             russh_config,
             channel.into_stream(),
-            super::handler::SshClientHandler,
+            super::handler::SshClientHandler::accept_any(),
         ),
     )
     .await
@@ -518,8 +549,10 @@ mod tests {
 
         let target = cfg("198.51.100.1", 22); // never reached
         let jump = cfg("127.0.0.1", jump_port);
+        let dir = tempfile::tempdir().unwrap();
+        let db = HostDb::new(dir.path()).unwrap();
 
-        let result = probe_via_jump(&target, &jump).await;
+        let result = probe_via_jump(&target, &jump, &db).await;
         assert!(
             matches!(result.status, HostHealthStatus::SshFailed),
             "expected SshFailed, got {:?} ({})",
@@ -550,8 +583,10 @@ mod tests {
             jump_host: Some(Box::new(mid.clone())),
             ..cfg("anyssh-target.invalid", 22)
         };
+        let dir = tempfile::tempdir().unwrap();
+        let db = HostDb::new(dir.path()).unwrap();
 
-        let result = probe_via_jump(&target, &mid).await;
+        let result = probe_via_jump(&target, &mid, &db).await;
         assert!(
             matches!(result.status, HostHealthStatus::SshFailed),
             "expected SshFailed, got {:?} ({})",
@@ -623,7 +658,14 @@ pub async fn connect_saved_host(
     // `build_host_config_blocking`; combine with the global setting.
     let log_options = resolve_auto_log_options(&config.force_session_log, &db);
     let session_id = state
-        .connect(config, app_handle, attempt_id, settings, log_options)
+        .connect(
+            config,
+            app_handle,
+            attempt_id,
+            settings,
+            log_options,
+            Arc::clone(&db),
+        )
         .await?;
 
     crate::telemetry::capture(
@@ -689,7 +731,14 @@ pub async fn trigger_dual_factor_sms(
     // an unreachable host must not hang this fire-and-forget call forever.
     let outcome = tokio::time::timeout(
         std::time::Duration::from_secs(60),
-        state.connect(config, app_handle.clone(), None, settings, None),
+        state.connect(
+            config,
+            app_handle.clone(),
+            None,
+            settings,
+            None,
+            Arc::clone(&db),
+        ),
     )
     .await;
 
@@ -908,7 +957,9 @@ pub async fn connect_saved_host_no_pty(
     .await
     .map_err(|e| SshError::IoError(format!("task panicked: {e}")))??;
 
-    state.connect_no_pty(config, attempt_id).await
+    state
+        .connect_no_pty(config, attempt_id, Arc::clone(&db))
+        .await
 }
 
 /// Whether the host has a usable saved password in the vault.

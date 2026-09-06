@@ -31,6 +31,12 @@ describe("auth failure", () => {
         });
         await clickConnect();
 
+        // First contact requires an explicit SSH host-key decision before the
+        // authentication failure can be exercised.
+        const trust = await $("[data-testid='ssh-host-key-trust']");
+        await trust.waitForClickable({ timeout: 20_000 });
+        await trust.click();
+
         // Modal stays open with the error banner.
         const err = await $("[data-testid='host-modal-error']");
         await err.waitForDisplayed({ timeout: 20_000 });

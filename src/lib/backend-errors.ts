@@ -42,6 +42,46 @@ export function errorKindOf(err: unknown): string | null {
   return null;
 }
 
+export interface SshHostKeyPrompt {
+  host: string;
+  port: number;
+  fingerprint: string;
+  trustedFingerprint: string | null;
+}
+
+export function sshHostKeyPromptOf(err: unknown): SshHostKeyPrompt | null {
+  if (errorKindOf(err) !== "host_key_untrusted" || !err || typeof err !== "object") return null;
+  const value = err as Record<string, unknown>;
+  if (typeof value.host !== "string" || typeof value.port !== "number" || typeof value.fingerprint !== "string") return null;
+  return {
+    host: value.host,
+    port: value.port,
+    fingerprint: value.fingerprint,
+    trustedFingerprint: typeof value.trustedFingerprint === "string" ? value.trustedFingerprint : null,
+  };
+}
+
+/** Native confirmation fallback for connection surfaces that do not own a modal. */
+export async function confirmAndTrustSshHostKey(err: unknown): Promise<boolean> {
+  const prompt = sshHostKeyPromptOf(err);
+  if (!prompt) return false;
+  const firstOrChanged = translateIfPresent(prompt.trustedFingerprint ? "dashboard.connect.hostKeyChanged" : "dashboard.connect.hostKeyFirst") ?? "Verify SSH host key";
+  const previous = prompt.trustedFingerprint
+    ? `\n${translateIfPresent("dashboard.connect.previousHostKey") ?? "Previous fingerprint"}: ${prompt.trustedFingerprint}`
+    : "";
+  const { ask } = await import("@tauri-apps/plugin-dialog");
+  const approved = await ask(`${firstOrChanged}\n\n${prompt.host}:${prompt.port}\n${prompt.fingerprint}${previous}`, {
+    title: "anySSH",
+    kind: "warning",
+    okLabel: translateIfPresent("dashboard.connect.trustHostKey") ?? "Trust and connect",
+    cancelLabel: translateIfPresent("common.cancel") ?? "Cancel",
+  });
+  if (!approved) return false;
+  const { invoke } = await import("@tauri-apps/api/core");
+  await invoke("ssh_trust_host_key", { host: prompt.host, port: prompt.port, fingerprint: prompt.fingerprint });
+  return true;
+}
+
 /** The `message` half of a backend error, or the value itself when it's a string. */
 export function rawErrorMessage(err: unknown): string {
   if (typeof err === "string") return err;

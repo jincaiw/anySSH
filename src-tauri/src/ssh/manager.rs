@@ -14,6 +14,7 @@ use super::encoding::{valid_lang, SessionSettings};
 use super::handler::SshClientHandler;
 use super::session::SshSession;
 use super::sessionlog::{SessionLogContext, SessionLogOptions};
+use crate::db::HostDb;
 
 /// The target handle plus the chain of jump-host handles that must outlive it
 /// (deepest hop first, empty for a direct connection).
@@ -157,6 +158,7 @@ impl SshManager {
         attempt_id: Option<String>,
         settings: SessionSettings,
         log_options: Option<SessionLogOptions>,
+        db: Arc<HostDb>,
     ) -> Result<SessionId, SshError> {
         let session_id = SessionId::new();
         let sid = session_id.0.clone();
@@ -242,7 +244,7 @@ impl SshManager {
         };
 
         let connect_fut = async {
-            let (handle, jump_handles) = Self::establish(&config, russh_config).await?;
+            let (handle, jump_handles) = Self::establish(&config, russh_config, &db).await?;
 
             info!(session_id = %sid, host = %config.host, "SSH authenticated");
 
@@ -287,6 +289,7 @@ impl SshManager {
         &self,
         config: HostConfig,
         attempt_id: Option<String>,
+        db: Arc<HostDb>,
     ) -> Result<SessionId, SshError> {
         let session_id = SessionId::new();
         let sid = session_id.0.clone();
@@ -302,7 +305,7 @@ impl SshManager {
 
         // Establish the connection — directly or tunnelled through a ProxyJump —
         // racing against the cancellation token so the user can abort mid-handshake.
-        let establish_fut = Self::establish(&config, russh_config);
+        let establish_fut = Self::establish(&config, russh_config, &db);
         let established = match &cancel_token {
             Some(token) => tokio::select! {
                 biased;
@@ -346,17 +349,26 @@ impl SshManager {
     ///
     /// Returns a boxed future because the recursion makes the future type
     /// self-referential (an `async fn` calling itself cannot size its own future).
-    pub(crate) fn establish(
-        config: &HostConfig,
+    pub(crate) fn establish<'a>(
+        config: &'a HostConfig,
         russh_config: Arc<client::Config>,
-    ) -> EstablishFuture<'_> {
+        db: &'a HostDb,
+    ) -> EstablishFuture<'a> {
         Box::pin(async move {
+            let trust_key = host_key_setting(&config.host, config.port);
+            let expected = db
+                .get_setting(&trust_key)
+                .map_err(|error| SshError::IoError(error.to_string()))?;
             let Some(jump) = config.jump_host.as_deref() else {
                 // Direct connection — no tunnel.
                 let addr = format!("{}:{}", config.host, config.port);
-                let mut handle = client::connect(russh_config, &addr, SshClientHandler)
+                let (handler, presented) = SshClientHandler::verifying(expected.clone());
+                let mut handle = client::connect(russh_config, &addr, handler)
                     .await
-                    .map_err(|e| SshError::ConnectionFailed(e.to_string()))?;
+                    .map_err(|e| {
+                        host_key_error(config, expected.clone(), &presented)
+                            .unwrap_or_else(|| SshError::ConnectionFailed(e.to_string()))
+                    })?;
                 Self::authenticate_handle(&mut handle, config).await?;
                 return Ok((handle, Vec::new()));
             };
@@ -364,7 +376,7 @@ impl SshManager {
             // 1. Recursively establish the jump connection (it may itself be
             //    tunnelled through its own ProxyJump). Reaching/auth errors are
             //    re-labelled so the failing hop is identifiable.
-            let (jump_handle, mut chain) = Self::establish(jump, russh_config.clone())
+            let (jump_handle, mut chain) = Self::establish(jump, russh_config.clone(), db)
                 .await
                 .map_err(|e| match e {
                     SshError::ConnectionFailed(m) => {
@@ -393,10 +405,13 @@ impl SshManager {
                 })?;
 
             // 3. Run the target SSH session over the tunnelled channel.
-            let mut handle =
-                client::connect_stream(russh_config, channel.into_stream(), SshClientHandler)
-                    .await
-                    .map_err(|e| SshError::ConnectionFailed(e.to_string()))?;
+            let (handler, presented) = SshClientHandler::verifying(expected.clone());
+            let mut handle = client::connect_stream(russh_config, channel.into_stream(), handler)
+                .await
+                .map_err(|e| {
+                    host_key_error(config, expected.clone(), &presented)
+                        .unwrap_or_else(|| SshError::ConnectionFailed(e.to_string()))
+                })?;
             Self::authenticate_handle(&mut handle, config).await?;
 
             // Keep this hop's handle and everything beneath it alive under the
@@ -1068,6 +1083,30 @@ impl SshManager {
     }
 }
 
+pub(crate) fn host_key_setting(host: &str, port: u16) -> String {
+    format!(
+        "ssh_host_key:{}:{port}",
+        host.trim_matches(['[', ']']).to_lowercase()
+    )
+}
+
+fn host_key_error(
+    config: &HostConfig,
+    trusted_fingerprint: Option<String>,
+    presented: &Arc<std::sync::Mutex<Option<String>>>,
+) -> Option<SshError> {
+    let fingerprint = presented.lock().ok()?.clone()?;
+    if trusted_fingerprint.as_deref() == Some(fingerprint.as_str()) {
+        return None;
+    }
+    Some(SshError::HostKeyUntrusted {
+        host: config.host.clone(),
+        port: config.port,
+        fingerprint,
+        trusted_fingerprint,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1246,5 +1285,17 @@ mod tests {
         assert!(manager.cancel_connect("attempt-1"));
         assert!(active.is_cancelled());
         assert!(!orphaned.is_cancelled());
+    }
+
+    #[test]
+    fn host_key_setting_normalizes_case_and_ipv6_brackets() {
+        assert_eq!(
+            host_key_setting("Example.COM", 22),
+            "ssh_host_key:example.com:22"
+        );
+        assert_eq!(
+            host_key_setting("[2001:DB8::1]", 2200),
+            "ssh_host_key:2001:db8::1:2200"
+        );
     }
 }

@@ -33,7 +33,7 @@ import { useTabStore } from "../../stores/tab-store";
 import { useSftpStore } from "../../stores/sftp-store";
 import { useS3Store } from "../../stores/s3-store";
 import { useSettingsStore } from "../../stores/settings-store";
-import { isDualFactorTriggerError } from "../../lib/backend-errors";
+import { isDualFactorTriggerError, sshHostKeyPromptOf, type SshHostKeyPrompt } from "../../lib/backend-errors";
 import { fireDualFactorTrigger, triggerDispatched } from "../../lib/dual-factor";
 import type { SavedHost, HostGroup, RecentConnection, S3Connection } from "../../types";
 import { HostCard } from "./HostCard";
@@ -239,7 +239,7 @@ export function HostsDashboard() {
   // ─── Connect handlers ──────────────────────────────────────────────────────
 
   // Connection dialog state
-  const [connectingHost, setConnectingHost] = useState<{ label: string; error: string | null; retry: (() => void) | null; cancel: (() => void) | null } | null>(null);
+  const [connectingHost, setConnectingHost] = useState<{ label: string; error: string | null; retry: (() => void) | null; cancel: (() => void) | null; hostKey?: SshHostKeyPrompt | null; trust?: (() => void) | null } | null>(null);
 
   // Interactive password prompt (PuTTY/Xshell-style): opened when a
   // password-auth host has no saved credential. Submitting resumes the
@@ -342,6 +342,8 @@ export function HostsDashboard() {
           id: token,
           label: host.label || `vnc://${host.host}:${host.port}`,
           wsUrl,
+          host: host.host,
+          port: host.port,
           savedHost: host,
         });
       } else if (host.kind === "rdp") {
@@ -421,7 +423,10 @@ export function HostsDashboard() {
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
           : t("dashboard.connect.fallback");
-        setConnectingHost({ label, error: msg, retry: () => void connectToHost(host, secrets), cancel: null });
+        const hostKey = sshHostKeyPromptOf(err);
+        const retry = () => void connectToHost(host, secrets);
+        setConnectingHost({ label, error: msg, retry: hostKey ? null : retry, cancel: null, hostKey,
+          trust: hostKey ? () => void import("@tauri-apps/api/core").then(({ invoke }) => invoke("ssh_trust_host_key", { host: hostKey.host, port: hostKey.port, fingerprint: hostKey.fingerprint })).then(retry).catch(error => toast.error(String(error))) : null });
       }
     },
     [t, ensurePasswordOrPrompt, connectProtocolHost],
@@ -519,7 +524,10 @@ export function HostsDashboard() {
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
           : t("dashboard.connect.fallbackShort");
-        setConnectingHost({ label, error: msg, retry: () => void handleRecentConnect(conn), cancel: null });
+        const hostKey = sshHostKeyPromptOf(err);
+        const retry = () => void handleRecentConnect(conn, secrets);
+        setConnectingHost({ label, error: msg, retry: hostKey ? null : retry, cancel: null, hostKey,
+          trust: hostKey ? () => void import("@tauri-apps/api/core").then(({ invoke }) => invoke("ssh_trust_host_key", { host: hostKey.host, port: hostKey.port, fingerprint: hostKey.fingerprint })).then(retry).catch(error => toast.error(String(error))) : null });
       }
     },
     // `hosts` MUST be a dependency: `t` is memoised on the locale and never
@@ -604,7 +612,10 @@ export function HostsDashboard() {
         const msg = err && typeof err === "object" && "message" in err
           ? String((err as { message: string }).message)
           : t("dashboard.connect.fallbackShort");
-        setConnectingHost({ label, error: msg, retry: () => void exploreHost(host, secrets), cancel: null });
+        const hostKey = sshHostKeyPromptOf(err);
+        const retry = () => void exploreHost(host, secrets);
+        setConnectingHost({ label, error: msg, retry: hostKey ? null : retry, cancel: null, hostKey,
+          trust: hostKey ? () => void import("@tauri-apps/api/core").then(({ invoke }) => invoke("ssh_trust_host_key", { host: hostKey.host, port: hostKey.port, fingerprint: hostKey.fingerprint })).then(retry).catch(error => toast.error(String(error))) : null });
       }
     },
     [t, ensurePasswordOrPrompt, connectProtocolHost],
@@ -1092,6 +1103,8 @@ export function HostsDashboard() {
           onClose={() => setConnectingHost(null)}
           onRetry={connectingHost.retry ?? undefined}
           onCancel={connectingHost.cancel ?? undefined}
+          hostKey={connectingHost.hostKey}
+          onTrustHostKey={connectingHost.trust ?? undefined}
         />
       )}
 

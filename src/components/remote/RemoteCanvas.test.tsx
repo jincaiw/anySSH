@@ -5,7 +5,7 @@ import { RdpCanvas } from "./RdpCanvas";
 import { buildProtocolHost } from "../../lib/protocol-hosts";
 
 const mocks = vi.hoisted(() => ({
-  clients: [] as Array<EventTarget & { clipboardPasteFrom: ReturnType<typeof vi.fn>; sendCredentials: ReturnType<typeof vi.fn> }>,
+  clients: [] as Array<EventTarget & { clipboardPasteFrom: ReturnType<typeof vi.fn>; sendCredentials: ReturnType<typeof vi.fn>; approveServer: ReturnType<typeof vi.fn> }>,
   invoke: vi.fn(), write: vi.fn(), read: vi.fn(async () => "local clipboard"),
   save: vi.fn(async () => {}), record: vi.fn(async () => {}),
   visibility: vi.fn(), shutdown: vi.fn(), connect: vi.fn(), init: vi.fn(async () => {}),
@@ -16,7 +16,7 @@ vi.mock("../../lib/protocol-hosts", async original => ({ ...await original<typeo
 vi.mock("../../stores/hosts-store", () => ({ useHostsStore: { getState: () => ({ recordConnection: mocks.record }) } }));
 vi.mock("./deferred-close", () => ({ cancelDeferredClose: vi.fn(), deferClose: vi.fn() }));
 vi.mock("@novnc/novnc", () => ({ default: class extends EventTarget {
-  clipboardPasteFrom = vi.fn(); sendCredentials = vi.fn(); disconnect = vi.fn(); focus = vi.fn(); blur = vi.fn();
+  clipboardPasteFrom = vi.fn(); sendCredentials = vi.fn(); approveServer = vi.fn(); disconnect = vi.fn(); focus = vi.fn(); blur = vi.fn();
   constructor() { super(); mocks.clients.push(this); }
 } }));
 vi.mock("@devolutions/iron-remote-desktop-rdp", () => ({ init: mocks.init, Backend: { SessionBuilder: class {} } }));
@@ -71,6 +71,16 @@ describe("VNC connection lifecycle", () => {
     fireEvent.focus(window);
     await act(async () => {});
     expect(mocks.write).not.toHaveBeenCalled(); expect(mocks.read).not.toHaveBeenCalled();
+  });
+  it("requires explicit approval for an RSA server key", async () => {
+    render(<VncCanvas sessionId="vnc-verify" wsUrl="ws://localhost" isActive />);
+    await waitFor(() => expect(mocks.clients).toHaveLength(1));
+    const client = mocks.clients[0];
+    act(() => client.dispatchEvent(new CustomEvent("serververification", { detail: { publickey: new Uint8Array([1, 2, 3]) } })));
+    const approve = await screen.findByText("Trust and continue");
+    expect(client.approveServer).not.toHaveBeenCalled();
+    fireEvent.click(approve);
+    expect(client.approveServer).toHaveBeenCalledTimes(1);
   });
 });
 

@@ -1,4 +1,4 @@
-import { useState, useEffect, useId, useRef } from "react";
+import { useEffect, useId, useRef } from "react";
 import { X } from "lucide-react";
 import { ModalBackdrop } from "./ModalBackdrop";
 import { useTranslation } from "../../i18n";
@@ -91,13 +91,7 @@ export function ModalShell({
 }: ModalShellProps) {
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
-  const [visible, setVisible] = useState(false);
   const { t } = useTranslation();
-
-  useEffect(() => {
-    if (open) requestAnimationFrame(() => setVisible(true));
-    else setVisible(false);
-  }, [open]);
 
   useEffect(() => {
     if (!open) return;
@@ -151,8 +145,7 @@ export function ModalShell({
       closeDisabled={busy}
       className={[
         "fixed inset-0 z-50 flex items-start justify-center px-4 pt-[8vh]",
-        "transition-[background-color,backdrop-filter] duration-[var(--duration-base)]",
-        visible ? "bg-black/50 backdrop-blur-sm" : "bg-black/0 backdrop-blur-none",
+        "bg-black/50 backdrop-blur-sm",
       ].join(" ")}
     >
       <div
@@ -166,8 +159,7 @@ export function ModalShell({
         className={[
           `w-full ${MAX_W[maxWidth]} rounded-xl bg-bg-overlay border border-border shadow-[var(--shadow-lg)] flex flex-col`,
           scrollable ? "max-h-[84vh]" : "",
-          "transition-[opacity,transform] duration-[var(--duration-slow)] ease-[var(--ease-expo-out)]",
-          visible ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-3",
+          "opacity-100 translate-y-0",
         ].join(" ")}
       >
         {/* ── Header ── */}

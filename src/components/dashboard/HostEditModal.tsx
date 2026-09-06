@@ -4,7 +4,7 @@ import { useState, useCallback, useEffect, useRef } from "react";
 import { Monitor } from "lucide-react";
 import { ModalShell, BTN_GHOST, BTN_SECONDARY, BTN_PRIMARY } from "../shared/ModalShell";
 import { PasswordPromptModal } from "./PasswordPromptModal";
-import { dualFactorHintOf, isDualFactorTriggerError } from "../../lib/backend-errors";
+import { dualFactorHintOf, isDualFactorTriggerError, sshHostKeyPromptOf, type SshHostKeyPrompt } from "../../lib/backend-errors";
 import { fireDualFactorTrigger, triggerDispatched } from "../../lib/dual-factor";
 import { useUiStore } from "../../stores/ui-store";
 import { useHostsStore } from "../../stores/hosts-store";
@@ -182,6 +182,8 @@ function SshHostEditModal() {
   const [saving, setSaving] = useState(false);
   const [connecting, setConnecting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [hostKeyPrompt, setHostKeyPrompt] = useState<SshHostKeyPrompt | null>(null);
+  const pendingHostKeySecrets = useRef<{ password: string; savePassword: boolean } | undefined>(undefined);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
 
   // Interactive password prompt (PuTTY/Xshell-style): opened by Connect when
@@ -445,6 +447,7 @@ function SshHostEditModal() {
 
     setConnecting(true);
     setError(null);
+    setHostKeyPrompt(null);
     // Built outside the try — the catch needs host.id to remember dual-factor
     // bastions when connect_saved_host fails with the trigger marker.
     const host = buildHost();
@@ -525,14 +528,34 @@ function SshHostEditModal() {
       // card-click and recent-click flows — otherwise hosts connected via
       // this modal are missing from the recent list and history.
       void useHostsStore.getState().recordConnection(host.id);
+      pendingHostKeySecrets.current = undefined;
       close();
     } catch (err) {
       if (isDualFactorTriggerError(err)) {
         useSettingsStore.getState().markHostDualFactor(host.id);
       }
+      const prompt = sshHostKeyPromptOf(err);
+      pendingHostKeySecrets.current = prompt ? secrets : undefined;
+      setHostKeyPrompt(prompt);
       setError(extractError(err, t("host.error.connect")));
     } finally {
       setConnecting(false);
+    }
+  };
+
+  const handleTrustHostKey = async () => {
+    if (!hostKeyPrompt) return;
+    const retrySecrets = pendingHostKeySecrets.current;
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("ssh_trust_host_key", {
+        host: hostKeyPrompt.host,
+        port: hostKeyPrompt.port,
+        fingerprint: hostKeyPrompt.fingerprint,
+      });
+      await handleConnect(retrySecrets);
+    } catch (err) {
+      setError(extractError(err, t("host.error.connect")));
     }
   };
 
@@ -1196,18 +1219,24 @@ function SshHostEditModal() {
               {/* Error banner */}
               {error && (
                 <div className="flex flex-col gap-2">
+                  {hostKeyPrompt && <div className="rounded-lg border border-status-warning/30 bg-status-warning/5 px-3 py-2 space-y-2">
+                    <p className="text-sm text-text-primary">{t(hostKeyPrompt.trustedFingerprint ? "dashboard.connect.hostKeyChanged" : "dashboard.connect.hostKeyFirst")}</p>
+                    <p className="break-all font-mono text-xs text-text-secondary">{hostKeyPrompt.fingerprint}</p>
+                    {hostKeyPrompt.trustedFingerprint && <p className="break-all font-mono text-xs text-text-muted">{t("dashboard.connect.previousHostKey")}: {hostKeyPrompt.trustedFingerprint}</p>}
+                    <button type="button" data-testid="ssh-host-key-trust" className={BTN_PRIMARY} onClick={() => void handleTrustHostKey()}>{t("dashboard.connect.trustHostKey")}</button>
+                  </div>}
                   {dualFactorHintOf(error) && (
                     <p className="text-[length:var(--text-sm)] text-text-primary bg-accent/10 rounded-lg px-3 py-2">
                       {dualFactorHintOf(error)}
                     </p>
                   )}
-                  <p
+                  {!hostKeyPrompt && <p
                     role="alert"
                     data-testid="host-modal-error"
                     className="text-[length:var(--text-sm)] text-status-error bg-status-error/10 rounded-lg px-3 py-2"
                   >
                     {error}
-                  </p>
+                  </p>}
                 </div>
               )}
             </div>

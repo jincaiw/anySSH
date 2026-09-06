@@ -3,8 +3,12 @@
 
 /** Wait until the explorer toolbar is rendered (refresh button visible). */
 export async function waitForExplorer(timeoutMs = 30_000): Promise<void> {
-    const refresh = await $("[data-testid='explorer-refresh']");
-    await refresh.waitForDisplayed({ timeout: timeoutMs });
+    await browser.waitUntil(async () => {
+        const trust = await $("[data-testid='ssh-host-key-trust']");
+        if (await trust.isExisting() && await trust.isDisplayed()) await trust.click();
+        const refresh = await $("[data-testid='explorer-refresh']");
+        return await refresh.isExisting() && await refresh.isDisplayed();
+    }, { timeout: timeoutMs, interval: 200, timeoutMsg: "explorer did not open" });
 }
 
 /** Find a directory entry by its display name. Waits up to timeoutMs. */
