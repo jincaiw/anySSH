@@ -993,7 +993,8 @@ fn join_under(base: &str, rel: &Path) -> String {
 /// plain name: no leading `/`, no `\` (a legal Unix filename character but a
 /// Windows path separator), no NUL, no empty/`.`/`..` components.
 fn validate_tree_rel_path(rel_path: &str) -> Result<(), ScpError> {
-    let unsafe_path = || ScpError::ParseError(format!("server returned an unsafe tree path: {rel_path:?}"));
+    let unsafe_path =
+        || ScpError::ParseError(format!("server returned an unsafe tree path: {rel_path:?}"));
     if rel_path.is_empty()
         || rel_path.starts_with('/')
         || rel_path.contains('\\')
