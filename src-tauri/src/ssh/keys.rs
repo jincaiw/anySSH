@@ -184,12 +184,16 @@ pub fn convert_ppk_to_openssh(
         .arg(&temp_out);
 
     // For passphrase-protected keys, write passphrase to a temp file
-    // and pass via --old-passphrase <file>
+    // and pass via --old-passphrase <file>. tempfile::NamedTempFile keeps the
+    // file private to the user (0600) and removes it on drop, so the plaintext
+    // passphrase never lingers in the shared temp directory.
     let passphrase_file = if let Some(pass) = passphrase {
-        let pf = temp_dir.join(format!("anyssh_pass_{}", uuid::Uuid::new_v4()));
-        std::fs::write(&pf, pass)
+        let mut pf = tempfile::NamedTempFile::new()
+            .map_err(|e| SshError::IoError(format!("Cannot create passphrase file: {e}")))?;
+        use std::io::Write;
+        pf.write_all(pass.as_bytes())
             .map_err(|e| SshError::IoError(format!("Cannot write passphrase file: {e}")))?;
-        cmd.arg("--old-passphrase").arg(&pf);
+        cmd.arg("--old-passphrase").arg(pf.path());
         // Output key without passphrase (so russh can read it)
         cmd.arg("--new-passphrase").arg("/dev/null");
         Some(pf)
@@ -197,17 +201,14 @@ pub fn convert_ppk_to_openssh(
         None
     };
 
-    let output = cmd.output().map_err(|e| {
-        if let Some(pf) = &passphrase_file {
-            let _ = std::fs::remove_file(pf);
-        }
-        SshError::KeyParseError(format!("Failed to run puttygen: {e}"))
-    })?;
+    let output = cmd
+        .output()
+        .map_err(|e| SshError::KeyParseError(format!("Failed to run puttygen: {e}")));
 
-    // Clean up passphrase file immediately
-    if let Some(pf) = &passphrase_file {
-        let _ = std::fs::remove_file(pf);
-    }
+    // Clean up passphrase file immediately (NamedTempFile deletes on drop).
+    drop(passphrase_file);
+
+    let output = output?;
 
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
