@@ -39,7 +39,7 @@ wait_for "${SSHD_BASTION_HOST:-sshd-bastion}" "${SSHD_BASTION_PORT:-2222}" sshd-
 
 # ── 2. Install JS deps ────────────────────────────────────────────────────────
 echo "[entrypoint] installing app deps"
-pnpm install --frozen-lockfile=false
+pnpm install --no-frozen-lockfile
 
 echo "[entrypoint] linking pre-baked e2e harness deps from /opt/e2e"
 # Deps were installed at image build time in /opt/e2e (see Dockerfile).
