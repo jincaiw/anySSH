@@ -57,6 +57,23 @@ interface RdpConfigBuilder {
 
 type RdpStatus = "loading" | "connecting" | "connected" | "disconnected" | "error";
 
+/** Build a safe relative path from a server-supplied clipboard entry.
+ *  MS-RDPECLIP file lists are controlled by the remote peer: `..`, absolute
+ *  paths and drive letters must never reach the filesystem join below
+ *  (a hostile server could otherwise escape the chosen save directory). */
+export function safeRemotePath(name: string, dir?: string): string {
+  const segments: string[] = [];
+  for (const raw of [dir ?? "", name].flatMap(v => v.split(/[/\\]/))) {
+    const s = raw.trim();
+    // Empty, "." / ".." and dot-only segments: Windows trims trailing dots,
+    // so "..." would normalise to ".." there.
+    if (!s || /^\.+$/.test(s)) continue;
+    if (/^[A-Za-z]:$/.test(s)) continue; // "C:" drive prefix
+    segments.push(s);
+  }
+  return segments.length ? segments.join("/") : "unnamed";
+}
+
 /** Server-offered clipboard file entry (MS-RDPECLIP file list); mirrors the
  *  WASM `FileInfo` shape (`path` is a `\`-separated relative dir). */
 interface RdpRemoteFile {
@@ -173,7 +190,7 @@ export function RdpCanvas({
         const file = remoteFiles[index];
         if (!file || file.isDirectory) continue;
         const bytes = new Uint8Array(await blob.arrayBuffer());
-        const rel = file.path ? `${file.path.replace(/\\/g, "/")}/${file.name}` : file.name;
+        const rel = safeRemotePath(file.name, file.path);
         const sep = dir.endsWith("/") || dir.endsWith("\\") ? "" : "/";
         await invoke("save_dialog_file", { path: `${dir}${sep}${rel}`, contents: bytes });
         written += 1;

@@ -1,7 +1,7 @@
 import { act, fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { VncCanvas } from "./VncCanvas";
-import { RdpCanvas } from "./RdpCanvas";
+import { RdpCanvas, safeRemotePath } from "./RdpCanvas";
 import { buildProtocolHost } from "../../lib/protocol-hosts";
 
 const mocks = vi.hoisted(() => ({
@@ -94,6 +94,19 @@ describe("VNC connection lifecycle", () => {
     expect(client.approveServer).not.toHaveBeenCalled();
     fireEvent.click(approve);
     expect(client.approveServer).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("RDP remote clipboard file paths", () => {
+  it("drops traversal and drive-prefix segments from server-controlled names", () => {
+    expect(safeRemotePath("report.pdf", "docs")).toBe("docs/report.pdf");
+    expect(safeRemotePath("report.pdf", "docs\\sub")).toBe("docs/sub/report.pdf");
+    expect(safeRemotePath("../../../../tmp/evil.sh")).toBe("tmp/evil.sh");
+    expect(safeRemotePath("..\\..\\evil.txt", "..")).toBe("evil.txt");
+    expect(safeRemotePath("C:\\Windows\\evil.exe")).toBe("Windows/evil.exe");
+    // Windows trims trailing dots, so "..." would become "..".
+    expect(safeRemotePath("...")).toBe("unnamed");
+    expect(safeRemotePath("..")).toBe("unnamed");
   });
 });
 
