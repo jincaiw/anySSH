@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   clients: [] as Array<EventTarget & { clipboardPasteFrom: ReturnType<typeof vi.fn>; sendCredentials: ReturnType<typeof vi.fn>; approveServer: ReturnType<typeof vi.fn> }>,
   invoke: vi.fn(), write: vi.fn(), read: vi.fn(async () => "local clipboard"),
   save: vi.fn(async () => {}), record: vi.fn(async () => {}),
-  visibility: vi.fn(), shutdown: vi.fn(), connect: vi.fn(), init: vi.fn(async () => {}),
+  visibility: vi.fn(), shutdown: vi.fn(), connect: vi.fn(), init: vi.fn(async () => {}), extension: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: mocks.write, readText: mocks.read }));
@@ -19,14 +19,15 @@ vi.mock("@novnc/novnc", () => ({ default: class extends EventTarget {
   clipboardPasteFrom = vi.fn(); sendCredentials = vi.fn(); approveServer = vi.fn(); disconnect = vi.fn(); focus = vi.fn(); blur = vi.fn();
   constructor() { super(); mocks.clients.push(this); }
 } }));
-vi.mock("@devolutions/iron-remote-desktop-rdp", () => ({ init: mocks.init, Backend: { SessionBuilder: class {} } }));
+vi.mock("@devolutions/iron-remote-desktop-rdp", () => ({ init: mocks.init, enableCredssp: vi.fn((enable: boolean) => ({ kind: "credssp", enable })), Backend: { SessionBuilder: class {}, DesktopSize: class { constructor(public width: number, public height: number) {} } } }));
 vi.mock("@devolutions/iron-remote-desktop", () => ({}));
 
 beforeAll(() => {
   customElements.define("iron-remote-desktop", class extends HTMLElement {
     connectedCallback() {
       const builder = { withUsername: () => builder, withPassword: () => builder, withDestination: () => builder,
-        withProxyAddress: () => builder, withAuthToken: () => builder, build: () => ({}) };
+        withProxyAddress: () => builder, withAuthToken: () => builder, withServerDomain: () => builder,
+        withDesktopSize: () => builder, withExtension: (ext: unknown) => { mocks.extension(ext); return builder; }, build: () => ({}) };
       this.dispatchEvent(new CustomEvent("ready", { detail: { irgUserInteraction: {
         setEnableClipboard: vi.fn(), ctrlAltDel: vi.fn(), configBuilder: () => builder, connect: mocks.connect, shutdown: mocks.shutdown, setVisibility: mocks.visibility,
       } } }));
@@ -101,6 +102,13 @@ describe("RDP component lifecycle", () => {
     render(<RdpCanvas sessionId="rdp-error" wsUrl="ws://localhost" destination="localhost:3389" username="alice" password="bad" isActive
       savedHost={buildProtocolHost("rdp", "Test", "localhost", 3389, {})} />);
     await screen.findByText("Authentication failed");
+    expect(mocks.save).not.toHaveBeenCalled();
+  });
+  it("connects without credentials and disables CredSSP when username and password are empty", async () => {
+    const { enableCredssp } = await import("@devolutions/iron-remote-desktop-rdp") as { enableCredssp: (enable: boolean) => unknown };
+    render(<RdpCanvas sessionId="rdp-anon" wsUrl="ws://localhost" destination="localhost:3389" username="" password="" isActive />);
+    await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
+    expect(mocks.extension).toHaveBeenCalledWith(enableCredssp(false));
     expect(mocks.save).not.toHaveBeenCalled();
   });
 });

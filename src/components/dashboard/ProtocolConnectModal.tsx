@@ -28,6 +28,9 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
   const [label, setLabel] = useState(initial?.label ?? "");
   const [username, setUsername] = useState(initial?.username ?? "");
   const [password, setPassword] = useState("");
+  const [domain, setDomain] = useState(String(parsed.domain ?? ""));
+  const [savePassword, setSavePassword] = useState(false);
+  const [credentialLoaded, setCredentialLoaded] = useState(false);
   const [encoding, setEncoding] = useState(String(parsed.encoding ?? defaults.terminalEncoding));
   const [baud, setBaud] = useState(String(parsed.baud ?? 115200));
   const [dataBits, setDataBits] = useState(String(parsed.dataBits ?? 8));
@@ -83,6 +86,20 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
         setLoadingScript(false);
       }).catch(err => { if (!cancelled) { setLoadingScript(false); setScriptLoadFailed(true); setError(messageOf(err) || t("dashboard.protocol.scriptUnavailable")); } });
     }
+    // RDP: prefill a password saved in the credential vault (keychain).
+    if (kind === "rdp" && initial) {
+      void (async () => {
+        try {
+          const has = await invoke<boolean>("vault_has_credential", { hostId: initial.id });
+          if (!has || cancelled) return;
+          const cred = await invoke<{ type: string; password?: string }>("vault_get_credential", { hostId: initial.id });
+          if (cancelled || cred?.type !== "Password" || !cred.password) return;
+          setPassword(cred.password);
+          setSavePassword(true);
+          setCredentialLoaded(true);
+        } catch { /* vault locked or unavailable — user types the password manually */ }
+      })();
+    }
     return () => { cancelled = true; alive.current = false; unlisten?.(); };
   }, [kind, initial, parsed, t, scriptRetry]);
 
@@ -98,7 +115,7 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
         ? { kind, port: destination, baud: Number(baud), encoding, dataBits: Number(dataBits), stopBits: Number(stopBits), parity, flowControl: flow }
         : kind === "local"
           ? { kind, shell: shell || null, startDirectory: directory || null, encoding }
-          : { host: destination, port: portNum, username: username.trim() };
+          : { host: destination, port: portNum, username: username.trim(), domain: domain.trim() || undefined };
     const name = label.trim() || (kind === "local" ? title : kind === "serial" ? `${destination} @ ${baud}` : `${kind}://${destination}:${portNum}`);
     const fresh = buildProtocolHost(kind, name, destination, portNum, params, username.trim());
     return { ...initial, ...fresh, id: initial?.id ?? fresh.id, created_at: initial?.created_at ?? fresh.created_at,
@@ -119,7 +136,10 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
         return;
       }
       if (kind === "rdp") {
-        if (!username.trim()) throw new Error(t("host.validation.usernameRequired"));
+        // mstsc behaviour: empty credentials are allowed — the server's own
+        // logon screen collects them in-session (requires NLA off). But a
+        // password without a username can never authenticate.
+        if (!username.trim() && password) throw new Error(t("host.validation.usernameRequired"));
         if (trust && certificate) await invoke("rd_trust_certificate", { host: bookmark.host, port: bookmark.port, fingerprint: certificate.fingerprint });
         const cert = await invoke<Certificate>("rd_inspect_certificate", { host: bookmark.host, port: bookmark.port });
         if (!alive.current) return;
@@ -133,7 +153,17 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
         const savedHost = remember ? bookmark : undefined;
         if (kind === "vnc") useTabStore.getState().addTab({ type: "vnc", id: endpoint.token, label: bookmark.label, wsUrl: endpoint.wsUrl, host: bookmark.host, port: bookmark.port, savedHost });
         else useTabStore.getState().addTab({ type: "rdp", id: endpoint.token, label: bookmark.label, wsUrl: endpoint.wsUrl, savedHost,
-          destination: `${bookmark.host.includes(":") ? `[${bookmark.host.replace(/^\[|\]$/g, "")}]` : bookmark.host}:${bookmark.port}`, username: username.trim(), password });
+          destination: `${bookmark.host.includes(":") ? `[${bookmark.host.replace(/^\[|\]$/g, "")}]` : bookmark.host}:${bookmark.port}`, username: username.trim(), password, domain: domain.trim() || undefined });
+        // RDP: persist or drop the saved password only after the bridge
+        // session opened successfully. The vault key is the bookmark id when
+        // the host is saved, so reconnects prefill automatically.
+        if (kind === "rdp") {
+          const vaultKey = (remember ? bookmark.id : `rdp:${bookmark.host}:${bookmark.port}`);
+          try {
+            if (savePassword) await invoke("vault_save_credential", { hostId: vaultKey, credential: { type: "Password", password } });
+            else await invoke("vault_delete_credential", { hostId: vaultKey });
+          } catch { /* saving the password must never fail the connection */ }
+        }
       } else {
         const id = await invoke<string>("term_open", { params: JSON.parse(bookmark.params_json!), cols: 80, rows: 24 });
         if (!alive.current) { await invoke("term_close", { sessionId: id }); return; }
@@ -183,7 +213,7 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
           </div>
         </>}
         {kind === "local" && <>{field(t("dashboard.protocol.shell"), <input autoFocus className={INPUT} value={shell} onChange={e => setShell(e.target.value)} placeholder={t("dashboard.protocol.systemDefault")} />)}{field(t("dashboard.protocol.directory"), <input className={INPUT} value={directory} onChange={e => setDirectory(e.target.value)} />)}</>}
-        {kind === "rdp" && <>{field(t("dashboard.protocol.username"), <input className={INPUT} value={username} onChange={e => setUsername(e.target.value)} placeholder={t("dashboard.rdp.usernamePlaceholder")} data-testid="rdp-username-input" />)}{field(t("dashboard.protocol.password"), <input type="password" autoComplete="off" className={INPUT} value={password} onChange={e => setPassword(e.target.value)} data-testid="rdp-password-input" />)}</>}
+        {kind === "rdp" && <>{field(t("dashboard.protocol.username"), <input className={INPUT} value={username} onChange={e => setUsername(e.target.value)} placeholder={t("dashboard.rdp.usernamePlaceholder")} data-testid="rdp-username-input" />)}{field(t("dashboard.protocol.password"), <input type="password" autoComplete="off" className={INPUT} value={password} onChange={e => setPassword(e.target.value)} data-testid="rdp-password-input" />)}{field(t("dashboard.protocol.domain"), <input className={INPUT} value={domain} onChange={e => setDomain(e.target.value)} data-testid="rdp-domain-input" />)}<label className="flex items-center gap-2 text-[length:var(--text-sm)] text-text-secondary"><input type="checkbox" checked={savePassword} onChange={e => setSavePassword(e.target.checked)} data-testid="rdp-save-password" />{t("dashboard.protocol.savePassword")}</label>{credentialLoaded && <p className="text-[length:var(--text-xs)] text-text-muted">{t("dashboard.protocol.credentialLoaded")}</p>}</>}
         {!graph && field(t("dashboard.telnet.encoding"), <CustomSelect data-testid={`${kind}-encoding-select`} aria-label={t("dashboard.telnet.encoding")} value={encoding} onChange={setEncoding} options={TERMINAL_ENCODINGS.map(e => ({ value: e.value, label: e.label }))} />)}
         {kind === "telnet" && <section className="space-y-2"><div className="flex justify-between gap-2 items-center"><span className="text-[length:var(--text-xs)] text-text-secondary">{t("dashboard.telnet.scriptTitle")}</span><button type="button" className={BTN_GHOST} data-testid="telnet-add-step" disabled={steps.length >= 100} onClick={() => setSteps(s => [...s, { expect: "", send: "" }])}><span className="flex items-center gap-1"><Plus size={13} />{t("dashboard.telnet.addStep")}</span></button></div>
           <p className="text-[length:var(--text-xs)] text-text-muted">{t("dashboard.protocol.scriptProtected")}</p>

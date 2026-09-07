@@ -514,6 +514,7 @@ export function AppShell() {
                         destination={tab.destination}
                         username={tab.username}
                         password={tab.password}
+                        domain={tab.domain}
                         isActive={isVisible}
                         onReconnect={() => import("@tauri-apps/api/core").then(({ invoke }) => {
                           const bracketed = tab.destination.match(/^\[([^\]]+)\]:(\d+)$/);

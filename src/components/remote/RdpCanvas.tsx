@@ -16,6 +16,8 @@ interface RdpCanvasProps {
   destination: string;
   username: string;
   password: string;
+  /** Windows domain for NLA (optional; maps to `withServerDomain`). */
+  domain?: string;
   isActive: boolean;
   savedHost?: SavedHost;
   onReconnect?: () => Promise<void>;
@@ -44,10 +46,17 @@ interface RdpConfigBuilder {
   withDestination: (d: string) => RdpConfigBuilder;
   withProxyAddress: (a: string) => RdpConfigBuilder;
   withAuthToken: (t: string) => RdpConfigBuilder;
+  withServerDomain: (d: string) => RdpConfigBuilder;
+  withDesktopSize: (size: unknown) => RdpConfigBuilder;
+  withExtension: (ext: unknown) => RdpConfigBuilder;
   build: () => unknown;
 }
 
 type RdpStatus = "loading" | "connecting" | "connected" | "disconnected" | "error";
+
+/** mstsc-style auto-reconnect: retry a dropped session this many times with
+ *  exponential backoff (1s/2s/4s) before falling back to the manual button. */
+const MAX_AUTO_RECONNECT = 3;
 
 /**
  * P4 RDP viewer — embeds the official `<iron-remote-desktop>` web component
@@ -74,6 +83,7 @@ export function RdpCanvas({
   destination,
   username,
   password,
+  domain,
   isActive,
   savedHost,
   onReconnect,
@@ -87,6 +97,12 @@ export function RdpCanvas({
   activeRef.current = isActive;
   const savedHostRef = useRef(savedHost);
   const pasteRef = useRef<(() => Promise<void>) | null>(null);
+  // Auto-reconnect bookkeeping: only a session that reached "connected" and
+  // then dropped is retried automatically; initial failures stay manual.
+  const wasConnectedRef = useRef(false);
+  const attemptRef = useRef(0);
+  const timerRef = useRef<number | null>(null);
+  const [autoReconnectAttempt, setAutoReconnectAttempt] = useState(0);
   useEffect(() => { apiRef.current?.setVisibility(isActive); }, [isActive]);
   const [status, setStatus] = useState<RdpStatus>("loading");
   const [errorMsg, setErrorMsg] = useState<string>("");
@@ -96,6 +112,20 @@ export function RdpCanvas({
     setStatus("loading");
     try { await onReconnect(); }
     catch (error) { setErrorMsg(String(error)); setStatus("error"); }
+  };
+  /** Schedule the next auto-reconnect; returns false when retries are
+   *  exhausted, the session never connected, or no handler exists. */
+  const maybeAutoReconnect = (cancelled: () => boolean) => {
+    if (cancelled() || !onReconnect || !wasConnectedRef.current) return false;
+    if (attemptRef.current >= MAX_AUTO_RECONNECT) return false;
+    const next = attemptRef.current + 1;
+    attemptRef.current = next;
+    setAutoReconnectAttempt(next);
+    timerRef.current = window.setTimeout(() => {
+      timerRef.current = null;
+      void reconnect();
+    }, Math.min(1000 * 2 ** (next - 1), 4000));
+    return true;
   };
 
   useEffect(() => {
@@ -146,19 +176,39 @@ export function RdpCanvas({
 
           const config = api
             .configBuilder()
-            .withUsername(username)
-            .withPassword(password)
             .withDestination(destination)
             .withProxyAddress(wsUrl)
-            .withAuthToken(sessionId)
-            .build();
+            .withAuthToken(sessionId);
+          if (username || password) {
+            // NLA path: credentials in the connection request (mstsc "remember
+            // me" style). Domain applies only here — there is no logon screen
+            // to type it into when CredSSP is off.
+            config.withUsername(username).withPassword(password);
+            if (domain) config.withServerDomain(domain);
+          } else {
+            // No credentials → disable NLA (CredSSP) so the server's own
+            // logon screen appears inside the session, like mstsc. Servers
+            // that mandate NLA reject the handshake; the error surfaces in
+            // the overlay.
+            config.withExtension(rdp.enableCredssp(false));
+          }
+          // Request a desktop sized to the viewer pane (mstsc-style fit);
+          // the WASM backend letterboxes inside the canvas afterwards.
+          const rect = host.getBoundingClientRect();
+          const width = Math.max(640, Math.floor(rect.width) - (Math.floor(rect.width) % 2));
+          const height = Math.max(480, Math.floor(rect.height) - (Math.floor(rect.height) % 2));
+          config.withDesktopSize(new rdp.Backend.DesktopSize(width, height));
+          const built = config.build();
 
           setStatus("connecting");
           void api
-            .connect(config)
+            .connect(built)
             .then((sessionInfo) => {
               if (cancelled) { api.shutdown(); return; }
               api.setVisibility(activeRef.current);
+              wasConnectedRef.current = true;
+              attemptRef.current = 0;
+              setAutoReconnectAttempt(0);
               setStatus("connected");
               const bookmark = savedHostRef.current;
               if (bookmark) {
@@ -169,10 +219,14 @@ export function RdpCanvas({
               return sessionInfo.run();
             })
             .then(() => {
-              if (!cancelled) setStatus("disconnected");
+              if (cancelled) return;
+              // Session dropped mid-flight → mstsc-style auto-reconnect.
+              if (maybeAutoReconnect(() => cancelled)) return;
+              setStatus("disconnected");
             })
             .catch((err: unknown) => {
               if (cancelled) return;
+              if (maybeAutoReconnect(() => cancelled)) return;
               setErrorMsg(
                 err instanceof Error ? err.message : String(err ?? ""),
               );
@@ -189,6 +243,10 @@ export function RdpCanvas({
 
     return () => {
       cancelled = true;
+      if (timerRef.current !== null) {
+        window.clearTimeout(timerRef.current);
+        timerRef.current = null;
+      }
       try {
         apiRef.current?.shutdown();
       } catch {
@@ -206,7 +264,7 @@ export function RdpCanvas({
         }),
       );
     };
-  }, [wsUrl, destination, username, password, sessionId]);
+  }, [wsUrl, destination, username, password, domain, sessionId]);
 
   return (
     <div className="absolute inset-0 flex flex-col bg-bg-base">
@@ -219,19 +277,15 @@ export function RdpCanvas({
 
       {status !== "connected" && (
         <div className="absolute inset-0 flex flex-col items-center justify-center gap-3 bg-bg-base/85 backdrop-blur-sm">
-          {status === "loading" && (
+          {(status === "loading" || status === "connecting") && (
             <>
               <Loader2 size={28} strokeWidth={2} className="text-text-muted motion-safe:animate-spin" aria-hidden="true" />
               <p className="text-[length:var(--text-sm)] text-text-secondary">
-                {t("dashboard.rdp.statusLoading")}
-              </p>
-            </>
-          )}
-          {status === "connecting" && (
-            <>
-              <Loader2 size={28} strokeWidth={2} className="text-text-muted motion-safe:animate-spin" aria-hidden="true" />
-              <p className="text-[length:var(--text-sm)] text-text-secondary">
-                {t("dashboard.rdp.statusConnecting")}
+                {autoReconnectAttempt > 0
+                  ? t("dashboard.rdp.reconnecting", { attempt: autoReconnectAttempt, max: MAX_AUTO_RECONNECT })
+                  : status === "loading"
+                    ? t("dashboard.rdp.statusLoading")
+                    : t("dashboard.rdp.statusConnecting")}
               </p>
             </>
           )}
