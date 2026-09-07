@@ -219,6 +219,22 @@ pub async fn vault_has_credential(host_id: String) -> Result<bool, VaultError> {
         .map_err(|e| VaultError::Keychain(format!("task panicked: {e}")))?
 }
 
+/// Retrieve the stored credential for a host, `None` when nothing is stored.
+///
+/// The RDP flow needs this: the ironrdp-web session runs CredSSP inside the
+/// webview, so a saved password must be handed to the frontend (in-memory
+/// only — the same trust level as typing it into the connect modal).
+#[tauri::command]
+pub async fn vault_get_credential(host_id: String) -> Result<Option<StoredCredential>, VaultError> {
+    tokio::task::spawn_blocking(move || match get_credential(&host_id) {
+        Ok(credential) => Ok(Some(credential)),
+        Err(VaultError::NotFound(_)) => Ok(None),
+        Err(e) => Err(e),
+    })
+    .await
+    .map_err(|e| VaultError::Keychain(format!("task panicked: {e}")))?
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------

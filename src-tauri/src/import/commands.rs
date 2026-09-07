@@ -9,6 +9,29 @@ use crate::types::SshError;
 
 use super::{ImportResult, SshConfigEntry, SshConfigImportEntry};
 
+/// Read a `.rdp` (Remote Desktop settings) file for client-side parsing.
+///
+/// Deliberately narrow: only `*.rdp` paths, capped at 1 MiB. The file only
+/// ever supplies connection-form defaults (host, port, username, domain) —
+/// it is parsed in the webview with the WASM `RdpFile` class and never
+/// executed or written anywhere.
+#[tauri::command]
+#[instrument]
+pub async fn import_read_rdp_file(path: String) -> Result<String, SshError> {
+    task::spawn_blocking(move || {
+        if !path.to_ascii_lowercase().ends_with(".rdp") {
+            return Err(SshError::IoError("not a .rdp file".into()));
+        }
+        let meta = std::fs::metadata(&path).map_err(|e| SshError::IoError(e.to_string()))?;
+        if meta.len() > 1024 * 1024 {
+            return Err(SshError::IoError(".rdp file too large".into()));
+        }
+        std::fs::read_to_string(&path).map_err(|e| SshError::IoError(e.to_string()))
+    })
+    .await
+    .map_err(|e| SshError::IoError(format!("task panicked: {e}")))?
+}
+
 /// Parse SSH config and return a preview of importable hosts.
 #[tauri::command]
 #[instrument(skip(db))]

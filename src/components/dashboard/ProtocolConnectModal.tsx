@@ -50,6 +50,7 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
   const [scriptRetry, setScriptRetry] = useState(0);
   const [error, setError] = useState("");
   const [certificate, setCertificate] = useState<Certificate | null>(null);
+  const [importingRdp, setImportingRdp] = useState(false);
   const alive = useRef(true);
   const submitting = useRef(false);
   const groups = useGroupsStore(s => s.groups);
@@ -186,6 +187,49 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
   function field(text: string, input: React.ReactNode) {
     return <label className="flex flex-col gap-1.5 min-w-0 text-[length:var(--text-xs)] font-medium text-text-secondary">{text}{input}</label>;
   }
+
+  /** Parse an .rdp settings file into the form (host, port, username, domain).
+   *  mstsc's `password 51:b:` blob is DPAPI-encrypted and cannot be read. */
+  async function importRdpFile() {
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const path = await open({
+        title: t("dashboard.rdp.importRdp"),
+        multiple: false,
+        filters: [{ name: "RDP", extensions: ["rdp"] }],
+      });
+      if (typeof path !== "string" || !path) return;
+      setImportingRdp(true);
+      const { invoke } = await import("@tauri-apps/api/core");
+      const text = await invoke<string>("import_read_rdp_file", { path });
+      const { RdpFile } = await import("@devolutions/iron-remote-desktop-rdp");
+      const rf = new RdpFile();
+      rf.parse(text);
+      // `full address:s:` is `host` or `host:port` (IPv6 rarely bracketed here).
+      const addr = (rf.getStr("full address") ?? "").trim();
+      if (addr) {
+        const lastColon = addr.lastIndexOf(":");
+        const hasPort = lastColon > 0 && /^\d+$/.test(addr.slice(lastColon + 1)) && !addr.includes("]:");
+        if (hasPort) {
+          setHost(addr.slice(0, lastColon));
+          setPort(addr.slice(lastColon + 1));
+        } else {
+          setHost(addr.replace(/^\[|\]$/g, ""));
+        }
+      }
+      const importedUser = (rf.getStr("username") ?? "").trim();
+      if (importedUser) setUsername(importedUser);
+      const importedDomain = (rf.getStr("domain") ?? "").trim();
+      if (importedDomain) setDomain(importedDomain);
+      if (!label.trim()) setLabel(addr ? `rdp://${addr}` : label);
+    } catch (err) {
+      if (alive.current) setError(err instanceof Error ? err.message : String(err) || t("dashboard.rdp.importRdpFailed"));
+      return;
+    } finally {
+      if (alive.current) setImportingRdp(false);
+    }
+    if (alive.current) setError("");
+  }
   return <ModalShell open onClose={close} title={title} icon={kind === "serial" ? Cable : Monitor} maxWidth="lg" scrollable testId={`${kind}-connect-modal`}
     footerStart={<button data-testid="protocol-save-button" type="button" disabled={busy || loadingScript || scriptLoadFailed} onClick={() => void submit(false)} className={BTN_SECONDARY}>{t("common.save")}</button>}
     footer={<><button type="button" onClick={close} className={BTN_GHOST}>{t("common.cancel")}</button><button type="submit" form={`${kind}-connect-form`} disabled={busy || loadingScript || scriptLoadFailed || certificate !== null} data-testid={`${kind}-connect-button`} className={BTN_PRIMARY}>{busy ? t("dashboard.connect.connecting") : t("dashboard.protocol.connect")}</button></>}>
@@ -213,7 +257,7 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
           </div>
         </>}
         {kind === "local" && <>{field(t("dashboard.protocol.shell"), <input autoFocus className={INPUT} value={shell} onChange={e => setShell(e.target.value)} placeholder={t("dashboard.protocol.systemDefault")} />)}{field(t("dashboard.protocol.directory"), <input className={INPUT} value={directory} onChange={e => setDirectory(e.target.value)} />)}</>}
-        {kind === "rdp" && <>{field(t("dashboard.protocol.username"), <input className={INPUT} value={username} onChange={e => setUsername(e.target.value)} placeholder={t("dashboard.rdp.usernamePlaceholder")} data-testid="rdp-username-input" />)}{field(t("dashboard.protocol.password"), <input type="password" autoComplete="off" className={INPUT} value={password} onChange={e => setPassword(e.target.value)} data-testid="rdp-password-input" />)}{field(t("dashboard.protocol.domain"), <input className={INPUT} value={domain} onChange={e => setDomain(e.target.value)} data-testid="rdp-domain-input" />)}<label className="flex items-center gap-2 text-[length:var(--text-sm)] text-text-secondary"><input type="checkbox" checked={savePassword} onChange={e => setSavePassword(e.target.checked)} data-testid="rdp-save-password" />{t("dashboard.protocol.savePassword")}</label>{credentialLoaded && <p className="text-[length:var(--text-xs)] text-text-muted">{t("dashboard.protocol.credentialLoaded")}</p>}</>}
+        {kind === "rdp" && <>{field(t("dashboard.protocol.username"), <input className={INPUT} value={username} onChange={e => setUsername(e.target.value)} placeholder={t("dashboard.rdp.usernamePlaceholder")} data-testid="rdp-username-input" />)}{field(t("dashboard.protocol.password"), <input type="password" autoComplete="off" className={INPUT} value={password} onChange={e => setPassword(e.target.value)} data-testid="rdp-password-input" />)}{field(t("dashboard.protocol.domain"), <input className={INPUT} value={domain} onChange={e => setDomain(e.target.value)} data-testid="rdp-domain-input" />)}<label className="flex items-center gap-2 text-[length:var(--text-sm)] text-text-secondary"><input type="checkbox" checked={savePassword} onChange={e => setSavePassword(e.target.checked)} data-testid="rdp-save-password" />{t("dashboard.protocol.savePassword")}</label>{credentialLoaded && <p className="text-[length:var(--text-xs)] text-text-muted">{t("dashboard.protocol.credentialLoaded")}</p>}<button type="button" className={BTN_GHOST} data-testid="rdp-import-file" disabled={importingRdp} onClick={() => void importRdpFile()}>{t("dashboard.rdp.importRdp")}</button></>}
         {!graph && field(t("dashboard.telnet.encoding"), <CustomSelect data-testid={`${kind}-encoding-select`} aria-label={t("dashboard.telnet.encoding")} value={encoding} onChange={setEncoding} options={TERMINAL_ENCODINGS.map(e => ({ value: e.value, label: e.label }))} />)}
         {kind === "telnet" && <section className="space-y-2"><div className="flex justify-between gap-2 items-center"><span className="text-[length:var(--text-xs)] text-text-secondary">{t("dashboard.telnet.scriptTitle")}</span><button type="button" className={BTN_GHOST} data-testid="telnet-add-step" disabled={steps.length >= 100} onClick={() => setSteps(s => [...s, { expect: "", send: "" }])}><span className="flex items-center gap-1"><Plus size={13} />{t("dashboard.telnet.addStep")}</span></button></div>
           <p className="text-[length:var(--text-xs)] text-text-muted">{t("dashboard.protocol.scriptProtected")}</p>

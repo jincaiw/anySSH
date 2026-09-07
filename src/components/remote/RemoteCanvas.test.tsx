@@ -19,7 +19,18 @@ vi.mock("@novnc/novnc", () => ({ default: class extends EventTarget {
   clipboardPasteFrom = vi.fn(); sendCredentials = vi.fn(); approveServer = vi.fn(); disconnect = vi.fn(); focus = vi.fn(); blur = vi.fn();
   constructor() { super(); mocks.clients.push(this); }
 } }));
-vi.mock("@devolutions/iron-remote-desktop-rdp", () => ({ init: mocks.init, enableCredssp: vi.fn((enable: boolean) => ({ kind: "credssp", enable })), Backend: { SessionBuilder: class {}, DesktopSize: class { constructor(public width: number, public height: number) {} } } }));
+vi.mock("@devolutions/iron-remote-desktop-rdp", () => ({
+  init: mocks.init,
+  enableCredssp: vi.fn((enable: boolean) => ({ kind: "credssp", enable })),
+  Backend: { SessionBuilder: class {}, DesktopSize: class { constructor(public width: number, public height: number) {} } },
+  RdpFileTransferProvider: class {
+    on = vi.fn();
+    dispose = vi.fn();
+    showFilePicker = vi.fn();
+    uploadFiles = vi.fn();
+    downloadFilesConcurrent = vi.fn(async () => new Map());
+  },
+}));
 vi.mock("@devolutions/iron-remote-desktop", () => ({}));
 
 beforeAll(() => {
@@ -30,6 +41,7 @@ beforeAll(() => {
         withDesktopSize: () => builder, withExtension: (ext: unknown) => { mocks.extension(ext); return builder; }, build: () => ({}) };
       this.dispatchEvent(new CustomEvent("ready", { detail: { irgUserInteraction: {
         setEnableClipboard: vi.fn(), ctrlAltDel: vi.fn(), configBuilder: () => builder, connect: mocks.connect, shutdown: mocks.shutdown, setVisibility: mocks.visibility,
+        enableFileTransfer: vi.fn(),
       } } }));
     }
   });

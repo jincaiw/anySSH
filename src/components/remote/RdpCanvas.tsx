@@ -1,11 +1,11 @@
 import { useEffect, useRef, useState } from "react";
-import { Loader2, AlertTriangle, Unplug, RefreshCw, Pencil } from "lucide-react";
+import { Loader2, AlertTriangle, Unplug, RefreshCw, Pencil, Maximize2, FileUp, FolderDown } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { useTranslation } from "../../i18n";
 import type { SavedHost } from "../../types";
 import { persistProtocolHost } from "../../lib/protocol-hosts";
 import { useHostsStore } from "../../stores/hosts-store";
-import { withNativeClipboard } from "./rdp-native-clipboard";
+import { withNativeClipboard, encodeRgbaAsPng } from "./rdp-native-clipboard";
 import { cancelDeferredClose, deferClose } from "./deferred-close";
 
 interface RdpCanvasProps {
@@ -31,6 +31,9 @@ interface RdpPublicApi {
   ctrlAltDel: () => void;
   shutdown: () => void;
   connect: (config: unknown) => Promise<{ run: () => Promise<unknown> }>;
+  /** Registers a file-transfer provider: its builder extensions go onto the
+   *  SessionBuilder and `setSession` runs once the session is live. */
+  enableFileTransfer: (provider: unknown) => unknown;
   configBuilder: () => {
     withUsername: (u: string) => RdpConfigBuilder;
     withPassword: (p: string) => RdpConfigBuilder;
@@ -53,6 +56,16 @@ interface RdpConfigBuilder {
 }
 
 type RdpStatus = "loading" | "connecting" | "connected" | "disconnected" | "error";
+
+/** Server-offered clipboard file entry (MS-RDPECLIP file list); mirrors the
+ *  WASM `FileInfo` shape (`path` is a `\`-separated relative dir). */
+interface RdpRemoteFile {
+  name: string;
+  path?: string;
+  size: number;
+  lastModified: number;
+  isDirectory?: boolean;
+}
 
 /** mstsc-style auto-reconnect: retry a dropped session this many times with
  *  exponential backoff (1s/2s/4s) before falling back to the manual button. */
@@ -97,6 +110,12 @@ export function RdpCanvas({
   activeRef.current = isActive;
   const savedHostRef = useRef(savedHost);
   const pasteRef = useRef<(() => Promise<void>) | null>(null);
+  const fileTransferRef = useRef<
+    import("@devolutions/iron-remote-desktop-rdp").RdpFileTransferProvider | null
+  >(null);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [remoteFiles, setRemoteFiles] = useState<RdpRemoteFile[]>([]);
+  const [transferNote, setTransferNote] = useState("");
   // Auto-reconnect bookkeeping: only a session that reached "connected" and
   // then dropped is retried automatically; initial failures stay manual.
   const wasConnectedRef = useRef(false);
@@ -128,6 +147,58 @@ export function RdpCanvas({
     return true;
   };
 
+  /** Send local files to the remote clipboard (paste them over there). */
+  const sendFiles = async () => {
+    const provider = fileTransferRef.current;
+    if (!provider) return;
+    try {
+      const files = await provider.showFilePicker({ multiple: true });
+      if (!files?.length) return;
+      setTransferNote(t("dashboard.rdp.sendFiles"));
+      provider.uploadFiles(files);
+    } catch { /* picker cancelled */ }
+  };
+
+  /** Save server-offered clipboard files to a local directory. */
+  const saveRemoteFiles = async () => {
+    const provider = fileTransferRef.current;
+    if (!provider || !remoteFiles.length) return;
+    try {
+      const { open } = await import("@tauri-apps/plugin-dialog");
+      const dir = await open({ directory: true, title: t("dashboard.rdp.saveFiles"), multiple: false });
+      if (typeof dir !== "string" || !dir) return;
+      const blobs = await provider.downloadFilesConcurrent(remoteFiles);
+      let written = 0;
+      for (const [index, blob] of blobs) {
+        const file = remoteFiles[index];
+        if (!file || file.isDirectory) continue;
+        const bytes = new Uint8Array(await blob.arrayBuffer());
+        const rel = file.path ? `${file.path.replace(/\\/g, "/")}/${file.name}` : file.name;
+        const sep = dir.endsWith("/") || dir.endsWith("\\") ? "" : "/";
+        await invoke("save_dialog_file", { path: `${dir}${sep}${rel}`, contents: bytes });
+        written += 1;
+      }
+      setTransferNote(`${t("dashboard.rdp.fileTransferDone")} (${written})`);
+    } catch (error) {
+      setErrorMsg(t("dashboard.rdp.fileTransferFailed", { error: String(error) }));
+    }
+  };
+
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement) await document.exitFullscreen();
+      else await containerRef.current?.requestFullscreen();
+    } catch (error) {
+      setErrorMsg(String(error));
+    }
+  };
+
+  useEffect(() => {
+    const onChange = () => setIsFullscreen(Boolean(document.fullscreenElement));
+    document.addEventListener("fullscreenchange", onChange);
+    return () => document.removeEventListener("fullscreenchange", onChange);
+  }, []);
+
   useEffect(() => {
     // StrictMode double-mount: cancel a pending teardown from the previous
     // mount before (re)connecting, so the one-time token stays valid.
@@ -153,11 +224,24 @@ export function RdpCanvas({
         el.style.height = "100%";
         el.module = withNativeClipboard(rdp.Backend, session => {
           pasteRef.current = async () => {
-            const { readText } = await import("@tauri-apps/plugin-clipboard-manager");
-            const text = await readText();
-            if (cancelled || !activeRef.current) return;
+            const clipboard = await import("@tauri-apps/plugin-clipboard-manager");
             const data = new rdp.Backend.ClipboardData();
-            data.addText("text/plain", text);
+            let hasContent = false;
+            // Text first — spreadsheet cells often also carry a bitmap.
+            try {
+              const text = await clipboard.readText();
+              if (text) { data.addText("text/plain", text); hasContent = true; }
+            } catch { /* clipboard has no text */ }
+            if (!hasContent) {
+              try {
+                const img = await clipboard.readImage();
+                const { width, height } = await img.size();
+                const rgba = await img.rgba();
+                const png = await encodeRgbaAsPng(new Uint8Array(rgba), width, height);
+                if (png) { data.addBinary("image/png", png); hasContent = true; }
+              } catch { /* clipboard has no image */ }
+            }
+            if (!hasContent || cancelled || !activeRef.current) return;
             await session.onClipboardPaste(data);
           };
         }, () => !cancelled && activeRef.current, error => {
@@ -165,6 +249,23 @@ export function RdpCanvas({
         });
         elementRef.current = el;
 
+        // RDP file clipboard (drive-style copy/paste over the virtual
+        // channel): the provider registers its own builder extensions and
+        // attaches to the session once connected.
+        const provider = new rdp.RdpFileTransferProvider();
+        fileTransferRef.current = provider;
+        provider.on("files-available", (files: RdpRemoteFile[]) => {
+          if (!cancelled) setRemoteFiles(files ?? []);
+        });
+        provider.on("download-progress", (p: { fileName?: string; percentage?: number }) => {
+          if (!cancelled) setTransferNote(`${p.fileName ?? ""} ${Math.round(p.percentage ?? 0)}%`);
+        });
+        provider.on("upload-progress", (p: { fileName?: string; percentage?: number }) => {
+          if (!cancelled) setTransferNote(`${p.fileName ?? ""} ${Math.round(p.percentage ?? 0)}%`);
+        });
+        provider.on("error", (e: { message?: string }) => {
+          if (!cancelled) setTransferNote(e.message ?? "transfer error");
+        });
 
         el.addEventListener("ready", (event) => {
           if (cancelled) return;
@@ -173,6 +274,7 @@ export function RdpCanvas({
           ).detail.irgUserInteraction;
           apiRef.current = api;
           api.setEnableClipboard(false);
+          api.enableFileTransfer(provider);
 
           const config = api
             .configBuilder()
@@ -252,6 +354,14 @@ export function RdpCanvas({
       } catch {
         /* already gone */
       }
+      try {
+        fileTransferRef.current?.dispose();
+      } catch {
+        /* already gone */
+      }
+      fileTransferRef.current = null;
+      setRemoteFiles([]);
+      setTransferNote("");
       elementRef.current?.remove();
       elementRef.current = null;
       apiRef.current = null;
@@ -271,6 +381,12 @@ export function RdpCanvas({
       {status === "connected" && <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1 text-xs text-text-secondary">
         <button className="rounded px-2 py-1 hover:bg-bg-subtle" onClick={() => apiRef.current?.ctrlAltDel()}>Ctrl+Alt+Del</button>
         <button className="rounded px-2 py-1 hover:bg-bg-subtle" onClick={() => void pasteRef.current?.().catch(error => setErrorMsg(String(error)))}>{t("dashboard.protocol.pasteClipboard")}</button>
+        <button className="flex items-center gap-1 rounded px-2 py-1 hover:bg-bg-subtle" onClick={() => void sendFiles()} title={t("dashboard.rdp.sendFiles")}><FileUp size={13} />{t("dashboard.rdp.sendFiles")}</button>
+        {remoteFiles.length > 0 && isActive && <button className="flex items-center gap-1 rounded px-2 py-1 text-status-warning hover:bg-bg-subtle" onClick={() => void saveRemoteFiles()} title={t("dashboard.rdp.saveFiles")}>
+          <FolderDown size={13} />{t("dashboard.rdp.filesOffered", { count: remoteFiles.length })}
+        </button>}
+        <button className="rounded px-2 py-1 hover:bg-bg-subtle" onClick={() => void toggleFullscreen()} title={isFullscreen ? t("dashboard.rdp.exitFullscreen") : t("dashboard.rdp.fullscreen")}><Maximize2 size={13} /></button>
+        {transferNote && <span className="truncate text-text-muted">{transferNote}</span>}
         {errorMsg && <span role="alert" className="truncate text-status-error">{errorMsg}</span>}
       </div>}
       <div ref={containerRef} className="flex-1 min-h-0 relative" />

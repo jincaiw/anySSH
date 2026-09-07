@@ -2,6 +2,7 @@ mod ai;
 mod backup;
 mod db;
 mod editors;
+mod fsio;
 mod import;
 mod portable;
 mod portforward;
@@ -347,6 +348,10 @@ pub fn run() {
             vault::vault_save_credential,
             vault::vault_delete_credential,
             vault::vault_has_credential,
+            vault::vault_get_credential,
+            // RDP file-clipboard downloads + .rdp import
+            fsio::save_dialog_file,
+            import::commands::import_read_rdp_file,
             // S3
             s3::commands::s3_connect,
             s3::commands::s3_disconnect,
