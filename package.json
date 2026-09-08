@@ -15,7 +15,8 @@
     "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "i18n:check": "vitest run src/i18n/__tests__/i18n-parity.test.ts",
-    "tauri": "tauri"
+    "tauri": "tauri",
+    "postinstall": "node vendor/iron-remote-desktop-rdp/patch.mjs"
   },
   "dependencies": {
     "@devolutions/iron-remote-desktop": "^0.11.0",

@@ -40,3 +40,8 @@ CLAUDE.md
 
 # Local npm cache used by sandboxed installs (see .workbuddy env quirks)
 .npm-cache/
+
+# Full IronRDP monorepo clone used to rebuild the vendored WASM (636M).
+# Only the build output + patch tooling in vendor/iron-remote-desktop-rdp/ is committed.
+# Rebuild instructions: vendor/iron-remote-desktop-rdp/README.md
+vendor/iron-remote-desktop-rdp-src/
