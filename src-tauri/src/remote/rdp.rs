@@ -43,6 +43,51 @@ use tokio_util::sync::CancellationToken;
 const STEP_TIMEOUT: Duration = Duration::from_secs(10);
 const X224_MAX: usize = 1024;
 
+/// RDP security protocol negotiation flags (MS-RDP 2.2.1.1.1). Only the
+/// values the inspector branches on are read; the rest are kept here so the
+/// negotiation request in `X224_INSPECT_REQUEST` and any future "did the
+/// server pick X?" diagnostics stay grounded in a single source of truth.
+#[allow(dead_code)]
+mod protocol {
+    pub const RDP: u32 = 0x0000_0000;
+    pub const SSL: u32 = 0x0000_0001;
+    pub const HYBRID: u32 = 0x0000_0002;
+}
+
+/// X.224 Connection Request used by `inspect_certificate`. We must offer every
+/// modern protocol (RDP | SSL | HYBRID), not just PROTOCOL_RDP — servers that
+/// only accept SSL (the Windows default since 2012R2, and most bastions) close
+/// the connection mid-handshake with WSAECONNRESET / ECONNRESET otherwise.
+///
+/// mstsc sends the same triple; the server picks one in its RDP_NEG_RSP and
+/// the rest of our flow follows the chosen protocol.
+const X224_INSPECT_REQUEST: [u8; 19] = [
+    0x03, 0x00, 0x00, 0x13, // TPKT: version 3, reserved, total length 19
+    0x0E, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x00, // X.224 CR TPDU (class 0, no cookie)
+    0x01, 0x00, 0x08, 0x00, // RDP_NEG_REQ: type 1, flags 0, length 8
+    0x00, 0x00, 0x00, 0x03, // requestedProtocols = RDP | SSL | HYBRID
+];
+
+/// Inspect the X.224 Connection Confirm for the server's RDP_NEG_RSP and
+/// return the negotiated protocol. Falls back to `PROTOCOL_SSL` when the
+/// server replies with a bare X.224 CC (no negotiation payload) — that's the
+/// default for most Windows / bastion hosts.
+fn selected_security_protocol(x224_confirm: &[u8]) -> u32 {
+    // TPKT(4) + X.224 header(7) + RDP_NEG_RSP(type 1, flags 1, length 2, pad 2, proto 4) = 19.
+    const RDP_NEG_RSP_TYPE: u8 = 0x02;
+    if x224_confirm.len() >= 19 && x224_confirm[11] == RDP_NEG_RSP_TYPE {
+        let proto = u32::from_le_bytes([
+            x224_confirm[15],
+            x224_confirm[16],
+            x224_confirm[17],
+            x224_confirm[18],
+        ]);
+        return proto;
+    }
+    // No explicit negotiation — assume SSL (mstsc's behaviour for legacy peers).
+    protocol::SSL
+}
+
 /// Self-signed RDP certificates require explicit, persistent fingerprint trust.
 /// The inspection connection supplies no credentials; authenticated sessions
 /// require the exact fingerprint approved by the user.
@@ -112,10 +157,21 @@ pub async fn inspect_certificate(host: &str, port: u16) -> Result<String, Bridge
         let mut tcp = TcpStream::connect((host, port))
             .await
             .map_err(|e| BridgeError::Upstream(e.to_string()))?;
-        tcp.write_all(&[3, 0, 0, 19, 14, 224, 0, 0, 0, 0, 0, 1, 0, 8, 0, 3, 0, 0, 0])
+        tcp.write_all(&X224_INSPECT_REQUEST)
             .await
             .map_err(|e| BridgeError::Upstream(e.to_string()))?;
-        read_tpkt(&mut tcp).await?;
+        let x224_confirm = read_tpkt(&mut tcp).await?;
+        let selected = selected_security_protocol(&x224_confirm);
+        if selected == protocol::RDP {
+            // Server only accepts plain RDP (no TLS). We cannot get a
+            // certificate in that mode — surface a precise error so the
+            // modal can hint at enabling RDP-over-TLS on the target.
+            return Err(BridgeError::Upstream(
+                "server does not advertise RDP over TLS (PROTOCOL_SSL/PROTOCOL_HYBRID); \
+                 enable RDP-over-TLS on the target to inspect its certificate"
+                    .into(),
+            ));
+        }
         let tls = TlsConnector::from(pinned_client_config(None))
             .connect(server_name_for(host), tcp)
             .await
@@ -166,7 +222,9 @@ async fn read_tpkt(stream: &mut TcpStream) -> Result<Vec<u8>, BridgeError> {
             .map_err(|e| BridgeError::Upstream(format!("read X.224 confirm: {e}")))?;
         if n == 0 {
             return Err(BridgeError::Upstream(
-                "upstream closed during X.224 negotiation".into(),
+                "upstream closed during X.224 negotiation (server may require \
+                 RDP over TLS/NLA, or does not accept empty credentials over plain RDP)"
+                    .into(),
             ));
         }
         buf.extend_from_slice(&chunk[..n]);
@@ -369,9 +427,30 @@ mod tests {
         0x00, 0x00, 0x00, 0x02, // selectedProtocol = PROTOCOL_HYBRID
     ];
 
+    /// Same shape but selecting PROTOCOL_SSL — what mstsc sees from a Windows
+    /// host that has NLA off and only supports RDP-over-TLS.
+    const X224_CONFIRM_SSL: [u8; 19] = [
+        0x03, 0x00, 0x00, 0x13, 0x0E, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x08,
+        0x00, 0x00, 0x00, 0x01,
+    ];
+
+    /// X.224 CC selecting PROTOCOL_RDP only — the server wants no TLS at all.
+    /// `inspect_certificate` must refuse this path (no cert to inspect).
+    const X224_CONFIRM_PLAIN: [u8; 19] = [
+        0x03, 0x00, 0x00, 0x13, 0x0E, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x08,
+        0x00, 0x00, 0x00, 0x00,
+    ];
+
     /// Fake RDP server: X.224 exchange, then a real TLS 1.2 handshake with a
     /// self-signed cert, then echo loop inside the TLS session.
     async fn spawn_fake_rdp_server() -> (String, u16, Vec<u8>) {
+        spawn_fake_rdp_server_with(&X224_CONFIRM).await
+    }
+
+    /// Same as `spawn_fake_rdp_server` but lets the test pick which X.224
+    /// Connection Confirm (and therefore which selected RDP security
+    /// protocol) the server replies with.
+    async fn spawn_fake_rdp_server_with(confirm: &'static [u8; 19]) -> (String, u16, Vec<u8>) {
         let certified_key =
             rcgen::generate_simple_self_signed(["anyssh-fake-rdp".to_string()]).unwrap();
         let cert_der = certified_key.cert.der().to_vec();
@@ -403,7 +482,7 @@ mod tests {
                     // Consume the X.224 request, answer with the confirm.
                     let mut buf = [0u8; 512];
                     let _ = sock.read(&mut buf).await;
-                    if sock.write_all(&X224_CONFIRM).await.is_err() {
+                    if sock.write_all(confirm).await.is_err() {
                         return;
                     }
                     // TLS handshake, then echo inside the tunnel.
@@ -433,6 +512,33 @@ mod tests {
         assert_eq!(
             inspect_certificate(&host, port).await.unwrap(),
             certificate_fingerprint(&cert)
+        );
+    }
+
+    /// When the server selects PROTOCOL_SSL (the bastion's path), the
+    /// inspector must still upgrade to TLS and surface the certificate —
+    /// this is the case the 29.1.0.122 / 33890 server hit.
+    #[tokio::test]
+    async fn certificate_inspection_handles_ssl_only_negotiation() {
+        let (host, port, cert) = spawn_fake_rdp_server_with(&X224_CONFIRM_SSL).await;
+        assert_eq!(
+            inspect_certificate(&host, port).await.unwrap(),
+            certificate_fingerprint(&cert)
+        );
+    }
+
+    /// When the server only accepts plain RDP (no TLS), the inspector must
+    /// refuse with a precise error rather than getting stuck or returning
+    /// a TLS handshake failure.
+    #[tokio::test]
+    async fn certificate_inspection_rejects_plain_rdp_negotiation() {
+        // Server replies PROTOCOL_RDP, then hangs up — no TLS, no cert.
+        let (host, port, _) = spawn_fake_rdp_server_with(&X224_CONFIRM_PLAIN).await;
+        let err = inspect_certificate(&host, port).await.unwrap_err();
+        let msg = err.to_string();
+        assert!(
+            msg.contains("PROTOCOL_SSL") || msg.contains("does not advertise"),
+            "expected a 'no TLS' diagnostic, got: {msg}"
         );
     }
 
