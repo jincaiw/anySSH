@@ -8,7 +8,7 @@ const mocks = vi.hoisted(() => ({
   clients: [] as Array<EventTarget & { clipboardPasteFrom: ReturnType<typeof vi.fn>; sendCredentials: ReturnType<typeof vi.fn>; approveServer: ReturnType<typeof vi.fn> }>,
   invoke: vi.fn(), write: vi.fn(), read: vi.fn(async () => "local clipboard"),
   save: vi.fn(async () => {}), record: vi.fn(async () => {}),
-  visibility: vi.fn(), shutdown: vi.fn(), connect: vi.fn(), init: vi.fn(async () => {}), extension: vi.fn(),
+  visibility: vi.fn(), shutdown: vi.fn(), connect: vi.fn(), init: vi.fn(async () => {}), extension: vi.fn(), withUsername: vi.fn(), withPassword: vi.fn(),
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke: mocks.invoke }));
 vi.mock("@tauri-apps/plugin-clipboard-manager", () => ({ writeText: mocks.write, readText: mocks.read }));
@@ -36,7 +36,7 @@ vi.mock("@devolutions/iron-remote-desktop", () => ({}));
 beforeAll(() => {
   customElements.define("iron-remote-desktop", class extends HTMLElement {
     connectedCallback() {
-      const builder = { withUsername: () => builder, withPassword: () => builder, withDestination: () => builder,
+      const builder = { withUsername: (u: string) => { mocks.withUsername(u); return builder; }, withPassword: (p: string) => { mocks.withPassword(p); return builder; }, withDestination: () => builder,
         withProxyAddress: () => builder, withAuthToken: () => builder, withServerDomain: () => builder,
         withDesktopSize: () => builder, withExtension: (ext: unknown) => { mocks.extension(ext); return builder; }, build: () => ({}) };
       this.dispatchEvent(new CustomEvent("ready", { detail: { irgUserInteraction: {
@@ -134,6 +134,10 @@ describe("RDP component lifecycle", () => {
     render(<RdpCanvas sessionId="rdp-anon" wsUrl="ws://localhost" destination="localhost:3389" username="" password="" isActive />);
     await waitFor(() => expect(mocks.connect).toHaveBeenCalledTimes(1));
     expect(mocks.extension).toHaveBeenCalledWith(enableCredssp(false));
+    // Empty credentials must still reach the WASM session builder (it
+    // requires both fields; the connector derives the mstshash cookie path).
+    expect(mocks.withUsername).toHaveBeenCalledWith("");
+    expect(mocks.withPassword).toHaveBeenCalledWith("");
     expect(mocks.save).not.toHaveBeenCalled();
   });
 });

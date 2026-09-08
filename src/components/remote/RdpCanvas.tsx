@@ -298,11 +298,16 @@ export function RdpCanvas({
             .withDestination(destination)
             .withProxyAddress(wsUrl)
             .withAuthToken(sessionId);
+          // Always set username/password (empty strings are valid): the WASM
+          // session builder requires both fields to be present, and an empty
+          // username selects the mstsc-style "logon screen inside the session"
+          // flow below. Bastion proxies need the mstshash cookie the connector
+          // derives from these fields even when NLA is off.
+          config.withUsername(username).withPassword(password);
           if (username || password) {
             // NLA path: credentials in the connection request (mstsc "remember
             // me" style). Domain applies only here — there is no logon screen
             // to type it into when CredSSP is off.
-            config.withUsername(username).withPassword(password);
             if (domain) config.withServerDomain(domain);
           } else {
             // No credentials → disable NLA (CredSSP) so the server's own

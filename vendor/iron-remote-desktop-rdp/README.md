@@ -9,11 +9,18 @@ won't accept downgrade from NLA to TLS" and respond with `RDP_NEG_FAILURE`
 the no-cred path so the server can pick whichever protocol it actually
 supports.
 
-The wasm-bindgen ABI is unchanged — the patch in
-`vendor/iron-remote-desktop-rdp-src/crates/ironrdp-connector/src/connection.rs`
-only adds one line to the existing `else` branch of the security-protocol
-negotiation. So we can splice the rebuilt WASM into the published bundle
-without touching the JS glue layer.
+The wasm-bindgen ABI is unchanged — the patch touches two files, neither of
+which adds/removes any `#[wasm_bindgen]` export/import. So we can splice the
+rebuilt WASM into the published bundle without touching the JS glue layer.
+
+1. `crates/ironrdp-connector/src/connection.rs` — advertise `PROTOCOL_HYBRID`
+   in the NLA-off branch (see below).
+2. `crates/ironrdp-web/src/session.rs` (`build_config`) — set
+   `request_data = Some(NegoRequestData::cookie("anyssh"))` when the username
+   is empty. Bastion proxies route/validate the X.224 Connection Request by
+   the `Cookie: mstshash=` negotiable data (mstsc always sends it) and
+   silently close cookie-less requests (field failure on `29.1.0.122:33890`,
+   fixed in v0.14.41).
 
 ## How it's applied
 

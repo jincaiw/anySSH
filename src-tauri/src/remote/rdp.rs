@@ -45,7 +45,7 @@ const X224_MAX: usize = 1024;
 
 /// RDP security protocol negotiation flags (MS-RDP 2.2.1.1.1). Only the
 /// values the inspector branches on are read; the rest are kept here so the
-/// negotiation request in `X224_INSPECT_REQUEST` and any future "did the
+/// negotiation request in [`x224_inspect_request`] and any future "did the
 /// server pick X?" diagnostics stay grounded in a single source of truth.
 #[allow(dead_code)]
 mod protocol {
@@ -54,19 +54,33 @@ mod protocol {
     pub const HYBRID: u32 = 0x0000_0002;
 }
 
-/// X.224 Connection Request used by `inspect_certificate`. We must offer every
-/// modern protocol (RDP | SSL | HYBRID), not just PROTOCOL_RDP — servers that
-/// only accept SSL (the Windows default since 2012R2, and most bastions) close
-/// the connection mid-handshake with WSAECONNRESET / ECONNRESET otherwise.
+/// X.224 Connection Request built by [`x224_inspect_request`].
 ///
-/// mstsc sends the same triple; the server picks one in its RDP_NEG_RSP and
-/// the rest of our flow follows the chosen protocol.
-const X224_INSPECT_REQUEST: [u8; 19] = [
-    0x03, 0x00, 0x00, 0x13, // TPKT: version 3, reserved, total length 19
-    0x0E, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x00, // X.224 CR TPDU (class 0, no cookie)
-    0x01, 0x00, 0x08, 0x00, // RDP_NEG_REQ: type 1, flags 0, length 8
-    0x00, 0x00, 0x00, 0x03, // requestedProtocols = RDP | SSL | HYBRID
-];
+/// Two hard requirements learned from the field (29.1.0.122:33890 bastion):
+///
+/// 1. We must offer every modern protocol (RDP | SSL | HYBRID), not just
+///    PROTOCOL_RDP — servers that only accept SSL (the Windows default since
+///    2012R2, and most bastions) close the connection mid-handshake with
+///    WSAECONNRESET / ECONNRESET otherwise. mstsc sends the same triple.
+/// 2. We must carry the same `Cookie: mstshash=<value>` negotiable data mstsc
+///    always sends. Bastion proxies route / validate the channel by this
+///    cookie and silently close cookie-less requests (clean EOF, no bytes
+///    back) — exactly the v0.14.39/v0.14.40 field failure.
+fn x224_inspect_request() -> Vec<u8> {
+    const COOKIE: &[u8] = b"Cookie: mstshash=anyssh\r\n";
+    // RDP_NEG_REQ: type 1, flags 0, length 8, requestedProtocols = RDP | SSL | HYBRID.
+    const NEG_REQ: [u8; 8] = [0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x03];
+    // X.224 CR TPDU: LI + code + dst-ref + src-ref + class = 1 + 6 header bytes.
+    let li = 6 + COOKIE.len() + NEG_REQ.len();
+    let total = (4 + 1 + li) as u16;
+    let mut pdu = Vec::with_capacity(total as usize);
+    pdu.extend_from_slice(&[0x03, 0x00, (total >> 8) as u8, total as u8]);
+    pdu.push(li as u8);
+    pdu.extend_from_slice(&[0xE0, 0x00, 0x00, 0x00, 0x00, 0x00]);
+    pdu.extend_from_slice(COOKIE);
+    pdu.extend_from_slice(&NEG_REQ);
+    pdu
+}
 
 /// Inspect the X.224 Connection Confirm for the server's RDP_NEG_RSP and
 /// return the negotiated protocol. Falls back to `PROTOCOL_SSL` when the
@@ -76,13 +90,13 @@ fn selected_security_protocol(x224_confirm: &[u8]) -> u32 {
     // TPKT(4) + X.224 header(7) + RDP_NEG_RSP(type 1, flags 1, length 2, pad 2, proto 4) = 19.
     const RDP_NEG_RSP_TYPE: u8 = 0x02;
     if x224_confirm.len() >= 19 && x224_confirm[11] == RDP_NEG_RSP_TYPE {
-        let proto = u32::from_le_bytes([
+        // MS-RDPBCGR multi-byte integers in negotiation payloads are big-endian.
+        return u32::from_be_bytes([
             x224_confirm[15],
             x224_confirm[16],
             x224_confirm[17],
             x224_confirm[18],
         ]);
-        return proto;
     }
     // No explicit negotiation — assume SSL (mstsc's behaviour for legacy peers).
     protocol::SSL
@@ -157,7 +171,7 @@ pub async fn inspect_certificate(host: &str, port: u16) -> Result<String, Bridge
         let mut tcp = TcpStream::connect((host, port))
             .await
             .map_err(|e| BridgeError::Upstream(e.to_string()))?;
-        tcp.write_all(&X224_INSPECT_REQUEST)
+        tcp.write_all(&x224_inspect_request())
             .await
             .map_err(|e| BridgeError::Upstream(e.to_string()))?;
         let x224_confirm = read_tpkt(&mut tcp).await?;
@@ -222,8 +236,9 @@ async fn read_tpkt(stream: &mut TcpStream) -> Result<Vec<u8>, BridgeError> {
             .map_err(|e| BridgeError::Upstream(format!("read X.224 confirm: {e}")))?;
         if n == 0 {
             return Err(BridgeError::Upstream(
-                "upstream closed during X.224 negotiation (server may require \
-                 RDP over TLS/NLA, or does not accept empty credentials over plain RDP)"
+                "upstream closed during X.224 negotiation without a reply (server may require \
+                 RDP over TLS/NLA, reject empty credentials over plain RDP, or refuse the \
+                 mstshash cookie)"
                     .into(),
             ));
         }
@@ -539,6 +554,37 @@ mod tests {
         assert!(
             msg.contains("PROTOCOL_SSL") || msg.contains("does not advertise"),
             "expected a 'no TLS' diagnostic, got: {msg}"
+        );
+    }
+
+    /// The inspect request must carry the mstshash cookie (mstsc parity) —
+    /// bastions route by it and close cookie-less requests (29.1.0.122).
+    #[test]
+    fn inspect_request_carries_mstshash_cookie_and_valid_framing() {
+        let pdu = x224_inspect_request();
+        // TPKT: version 3 and total length in bytes 2-3.
+        assert_eq!(pdu[0], 0x03);
+        assert_eq!(u16::from_be_bytes([pdu[2], pdu[3]]) as usize, pdu.len());
+        // LI covers everything after the LI byte; CR TPDU code 0xE0.
+        assert_eq!(pdu[4] as usize, pdu.len() - 5);
+        assert_eq!(pdu[5], 0xE0);
+        // The mstshash cookie sits in the variable part, before the NEG_REQ.
+        let cookie = b"Cookie: mstshash=anyssh\r\n";
+        assert_eq!(&pdu[11..11 + cookie.len()], cookie);
+        // NEG_REQ tail: type 1, flags 0, length 8, protocols RDP|SSL|HYBRID (big-endian).
+        let neg = &pdu[11 + cookie.len()..];
+        assert_eq!(neg, &[0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x03][..]);
+    }
+
+    /// `selected_security_protocol` must parse the big-endian wire format
+    /// (MS-RDPBCGR negotiation payloads are big-endian).
+    #[test]
+    fn selected_security_protocol_parses_big_endian_wire_format() {
+        assert_eq!(selected_security_protocol(&X224_CONFIRM), protocol::HYBRID);
+        assert_eq!(selected_security_protocol(&X224_CONFIRM_SSL), protocol::SSL);
+        assert_eq!(
+            selected_security_protocol(&X224_CONFIRM_PLAIN),
+            protocol::RDP
         );
     }
 
