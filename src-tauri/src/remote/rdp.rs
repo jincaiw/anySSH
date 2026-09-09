@@ -67,19 +67,66 @@ mod protocol {
 ///    cookie and silently close cookie-less requests (clean EOF, no bytes
 ///    back) — exactly the v0.14.39/v0.14.40 field failure.
 fn x224_inspect_request() -> Vec<u8> {
-    const COOKIE: &[u8] = b"Cookie: mstshash=anyssh\r\n";
-    // RDP_NEG_REQ: type 1, flags 0, length 8, requestedProtocols = RDP | SSL | HYBRID.
     const NEG_REQ: [u8; 8] = [0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x03];
+    let cookie = format!("Cookie: mstshash={}\r\n", mstshash_value());
+    let cookie = cookie.as_bytes();
     // X.224 CR TPDU: LI + code + dst-ref + src-ref + class = 1 + 6 header bytes.
-    let li = 6 + COOKIE.len() + NEG_REQ.len();
+    let li = 6 + cookie.len() + NEG_REQ.len();
     let total = (4 + 1 + li) as u16;
     let mut pdu = Vec::with_capacity(total as usize);
     pdu.extend_from_slice(&[0x03, 0x00, (total >> 8) as u8, total as u8]);
     pdu.push(li as u8);
     pdu.extend_from_slice(&[0xE0, 0x00, 0x00, 0x00, 0x00, 0x00]);
-    pdu.extend_from_slice(COOKIE);
+    pdu.extend_from_slice(cookie);
     pdu.extend_from_slice(&NEG_REQ);
     pdu
+}
+
+/// mstsc sends `Cookie: mstshash=<client hostname>` (uppercase NetBIOS-style
+/// name). Some bastions route/validate the channel by that value, so mirror
+/// mstsc exactly: use this machine's hostname, falling back to `anyssh`.
+fn mstshash_value() -> String {
+    let name = hostname::get()
+        .map(|h| h.to_string_lossy().trim().to_string())
+        .unwrap_or_default();
+    if name.is_empty() {
+        "anyssh".to_string()
+    } else {
+        name
+    }
+}
+
+/// Replace (or insert) the mstshash cookie in an X.224 Connection Request
+/// PDU in place, then recompute the TPKT length and the X.224 LI. Used to
+/// align the WASM connector's CR (cookie = username or absent) with what
+/// mstsc sends (cookie = client hostname) before it goes upstream.
+fn rewrite_x224_cookie(request: &mut Vec<u8>, hostname: &str) {
+    let Some(&li) = request.get(4) else { return };
+    let Some(variable) = request.get_mut(11..5 + li as usize) else {
+        return;
+    };
+    // Strip an existing "Cookie: msts…" (cookie or routing token) line.
+    let mut var: Vec<u8> = variable.to_vec();
+    if let Some(start) = var
+        .windows(12)
+        .position(|w| w.eq_ignore_ascii_case(b"Cookie: msts"))
+    {
+        if let Some(end) = var[start..]
+            .windows(2)
+            .position(|w| w == b"\r\n")
+            .map(|p| start + p + 2)
+        {
+            var.drain(start..end);
+        }
+    }
+    let mut new_var = format!("Cookie: mstshash={hostname}\r\n").into_bytes();
+    new_var.extend_from_slice(&var);
+    request.splice(11..5 + li as usize, new_var.iter().copied());
+
+    let new_li = request.len() - 5;
+    request[4] = new_li as u8;
+    let total = request.len() as u16;
+    request[2..4].copy_from_slice(&total.to_be_bytes());
 }
 
 /// Inspect the X.224 Connection Confirm for the server's RDP_NEG_RSP and
@@ -227,6 +274,7 @@ fn server_name_for(host: &str) -> ServerName<'static> {
 /// Read one TPKT-framed PDU (X.224 Connection Confirm). TPKT bytes 2–3 are
 /// the total packet length (big-endian, header included).
 async fn read_tpkt(stream: &mut TcpStream) -> Result<Vec<u8>, BridgeError> {
+    let started = std::time::Instant::now();
     let mut buf = Vec::with_capacity(64);
     let mut chunk = [0u8; 512];
     loop {
@@ -235,12 +283,12 @@ async fn read_tpkt(stream: &mut TcpStream) -> Result<Vec<u8>, BridgeError> {
             .map_err(|_| BridgeError::Upstream("timeout reading X.224 confirm".into()))?
             .map_err(|e| BridgeError::Upstream(format!("read X.224 confirm: {e}")))?;
         if n == 0 {
-            return Err(BridgeError::Upstream(
-                "upstream closed during X.224 negotiation without a reply (server may require \
-                 RDP over TLS/NLA, reject empty credentials over plain RDP, or refuse the \
-                 mstshash cookie)"
-                    .into(),
-            ));
+            return Err(BridgeError::Upstream(format!(
+                "upstream closed during X.224 negotiation without a reply after {:.1}s \
+                     (server may require RDP over TLS/NLA, reject empty credentials over plain \
+                     RDP, or refuse the mstshash cookie)",
+                started.elapsed().as_secs_f32()
+            )));
         }
         buf.extend_from_slice(&chunk[..n]);
         if buf.len() >= 4 {
@@ -359,7 +407,7 @@ async fn run_handshake(
     let request = request
         .into_enum()
         .map_err(|e| BridgeError::Rejected(e.to_string()))?;
-    let x224_request = match request {
+    let mut x224_request = match request {
         ironrdp_rdcleanpath::RDCleanPath::Request {
             x224_connection_request,
             ..
@@ -370,6 +418,10 @@ async fn run_handshake(
             ))
         }
     };
+    // mstsc parity: the connector's cookie is the username (or absent) when
+    // credentials are empty; rewrite it to the mstsc-style client hostname
+    // before the request goes upstream (bastions route by it).
+    rewrite_x224_cookie(&mut x224_request, &mstshash_value());
 
     // ── 2. Dial upstream (route host, not the client-supplied destination —
     //       the route registration is the trust anchor) ────────────────────
@@ -569,11 +621,54 @@ mod tests {
         assert_eq!(pdu[4] as usize, pdu.len() - 5);
         assert_eq!(pdu[5], 0xE0);
         // The mstshash cookie sits in the variable part, before the NEG_REQ.
-        let cookie = b"Cookie: mstshash=anyssh\r\n";
-        assert_eq!(&pdu[11..11 + cookie.len()], cookie);
+        let cookie = format!("Cookie: mstshash={}\r\n", mstshash_value());
+        assert_eq!(&pdu[11..11 + cookie.len()], cookie.as_bytes());
         // NEG_REQ tail: type 1, flags 0, length 8, protocols RDP|SSL|HYBRID (big-endian).
         let neg = &pdu[11 + cookie.len()..];
         assert_eq!(neg, &[0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x03][..]);
+    }
+
+    /// The session-path CR (from the WASM connector) must end up carrying the
+    /// mstsc-style hostname cookie, with a replaced username cookie.
+    #[test]
+    fn rewrite_x224_cookie_replaces_username_cookie() {
+        // Connector shape: cookie from the username, then the NEG_REQ.
+        let mut pdu = x224_inspect_request();
+        let old_len = pdu.len();
+        rewrite_x224_cookie(&mut pdu, "WIN-DEV-01");
+        assert!(String::from_utf8_lossy(&pdu).contains("Cookie: mstshash=WIN-DEV-01\r\n"));
+        assert!(!String::from_utf8_lossy(&pdu).contains("anyssh"));
+        assert_eq!(u16::from_be_bytes([pdu[2], pdu[3]]) as usize, pdu.len());
+        assert_eq!(pdu[4] as usize, pdu.len() - 5);
+        let _ = old_len;
+    }
+
+    /// A CR without any cookie must get one inserted, keeping the NEG_REQ.
+    #[test]
+    fn rewrite_x224_cookie_inserts_when_absent() {
+        let mut pdu = vec![
+            0x03, 0x00, 0x00, 0x13, 0x0E, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x08,
+            0x00, 0x00, 0x00, 0x00, 0x03,
+        ];
+        rewrite_x224_cookie(&mut pdu, "HOST-X");
+        let text = String::from_utf8_lossy(&pdu);
+        assert!(text.contains("Cookie: mstshash=HOST-X\r\n"));
+        assert!(text.ends_with("\u{01}\u{00}\u{08}\u{00}\u{00}\u{00}\u{00}\u{03}"));
+        assert_eq!(u16::from_be_bytes([pdu[2], pdu[3]]) as usize, pdu.len());
+        assert_eq!(pdu[4] as usize, pdu.len() - 5);
+    }
+
+    /// Short/garbled PDUs must be left untouched rather than panicking.
+    #[test]
+    fn rewrite_x224_cookie_ignores_malformed_input() {
+        for mut junk in [
+            vec![],
+            vec![0x03],
+            vec![0x03, 0x00, 0x00, 0x13],
+            vec![0x03, 0x00, 0x00, 0x13, 0xFF],
+        ] {
+            rewrite_x224_cookie(&mut junk, "H");
+        }
     }
 
     /// `selected_security_protocol` must parse the big-endian wire format
