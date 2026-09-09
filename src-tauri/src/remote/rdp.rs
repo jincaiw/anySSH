@@ -54,32 +54,89 @@ mod protocol {
     pub const HYBRID: u32 = 0x0000_0002;
 }
 
-/// X.224 Connection Request built by [`x224_inspect_request`].
+/// Build the inspection CR variants. Two hard requirements learned from the
+/// field (29.1.0.122:33890 bastion):
 ///
-/// Two hard requirements learned from the field (29.1.0.122:33890 bastion):
+/// 1. Offer every modern protocol (RDP | SSL | HYBRID), not just
+///    PROTOCOL_RDP — servers that only accept SSL close mid-handshake with
+///    ECONNRESET otherwise; mstsc sends the same triple.
+/// 2. Carry the `Cookie: mstshash=<value>` negotiable data mstsc always
+///    sends: bastion proxies route/validate the channel by this cookie and
+///    silently close cookie-less requests (clean EOF, no bytes back).
 ///
-/// 1. We must offer every modern protocol (RDP | SSL | HYBRID), not just
-///    PROTOCOL_RDP — servers that only accept SSL (the Windows default since
-///    2012R2, and most bastions) close the connection mid-handshake with
-///    WSAECONNRESET / ECONNRESET otherwise. mstsc sends the same triple.
-/// 2. We must carry the same `Cookie: mstshash=<value>` negotiable data mstsc
-///    always sends. Bastion proxies route / validate the channel by this
-///    cookie and silently close cookie-less requests (clean EOF, no bytes
-///    back) — exactly the v0.14.39/v0.14.40 field failure.
-fn x224_inspect_request() -> Vec<u8> {
-    const NEG_REQ: [u8; 8] = [0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x03];
-    let cookie = format!("Cookie: mstshash={}\r\n", mstshash_value());
-    let cookie = cookie.as_bytes();
-    // X.224 CR TPDU: LI + code + dst-ref + src-ref + class = 1 + 6 header bytes.
-    let li = 6 + cookie.len() + NEG_REQ.len();
+/// Build an X.224 Connection Request PDU.
+///
+/// Layout: TPKT header, CR TPDU (LI, code 0xE0, five zero bytes), an
+/// optional `Cookie: mstshash=<value>` line, and an optional RDP_NEG_REQ
+/// (type 1, flags 0, len 8, big-endian requestedProtocols).
+fn build_x224_cr(cookie: Option<&str>, protocols: Option<u32>) -> Vec<u8> {
+    let mut var = Vec::new();
+    if let Some(c) = cookie {
+        var.extend_from_slice(format!("Cookie: mstshash={c}\r\n").as_bytes());
+    }
+    if let Some(p) = protocols {
+        var.extend_from_slice(&[0x01, 0x00, 0x08, 0x00]);
+        var.extend_from_slice(&p.to_be_bytes());
+    }
+    let li = 6 + var.len();
     let total = (4 + 1 + li) as u16;
     let mut pdu = Vec::with_capacity(total as usize);
     pdu.extend_from_slice(&[0x03, 0x00, (total >> 8) as u8, total as u8]);
     pdu.push(li as u8);
     pdu.extend_from_slice(&[0xE0, 0x00, 0x00, 0x00, 0x00, 0x00]);
-    pdu.extend_from_slice(cookie);
-    pdu.extend_from_slice(&NEG_REQ);
+    pdu.extend_from_slice(&var);
     pdu
+}
+
+/// mstsc uses the NetBIOS-style name: no domain dots, uppercase, <=15 chars.
+fn short_host(host: &str) -> String {
+    let s = host.split('.').next().unwrap_or(host).to_uppercase();
+    if s.is_empty() {
+        "ANYSSH".to_string()
+    } else {
+        s.chars().take(15).collect()
+    }
+}
+
+/// The X.224 CR variants anySSH probes on inspection, most-likely first.
+/// mstsc on the same Windows machine succeeds and both share the OS TCP
+/// stack, so the discriminator must be in the CR bytes — enumerate the sane
+/// space and remember which shape the server accepts.
+fn x224_inspect_variants() -> Vec<(&'static str, Vec<u8>)> {
+    let host = mstshash_value();
+    let short = short_host(&host);
+    vec![
+        ("host+SSL|HYBRID", build_x224_cr(Some(&host), Some(0x3))),
+        ("shost+SSL|HYBRID", build_x224_cr(Some(&short), Some(0x3))),
+        ("host+SSL", build_x224_cr(Some(&host), Some(0x1))),
+        (
+            "host+HYBRID|HYBRID_EX",
+            build_x224_cr(Some(&host), Some(0xA)),
+        ),
+        ("nocookie+SSL|HYBRID", build_x224_cr(None, Some(0x3))),
+        ("host+legacy-no-nego", build_x224_cr(Some(&host), None)),
+    ]
+}
+
+/// Index into [`x224_inspect_variants`] the upstream last accepted for a
+/// target, so the session path replays the exact same CR shape.
+fn variant_cache() -> &'static std::sync::Mutex<std::collections::HashMap<String, usize>> {
+    static MAP: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, usize>>> =
+        std::sync::OnceLock::new();
+    MAP.get_or_init(Default::default)
+}
+
+fn remember_variant(target: &str, idx: usize) {
+    if let Ok(mut m) = variant_cache().lock() {
+        m.insert(target.to_string(), idx);
+    }
+}
+
+fn winning_variant(target: &str) -> Option<usize> {
+    variant_cache()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(target).copied())
 }
 
 /// mstsc sends `Cookie: mstshash=<client hostname>` (uppercase NetBIOS-style
@@ -214,39 +271,98 @@ impl ServerCertVerifier for PinnedServer {
 }
 
 pub async fn inspect_certificate(host: &str, port: u16) -> Result<String, BridgeError> {
-    tokio::time::timeout(Duration::from_secs(30), async {
-        let mut tcp = TcpStream::connect((host, port))
-            .await
-            .map_err(|e| BridgeError::Upstream(e.to_string()))?;
-        tcp.write_all(&x224_inspect_request())
-            .await
-            .map_err(|e| BridgeError::Upstream(e.to_string()))?;
-        let x224_confirm = read_tpkt(&mut tcp).await?;
-        let selected = selected_security_protocol(&x224_confirm);
-        if selected == protocol::RDP {
-            // Server only accepts plain RDP (no TLS). We cannot get a
-            // certificate in that mode — surface a precise error so the
-            // modal can hint at enabling RDP-over-TLS on the target.
-            return Err(BridgeError::Upstream(
-                "server does not advertise RDP over TLS (PROTOCOL_SSL/PROTOCOL_HYBRID); \
-                 enable RDP-over-TLS on the target to inspect its certificate"
-                    .into(),
-            ));
+    // Every variant gets its own probe (6s reply budget each); the first
+    // shape the server answers is remembered and used for the TLS upgrade.
+    tokio::time::timeout(Duration::from_secs(90), async {
+        let variants = x224_inspect_variants();
+        let mut tried: Vec<String> = Vec::new();
+        for (idx, (name, cr)) in variants.iter().enumerate() {
+            match probe_variant(host, port, cr).await {
+                Ok((tcp, confirm)) => {
+                    let selected = selected_security_protocol(&confirm);
+                    if selected == protocol::RDP {
+                        tried.push(format!("[{name}: replied PROTOCOL_RDP (no TLS)]"));
+                        continue;
+                    }
+                    remember_variant(&format!("{host}:{port}"), idx);
+                    let tls = TlsConnector::from(pinned_client_config(None))
+                        .connect(server_name_for(host), tcp)
+                        .await;
+                    return match tls {
+                        Ok(tls) => {
+                            let cert = tls
+                                .get_ref()
+                                .1
+                                .peer_certificates()
+                                .and_then(|certs| certs.first())
+                                .ok_or_else(|| {
+                                    BridgeError::Upstream("server supplied no certificate".into())
+                                })?;
+                            Ok(certificate_fingerprint(cert.as_ref()))
+                        }
+                        Err(e) => Err(BridgeError::Upstream(format!(
+                            "variant '{name}' passed X.224 but TLS failed: {e}"
+                        ))),
+                    };
+                }
+                Err(detail) => tried.push(format!("[{name}: {detail}]")),
+            }
         }
-        let tls = TlsConnector::from(pinned_client_config(None))
-            .connect(server_name_for(host), tcp)
-            .await
-            .map_err(|e| BridgeError::Upstream(e.to_string()))?;
-        let cert = tls
-            .get_ref()
-            .1
-            .peer_certificates()
-            .and_then(|certs| certs.first())
-            .ok_or_else(|| BridgeError::Upstream("server supplied no certificate".into()))?;
-        Ok(certificate_fingerprint(cert.as_ref()))
+        Err(BridgeError::Upstream(format!(
+            "server closed every X.224 variant without a usable reply; tried {}",
+            tried.join(" ")
+        )))
     })
     .await
     .map_err(|_| BridgeError::Upstream("certificate inspection timed out".into()))?
+}
+
+/// One X.224 probe: connect, send CR, wait up to 6s for the confirm.
+/// Ok((stream, confirm)) keeps the stream for the TLS upgrade; Err(text)
+/// describes the failure with timing (FIN vs RST vs timeout).
+async fn probe_variant(host: &str, port: u16, cr: &[u8]) -> Result<(TcpStream, Vec<u8>), String> {
+    let started = std::time::Instant::now();
+    let mut tcp = TcpStream::connect((host, port))
+        .await
+        .map_err(|e| format!("connect failed: {e}"))?;
+    tcp.write_all(cr)
+        .await
+        .map_err(|e| format!("send failed: {e}"))?;
+    let mut buf = Vec::with_capacity(64);
+    let mut chunk = [0u8; 512];
+    loop {
+        match tokio::time::timeout(Duration::from_secs(6), tcp.read(&mut chunk)).await {
+            Err(_) => return Err("no reply in 6s".into()),
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::ConnectionReset => {
+                return Err(format!("RST after {:.2}s", started.elapsed().as_secs_f32()))
+            }
+            Ok(Err(e)) => {
+                return Err(format!(
+                    "read error after {:.2}s: {e}",
+                    started.elapsed().as_secs_f32()
+                ))
+            }
+            Ok(Ok(0)) => {
+                return Err(format!(
+                    "FIN (closed, 0 bytes) after {:.2}s",
+                    started.elapsed().as_secs_f32()
+                ))
+            }
+            Ok(Ok(n)) => {
+                buf.extend_from_slice(&chunk[..n]);
+                if buf.len() >= 4 {
+                    let total = u16::from_be_bytes([buf[2], buf[3]]) as usize;
+                    if !(4..=X224_MAX).contains(&total) {
+                        return Err(format!("implausible TPKT length {total}"));
+                    }
+                    if buf.len() >= total {
+                        buf.truncate(total);
+                        return Ok((tcp, buf));
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// TLS 1.2-only client config: CredSSP/NLA on Windows requires TLS 1.2
@@ -422,6 +538,13 @@ async fn run_handshake(
     // credentials are empty; rewrite it to the mstsc-style client hostname
     // before the request goes upstream (bastions route by it).
     rewrite_x224_cookie(&mut x224_request, &mstshash_value());
+    // If inspection found the CR shape this server accepts, replay it
+    // exactly instead of the connector's shape.
+    if let Some(idx) = winning_variant(&format!("{host}:{port}")) {
+        if let Some((_, cr)) = x224_inspect_variants().get(idx) {
+            x224_request = cr.clone();
+        }
+    }
 
     // ── 2. Dial upstream (route host, not the client-supplied destination —
     //       the route registration is the trust anchor) ────────────────────
@@ -604,8 +727,8 @@ mod tests {
         let err = inspect_certificate(&host, port).await.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("PROTOCOL_SSL") || msg.contains("does not advertise"),
-            "expected a 'no TLS' diagnostic, got: {msg}"
+            msg.contains("closed every X.224 variant") && msg.contains("PROTOCOL_RDP (no TLS)"),
+            "expected the aggregate 'no TLS' diagnostic, got: {msg}"
         );
     }
 
@@ -613,7 +736,7 @@ mod tests {
     /// bastions route by it and close cookie-less requests (29.1.0.122).
     #[test]
     fn inspect_request_carries_mstshash_cookie_and_valid_framing() {
-        let pdu = x224_inspect_request();
+        let pdu = x224_inspect_variants().remove(0).1;
         // TPKT: version 3 and total length in bytes 2-3.
         assert_eq!(pdu[0], 0x03);
         assert_eq!(u16::from_be_bytes([pdu[2], pdu[3]]) as usize, pdu.len());
@@ -633,7 +756,7 @@ mod tests {
     #[test]
     fn rewrite_x224_cookie_replaces_username_cookie() {
         // Connector shape: cookie from the username, then the NEG_REQ.
-        let mut pdu = x224_inspect_request();
+        let mut pdu = x224_inspect_variants().remove(0).1;
         let old_len = pdu.len();
         rewrite_x224_cookie(&mut pdu, "WIN-DEV-01");
         assert!(String::from_utf8_lossy(&pdu).contains("Cookie: mstshash=WIN-DEV-01\r\n"));
@@ -681,6 +804,61 @@ mod tests {
             selected_security_protocol(&X224_CONFIRM_PLAIN),
             protocol::RDP
         );
+    }
+
+    /// CR builder framing: TPKT/LI consistent, cookie before NEG_REQ,
+    /// protocols big-endian; legacy mode has no NEG_REQ at all.
+    #[test]
+    fn build_x224_cr_framing_and_variants() {
+        let pdu = build_x224_cr(Some("HOST"), Some(0x3));
+        assert_eq!(u16::from_be_bytes([pdu[2], pdu[3]]) as usize, pdu.len());
+        assert_eq!(pdu[4] as usize, pdu.len() - 5);
+        assert_eq!(pdu[5], 0xE0);
+        assert_eq!(&pdu[11..11 + 8], b"Cookie: ");
+        let text = String::from_utf8_lossy(&pdu);
+        assert!(text.contains("Cookie: mstshash=HOST\r\n"));
+        assert!(text.ends_with("\u{1}\u{0}\u{8}\u{0}\0\0\0\u{3}"));
+
+        let legacy = build_x224_cr(Some("HOST"), None);
+        assert!(!String::from_utf8_lossy(&legacy).ends_with('\u{3}'));
+
+        let bare = build_x224_cr(None, Some(0x1));
+        assert!(!String::from_utf8_lossy(&bare).contains("Cookie"));
+        assert_eq!(bare[4] as usize, 6 + 8);
+    }
+
+    /// short_host mimics mstsc: first label, uppercased, <=15 chars.
+    #[test]
+    fn short_host_is_netbios_style() {
+        assert_eq!(short_host("pc-office.corp.example.com"), "PC-OFFICE");
+        assert_eq!(short_host("plain"), "PLAIN");
+        assert_eq!(short_host(""), "ANYSSH");
+        let long = "a-very-long-hostname-value";
+        assert_eq!(short_host(long).len(), 15);
+    }
+
+    /// The variant list must be non-empty and each entry well-framed.
+    #[test]
+    fn inspect_variants_are_well_formed() {
+        let variants = x224_inspect_variants();
+        assert_eq!(variants.len(), 6);
+        for (name, pdu) in &variants {
+            assert_eq!(
+                u16::from_be_bytes([pdu[2], pdu[3]]) as usize,
+                pdu.len(),
+                "{name}"
+            );
+            assert_eq!(pdu[5], 0xE0, "{name}");
+        }
+    }
+
+    /// Winning-variant cache round-trip.
+    #[test]
+    fn variant_cache_roundtrip() {
+        let key = format!("cache-test-{}", std::process::id());
+        assert_eq!(winning_variant(&key), None);
+        remember_variant(&key, 3);
+        assert_eq!(winning_variant(&key), Some(3));
     }
 
     #[tokio::test]
