@@ -585,11 +585,13 @@ pub async fn deduplicate_name(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use russh::CryptoVec;
+    use bytes::Bytes;
 
-    fn data_msg(bytes: &[u8]) -> ChannelMsg {
+    fn data_msg(bytes: &'static [u8]) -> ChannelMsg {
+        // `ChannelMsg::Data` carries `bytes::Bytes` since russh 0.58
+        // (it used to be a `CryptoVec`).
         ChannelMsg::Data {
-            data: CryptoVec::from(bytes.to_vec()),
+            data: Bytes::from_static(bytes),
         }
     }
 
@@ -644,7 +646,7 @@ mod tests {
 
         fold_exec_msg(
             ChannelMsg::ExtendedData {
-                data: CryptoVec::from(b"oops".to_vec()),
+                data: Bytes::from_static(b"oops"),
                 ext: 1,
             },
             &mut out,

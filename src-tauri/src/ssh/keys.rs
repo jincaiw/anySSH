@@ -119,7 +119,7 @@ pub fn inspect_ssh_key(path: &str) -> Result<SshKeyInfo, SshError> {
         .map_err(|e| SshError::IoError(format!("Cannot read {path}: {e}")))?;
 
     // Try without passphrase first to validate format
-    let parse_result = russh_keys::decode_secret_key(&key_data, None);
+    let parse_result = russh::keys::decode_secret_key(&key_data, None);
     let needs_passphrase = if parse_result.is_err() {
         // Could be passphrase-protected — that's ok, it's still a valid key format
         // Check if it at least looks like a key file
@@ -346,13 +346,13 @@ fn pub_path_for(private_key_path: &Path) -> PathBuf {
 }
 
 /// Read the `.pub` file for a given private key path, parse the base64 key
-/// blob with `russh_keys`, and return the SHA-256 fingerprint formatted as
+/// blob with `russh::keys`, and return the SHA-256 fingerprint formatted as
 /// `"SHA256:<base64>"`.
 ///
 /// Returns `"unknown"` if:
 /// - No `.pub` file exists next to the private key
 /// - The file cannot be read or does not have the expected format
-/// - `russh_keys` fails to parse the key blob
+/// - `russh::keys` fails to parse the key blob
 fn get_key_fingerprint(private_key_path: &Path) -> String {
     let pub_path = pub_path_for(private_key_path);
     let Ok(content) = std::fs::read_to_string(&pub_path) else {
@@ -368,8 +368,11 @@ fn get_key_fingerprint(private_key_path: &Path) -> String {
         return "unknown".to_string();
     };
 
-    match russh_keys::parse_public_key_base64(b64) {
-        Ok(pub_key) => format!("SHA256:{}", pub_key.fingerprint()),
+    match russh::keys::parse_public_key_base64(b64) {
+        // `Fingerprint`'s `Display` already carries the `SHA256:` prefix.
+        Ok(pub_key) => pub_key
+            .fingerprint(russh::keys::HashAlg::Sha256)
+            .to_string(),
         Err(_) => "unknown".to_string(),
     }
 }

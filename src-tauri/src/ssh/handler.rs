@@ -1,6 +1,5 @@
-use async_trait::async_trait;
 use russh::client;
-use russh_keys::key::PublicKey;
+use russh::keys::{HashAlg, PublicKeyOrCertificate};
 use std::sync::{Arc, Mutex};
 
 /// Handles server events for a single SSH connection.
@@ -33,17 +32,28 @@ impl SshClientHandler {
     }
 }
 
-#[async_trait]
+// russh 0.63 declares `Handler` as a native async-trait (RPITIT), so the
+// `#[async_trait]` macro is gone — the impl is a plain `impl` block.
 impl client::Handler for SshClientHandler {
     type Error = russh::Error;
 
     /// Called when the server presents its host key. Authenticated connection
     /// paths accept only the fingerprint previously approved by the user.
+    ///
+    /// The argument is `PublicKeyOrCertificate` (0.63.0+): a host may send an
+    /// OpenSSH certificate instead of a bare key. Fingerprints are taken over
+    /// the plain public key in both cases, so trust decisions stay identical.
     async fn check_server_key(
         &mut self,
-        server_public_key: &PublicKey,
+        server_public_key: &PublicKeyOrCertificate,
     ) -> Result<bool, Self::Error> {
-        let fingerprint = format!("SHA256:{}", server_public_key.fingerprint());
+        // `Fingerprint`'s `Display` already carries the `SHA256:` prefix and
+        // the encoding matches russh 0.46's, so already-trusted host entries
+        // in SQLite keep matching after the upgrade.
+        let fingerprint = server_public_key
+            .public_key()
+            .fingerprint(HashAlg::Sha256)
+            .to_string();
         if let Ok(mut presented) = self.presented.lock() {
             *presented = Some(fingerprint.clone());
         }

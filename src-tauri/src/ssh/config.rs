@@ -1,7 +1,7 @@
 //! Shared russh client configuration.
 //!
 //! Every SSH connection in the app (terminal, SFTP, SCP, health checks) goes
-//! through [`russh_client_config`], which widens the stock russh 0.46
+//! through [`russh_client_config`], which widens the stock russh 0.63
 //! algorithm lists with legacy algorithms so older SSH servers can still be
 //! reached.
 
@@ -10,7 +10,8 @@ use std::borrow::Cow;
 use russh::cipher;
 use russh::client;
 use russh::kex;
-use russh::keys::key;
+use russh::keys::Algorithm;
+use russh::mac;
 use russh::Preferred;
 
 /// Legacy key-exchange algorithms appended after the modern defaults.
@@ -40,6 +41,16 @@ const LEGACY_CIPHERS: &[cipher::Name] = &[
     cipher::TRIPLE_DES_CBC,
 ];
 
+/// Legacy MACs appended after the modern defaults.
+///
+/// russh 0.63 removed every SHA-1 MAC from `Preferred::DEFAULT` — the stock
+/// list is now hmac-sha2-{256,512} (± ETM) only. A CBC cipher *requires* a
+/// MAC (there is no AEAD tag), so without these an old server that can only
+/// do `hmac-sha1` fails with "No common MAC algorithm" instead of
+/// connecting. Added explicitly and unconditionally: the list is append-only
+/// and de-duplicated, so a future russh that restores them is a no-op.
+const LEGACY_MACS: &[mac::Name] = &[mac::HMAC_SHA1, mac::HMAC_SHA1_ETM];
+
 /// Build the client config used for every SSH connection.
 ///
 /// The algorithm lists start from russh's defaults and append legacy
@@ -52,20 +63,33 @@ pub(crate) fn russh_client_config() -> client::Config {
     let mut kex_list: Vec<kex::Name> = default.kex.into_owned();
     kex_list.extend_from_slice(LEGACY_KEX);
 
-    let mut key_list: Vec<key::Name> = default.key.into_owned();
+    let mut key_list: Vec<Algorithm> = default.key.into_owned();
     // `ssh-rsa` (SHA-1 host-key signatures) — the only host-key algorithm many
-    // legacy servers with RSA host keys advertise.
-    key_list.push(key::SSH_RSA);
+    // legacy servers with RSA host keys advertise. russh 0.63's default list
+    // already ends with it, so only push when it is actually missing.
+    let ssh_rsa = Algorithm::Rsa { hash: None };
+    if !key_list.contains(&ssh_rsa) {
+        key_list.push(ssh_rsa);
+    }
 
     let mut cipher_list: Vec<cipher::Name> = default.cipher.into_owned();
     cipher_list.extend_from_slice(LEGACY_CIPHERS);
 
+    let mut mac_list: Vec<mac::Name> = default.mac.into_owned();
+    for name in LEGACY_MACS {
+        if !mac_list.contains(name) {
+            mac_list.push(*name);
+        }
+    }
+
     client::Config {
         preferred: Preferred {
             kex: Cow::Owned(kex_list),
+            // No OpenSSH certificate support: we never present or request one.
+            host_key_certificates: default.host_key_certificates,
             key: Cow::Owned(key_list),
             cipher: Cow::Owned(cipher_list),
-            mac: default.mac,
+            mac: Cow::Owned(mac_list),
             compression: default.compression,
         },
         ..Default::default()
@@ -83,7 +107,11 @@ mod tests {
         let cfg = russh_client_config();
 
         let kex_names: Vec<&str> = cfg.preferred.kex.iter().map(|n| n.as_ref()).collect();
-        assert_eq!(kex_names.first(), Some(&"curve25519-sha256"));
+        // russh 0.63 leads with the post-quantum hybrid `mlkem768x25519-sha256`.
+        // Pinned so a future default-table change is noticed, not silently
+        // inherited.
+        assert_eq!(kex_names.first(), Some(&"mlkem768x25519-sha256"));
+        assert!(kex_names.contains(&"curve25519-sha256"));
         assert!(kex_names.contains(&"diffie-hellman-group14-sha256"));
         assert!(kex_names.contains(&"diffie-hellman-group14-sha1"));
         assert!(kex_names.contains(&"diffie-hellman-group1-sha1"));
@@ -98,17 +126,36 @@ mod tests {
             .expect("modern kex present");
         assert!(c25519 < g1, "modern kex must precede legacy kex");
 
-        let key_names: Vec<&str> = cfg.preferred.key.iter().map(|n| n.as_ref()).collect();
-        assert_eq!(key_names.first(), Some(&"ssh-ed25519"));
-        assert_eq!(key_names.last(), Some(&"ssh-rsa"));
+        // `Preferred::key` is `&[ssh_key::Algorithm]` since 0.48, so names
+        // come from `Algorithm`'s `Display` rather than a `Name` constant.
+        let key_names: Vec<String> = cfg.preferred.key.iter().map(ToString::to_string).collect();
+        assert_eq!(key_names.first(), Some(&"ssh-ed25519".to_string()));
+        assert_eq!(key_names.last(), Some(&"ssh-rsa".to_string()));
+        // No duplicates: 0.63's default list already ends with `ssh-rsa`.
+        assert_eq!(
+            key_names.iter().filter(|n| *n == "ssh-rsa").count(),
+            1,
+            "ssh-rsa must appear exactly once"
+        );
 
         let cipher_names: Vec<&str> = cfg.preferred.cipher.iter().map(|n| n.as_ref()).collect();
         assert_eq!(cipher_names.first(), Some(&"chacha20-poly1305@openssh.com"));
         assert!(cipher_names.contains(&"aes256-cbc"));
         assert!(cipher_names.contains(&"3des-cbc"));
 
-        // MAC list already contains the SHA-1 variants legacy servers require.
+        // SHA-1 MACs are no longer in russh's defaults (0.63 dropped them),
+        // so they must be added back explicitly for CBC-mode legacy servers.
         let mac_names: Vec<&str> = cfg.preferred.mac.iter().map(|n| n.as_ref()).collect();
         assert!(mac_names.contains(&"hmac-sha1"));
+        assert!(mac_names.contains(&"hmac-sha1-etm@openssh.com"));
+        let sha1 = mac_names
+            .iter()
+            .position(|n| *n == "hmac-sha1")
+            .expect("legacy MAC present");
+        let sha2_etm = mac_names
+            .iter()
+            .position(|n| *n == "hmac-sha2-512-etm@openssh.com")
+            .expect("modern MAC present");
+        assert!(sha2_etm < sha1, "modern MAC must precede legacy MAC");
     }
 }

@@ -114,8 +114,8 @@ impl From<russh::Error> for SshError {
     }
 }
 
-impl From<russh_keys::Error> for SshError {
-    fn from(e: russh_keys::Error) -> Self {
+impl From<russh::keys::Error> for SshError {
+    fn from(e: russh::keys::Error) -> Self {
         SshError::KeyParseError(e.to_string())
     }
 }

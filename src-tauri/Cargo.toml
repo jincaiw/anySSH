@@ -28,8 +28,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 
 # SSH (pure Rust, async)
-russh = "0.46"
-russh-keys = "0.46"
+#
+# 0.63.3 merges the old `russh-keys` crate into `russh::keys`.
+# `default-features = false` + explicit crypto backend: `ring` keeps a single
+# crypto backend across the whole binary (rustls/tokio-rustls already use ring)
+# and avoids aws-lc-rs' NASM requirement on Windows x64.
+#   - `rsa`    : needed for `ssh_key::Algorithm::Rsa` (host key + private key)
+#   - `des`    : needed for `cipher::TRIPLE_DES_CBC` (legacy device support)
+#   - `flate2` : keeps zlib@openssh.com compression
+russh = { version = "0.63.3", default-features = false, features = ["ring", "rsa", "flate2", "des"] }
 async-trait = "0.1"
 
 # Character set conversion for terminal I/O (GBK/Big5/Shift_JIS/EUC-*/… ↔ UTF-8)
@@ -123,10 +130,6 @@ hostname = "0.4"
 
 [dev-dependencies]
 rcgen = "0.14.10"
-
-
-# Vendored russh: exposes the server's "authentications that can continue"
-# list from USERAUTH_FAILURE via Handle::take_last_auth_methods — upstream
-# 0.46 parses the list but discards it. Needed for auth diagnostics.
-[patch.crates-io]
-russh = { path = "vendor/russh" }
+# `ChannelMsg::Data` carries `bytes::Bytes` since russh 0.58; the exec tests
+# build payloads with `Bytes::from_static`.
+bytes = "1"

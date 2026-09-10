@@ -3,6 +3,7 @@ use crate::types::{
 };
 use dashmap::DashMap;
 use russh::client;
+use russh::keys::{HashAlg, PrivateKeyWithHashAlg};
 use std::future::Future;
 use std::pin::Pin;
 use std::sync::Arc;
@@ -552,19 +553,33 @@ impl SshManager {
         // especially) often key their auth state machine off this probe, and
         // its USERAUTH_FAILURE reply carries the methods the server is
         // willing to continue with — the single most useful diagnostic
-        // available, since russh otherwise discards it (vendored patch
-        // exposes it via `take_last_auth_methods`).
+        // available. (russh 0.46 discarded that list, which is why this repo
+        // used to carry a vendored patch; upstream now returns it in
+        // `AuthResult::Failure`.)
+        // Note: unknown method names are dropped when parsing the name-list,
+        // so a bastion advertising a proprietary method shows up as "no
+        // further methods" rather than under its real name.
         outcome.push("none probe (OpenSSH-style)");
         let server_methods: Option<Vec<String>> =
             match tokio::time::timeout(AUTH_STEP_TIMEOUT, handle.authenticate_none(username)).await
             {
-                Ok(Ok(true)) => {
-                    // Server authenticated us without any credential (must be a
-                    // wide-open host) — nothing else to do.
-                    outcome.authenticated = true;
-                    return Ok(outcome);
+                Ok(Ok(result)) => {
+                    if result.success() {
+                        // Server authenticated us without any credential (must
+                        // be a wide-open host) — nothing else to do.
+                        outcome.authenticated = true;
+                        return Ok(outcome);
+                    }
+                    // Since russh 0.50 `AuthResult::Failure` carries the
+                    // methods the server is willing to continue with, so the
+                    // vendored `take_last_auth_methods` patch is retired.
+                    match result {
+                        client::AuthResult::Failure {
+                            remaining_methods, ..
+                        } => Some(remaining_methods.iter().map(String::from).collect()),
+                        _ => None,
+                    }
                 }
-                Ok(Ok(false)) => handle.take_last_auth_methods(),
                 Ok(Err(e)) => return Err(send_err(e)),
                 Err(_) => {
                     outcome.push("none probe timed out");
@@ -664,7 +679,7 @@ impl SshManager {
         .await
         {
             Ok(r) => {
-                if r.map_err(send_err)? {
+                if r.map_err(send_err)?.success() {
                     outcome.authenticated = true;
                     Ok(outcome)
                 } else {
@@ -726,7 +741,7 @@ impl SshManager {
                 client::KeyboardInteractiveAuthResponse::Success => {
                     return Ok(KiAttemptResult::Authenticated);
                 }
-                client::KeyboardInteractiveAuthResponse::Failure => {
+                client::KeyboardInteractiveAuthResponse::Failure { .. } => {
                     outcome.push("keyboard-interactive rejected");
                     return Ok(KiAttemptResult::Rejected);
                 }
@@ -867,48 +882,45 @@ impl SshManager {
         key_data: &str,
         passphrase: Option<&str>,
     ) -> Result<AuthOutcome, SshError> {
-        let key_pair = russh_keys::decode_secret_key(key_data, passphrase)
-            .map_err(|e| SshError::KeyParseError(e.to_string()))?;
-        let key = Arc::new(key_pair);
+        let key = Arc::new(
+            russh::keys::decode_secret_key(key_data, passphrase)
+                .map_err(|e| SshError::KeyParseError(e.to_string()))?,
+        );
 
         let send_err = |e: russh::Error| SshError::AuthenticationFailed(e.to_string());
         let mut outcome = AuthOutcome::not_authenticated();
 
-        // First attempt: the key as decoded. russh-keys gives RSA keys the
-        // modern rsa-sha2-512 signature hash.
-        if handle
-            .authenticate_publickey(username, Arc::clone(&key))
-            .await
-            .map_err(send_err)?
-        {
-            outcome.authenticated = true;
-            return Ok(outcome);
-        }
-        outcome.push("publickey rsa-sha2-512 rejected");
-
-        // Legacy fallback for RSA keys: older servers commonly reject the
-        // rsa-sha2-512 signature algorithm outright and only accept
+        // Legacy fallback chain for RSA keys: older servers commonly reject
+        // the modern rsa-sha2-512 signature outright and only accept
         // rsa-sha2-256 — or, on vintage OpenSSH (< 7.2) and network
-        // appliances, only the original `ssh-rsa` (SHA-1). Retry down the
-        // chain. Non-RSA keys have no hash variants; `with_signature_hash`
-        // returns None for them.
-        if matches!(key.as_ref(), russh_keys::key::KeyPair::RSA { .. }) {
-            for (hash, label) in [
-                (russh_keys::key::SignatureHash::SHA2_256, "rsa-sha2-256"),
-                (russh_keys::key::SignatureHash::SHA1, "ssh-rsa (SHA-1)"),
-            ] {
-                if let Some(rekey) = key.with_signature_hash(hash) {
-                    if handle
-                        .authenticate_publickey(username, Arc::new(rekey))
-                        .await
-                        .map_err(send_err)?
-                    {
-                        outcome.authenticated = true;
-                        return Ok(outcome);
-                    }
-                    outcome.push(format!("publickey {label} rejected"));
-                }
+        // appliances, only the original `ssh-rsa` (SHA-1).
+        //
+        // ssh-key 0.7's `HashAlg` has no SHA-1 variant: for RSA,
+        // `PrivateKeyWithHashAlg::new` maps `None` to the legacy `ssh-rsa`.
+        // For every other key type the hash is ignored, so non-RSA keys get
+        // exactly one attempt (retrying them would resend identical bytes).
+        let mut attempts: Vec<(Option<HashAlg>, String)> = Vec::new();
+        if key.algorithm().is_rsa() {
+            attempts.push((Some(HashAlg::Sha512), "rsa-sha2-512".to_string()));
+            attempts.push((Some(HashAlg::Sha256), "rsa-sha2-256".to_string()));
+            attempts.push((None, "ssh-rsa (SHA-1)".to_string()));
+        } else {
+            attempts.push((None, key.algorithm().to_string()));
+        }
+
+        for (hash, label) in attempts {
+            let result = handle
+                .authenticate_publickey(
+                    username,
+                    PrivateKeyWithHashAlg::new(Arc::clone(&key), hash),
+                )
+                .await
+                .map_err(send_err)?;
+            if result.success() {
+                outcome.authenticated = true;
+                return Ok(outcome);
             }
+            outcome.push(format!("publickey {label} rejected"));
         }
 
         Ok(outcome)
