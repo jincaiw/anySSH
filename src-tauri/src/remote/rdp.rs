@@ -115,6 +115,7 @@ fn x224_inspect_variants() -> Vec<(&'static str, Vec<u8>)> {
         ),
         ("nocookie+SSL|HYBRID", build_x224_cr(None, Some(0x3))),
         ("host+legacy-no-nego", build_x224_cr(Some(&host), None)),
+        ("host+RDP-only(0x0)", build_x224_cr(Some(&host), Some(0x0))),
     ]
 }
 
@@ -206,6 +207,35 @@ fn selected_security_protocol(x224_confirm: &[u8]) -> u32 {
     protocol::SSL
 }
 
+/// Human-readable summary of an X.224 Connection Confirm, used by the
+/// variant-matrix diagnostic so one user test reveals the server's policy.
+fn describe_confirm(confirm: &[u8]) -> String {
+    let hex: String = confirm
+        .iter()
+        .take(32)
+        .map(|b| format!("{b:02x}"))
+        .collect::<Vec<_>>()
+        .join("");
+    let body = if confirm.len() >= 19 && confirm[11] == 0x02 {
+        let proto = u32::from_be_bytes([confirm[15], confirm[16], confirm[17], confirm[18]]);
+        match proto {
+            0 => "NEG_RSP selected=PROTOCOL_RDP (standard security, no TLS)".to_string(),
+            1 => "NEG_RSP selected=PROTOCOL_SSL".to_string(),
+            2 => "NEG_RSP selected=PROTOCOL_HYBRID (NLA)".to_string(),
+            other => format!("NEG_RSP selected=0x{other:x}"),
+        }
+    } else if confirm.len() >= 19 && confirm[11] == 0x03 {
+        let code = u32::from_be_bytes([confirm[15], confirm[16], confirm[17], confirm[18]]);
+        format!("RDP_NEG_FAILURE code=0x{code:x}")
+    } else {
+        format!(
+            "plain X.224 CC (len={}, no RDP_NEG_RSP) -> server wants standard RDP security",
+            confirm.len()
+        )
+    };
+    format!("{body}, hex[:32]={hex}")
+}
+
 /// Self-signed RDP certificates require explicit, persistent fingerprint trust.
 /// The inspection connection supplies no credentials; authenticated sessions
 /// require the exact fingerprint approved by the user.
@@ -276,40 +306,56 @@ pub async fn inspect_certificate(host: &str, port: u16) -> Result<String, Bridge
     tokio::time::timeout(Duration::from_secs(90), async {
         let variants = x224_inspect_variants();
         let mut tried: Vec<String> = Vec::new();
+        let mut saw_standard_rdp = false;
         for (idx, (name, cr)) in variants.iter().enumerate() {
-            match probe_variant(host, port, cr).await {
-                Ok((tcp, confirm)) => {
-                    let selected = selected_security_protocol(&confirm);
-                    if selected == protocol::RDP {
-                        tried.push(format!("[{name}: replied PROTOCOL_RDP (no TLS)]"));
-                        continue;
-                    }
-                    remember_variant(&format!("{host}:{port}"), idx);
-                    let tls = TlsConnector::from(pinned_client_config(None))
-                        .connect(server_name_for(host), tcp)
-                        .await;
-                    return match tls {
-                        Ok(tls) => {
-                            let cert = tls
-                                .get_ref()
-                                .1
-                                .peer_certificates()
-                                .and_then(|certs| certs.first())
-                                .ok_or_else(|| {
-                                    BridgeError::Upstream("server supplied no certificate".into())
-                                })?;
-                            Ok(certificate_fingerprint(cert.as_ref()))
-                        }
-                        Err(e) => Err(BridgeError::Upstream(format!(
-                            "variant '{name}' passed X.224 but TLS failed: {e}"
-                        ))),
-                    };
+            let (tcp, confirm) = match probe_variant(host, port, cr).await {
+                Ok(pair) => pair,
+                Err(detail) => {
+                    tried.push(format!("[{name}: {detail}]"));
+                    continue;
                 }
-                Err(detail) => tried.push(format!("[{name}: {detail}]")),
+            };
+            let described = describe_confirm(&confirm);
+            let nego_rsp = confirm.len() >= 19 && confirm[11] == 0x02;
+            let selected = selected_security_protocol(&confirm);
+            if !nego_rsp || selected == protocol::RDP {
+                if !nego_rsp {
+                    saw_standard_rdp = true;
+                }
+                tried.push(format!("[{name}: X.224 OK but {described}]"));
+                continue;
+            }
+            // Negotiated TLS/NLA — try the upgrade on this same connection.
+            let tls = TlsConnector::from(pinned_client_config(None))
+                .connect(server_name_for(host), tcp)
+                .await;
+            match tls {
+                Ok(tls) => {
+                    let cert = tls
+                        .get_ref()
+                        .1
+                        .peer_certificates()
+                        .and_then(|certs| certs.first())
+                        .ok_or_else(|| {
+                            BridgeError::Upstream("server supplied no certificate".into())
+                        })?;
+                    remember_variant(&format!("{host}:{port}"), idx);
+                    return Ok(certificate_fingerprint(cert.as_ref()));
+                }
+                Err(e) => tried.push(format!(
+                    "[{name}: X.224 OK ({described}) but TLS failed: {e}]"
+                )),
             }
         }
+        let conclusion = if saw_standard_rdp {
+            " — the server answers only a CR without RDP_NEG_REQ with a plain X.224 CC, \
+             i.e. it requires standard RDP security (which the IronRDP backend does not \
+             implement; mstsc still supports it)"
+        } else {
+            ""
+        };
         Err(BridgeError::Upstream(format!(
-            "server closed every X.224 variant without a usable reply; tried {}",
+            "no X.224 variant completed TLS; tried {}{conclusion}",
             tried.join(" ")
         )))
     })
@@ -727,7 +773,7 @@ mod tests {
         let err = inspect_certificate(&host, port).await.unwrap_err();
         let msg = err.to_string();
         assert!(
-            msg.contains("closed every X.224 variant") && msg.contains("PROTOCOL_RDP (no TLS)"),
+            msg.contains("no X.224 variant completed TLS") && msg.contains("selected=PROTOCOL_RDP"),
             "expected the aggregate 'no TLS' diagnostic, got: {msg}"
         );
     }
@@ -841,7 +887,7 @@ mod tests {
     #[test]
     fn inspect_variants_are_well_formed() {
         let variants = x224_inspect_variants();
-        assert_eq!(variants.len(), 6);
+        assert_eq!(variants.len(), 7);
         for (name, pdu) in &variants {
             assert_eq!(
                 u16::from_be_bytes([pdu[2], pdu[3]]) as usize,
@@ -850,6 +896,26 @@ mod tests {
             );
             assert_eq!(pdu[5], 0xE0, "{name}");
         }
+    }
+
+    /// Confirm summaries must distinguish NEG_RSP / NEG_FAILURE / plain CC.
+    #[test]
+    fn describe_confirm_classifies_replies() {
+        let ssl = describe_confirm(&X224_CONFIRM_SSL);
+        assert!(ssl.contains("selected=PROTOCOL_SSL"), "{ssl}");
+        assert!(ssl.contains("hex[:32]="), "{ssl}");
+
+        let plain = describe_confirm(&X224_CONFIRM_PLAIN);
+        assert!(plain.contains("selected=PROTOCOL_RDP"), "{plain}");
+
+        let bare_cc: [u8; 11] = [
+            0x03, 0x00, 0x00, 0x0b, 0x06, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        let s = describe_confirm(&bare_cc);
+        assert!(
+            s.contains("plain X.224 CC") && s.contains("standard RDP security"),
+            "{s}"
+        );
     }
 
     /// Winning-variant cache round-trip.
