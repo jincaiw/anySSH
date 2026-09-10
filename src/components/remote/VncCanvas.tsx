@@ -24,6 +24,16 @@ interface VncCanvasProps {
 type VncStatus = "connecting" | "connected" | "disconnected" | "error";
 
 /**
+ * Tauri rejects commands with an object (`BridgeError` serialises to
+ * `{ kind, message }`), so `String(err)` would render "[object Object]".
+ */
+function messageOf(err: unknown): string {
+  return err && typeof err === "object" && "message" in err
+    ? String((err as { message: unknown }).message)
+    : String(err);
+}
+
+/**
  * P3 VNC viewer. Mounts a noVNC RFB client that connects to the Rust
  * WebSocket bridge (`/vnc/<token>`, websockify semantics — raw VNC bytes
  * passthrough). Rendered persistently per tab (visibility toggled by the
@@ -51,6 +61,14 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost, onReconnect, 
   const [credentials, setCredentials] = useState<Record<string, string>>({});
   const statusRef = useRef(status);
   statusRef.current = status;
+  // `t` is rebuilt whenever the locale changes (useTranslation memoises on
+  // [locale]). Holding it in a ref keeps the connect effect below from
+  // re-running — and tearing down a live VNC session — on a language switch.
+  const tRef = useRef(t);
+  tRef.current = t;
+  // Credential types last requested by the server — restored after a
+  // `securityfailure` so a typo'd password can be corrected in place.
+  const lastCredentialTypesRef = useRef<string[]>([]);
 
   const pushClipboard = useCallback(async () => {
     const rfb = rfbRef.current;
@@ -71,7 +89,7 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost, onReconnect, 
     setErrorMsg("");
     setStatus("connecting");
     try { await onReconnect(); }
-    catch (error) { setErrorMsg(String(error)); setStatus("error"); }
+    catch (error) { setErrorMsg(messageOf(error)); setStatus("error"); }
   };
 
   // Connect once per (token, endpoint).
@@ -115,7 +133,7 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost, onReconnect, 
       rfb.addEventListener("serververification", (event) => {
         const publickey = (event.detail as { publickey?: Uint8Array }).publickey;
         if (!publickey) {
-          setErrorMsg(t("dashboard.vnc.verificationUnavailable"));
+          setErrorMsg(tRef.current("dashboard.vnc.verificationUnavailable"));
           setStatus("error");
           return;
         }
@@ -124,21 +142,33 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost, onReconnect, 
           const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join(":");
           setServerFingerprint(fingerprint);
         }).catch(error => {
-          if (!cancelled) { setErrorMsg(String(error)); setStatus("error"); }
+          if (!cancelled) { setErrorMsg(messageOf(error)); setStatus("error"); }
         });
       });
 
       rfb.addEventListener("disconnect", (e) => {
         if (cancelled) return;
         setCredentialTypes([]);
-        const clean = (e.detail as { clean?: boolean } | undefined)?.clean ?? true;
+        const detail = e.detail as { clean?: boolean; reason?: string } | undefined;
+        // noVNC reports *why* it dropped (protocol mismatch, server closed,
+        // unsupported security type…). Defaulting to `true` collapsed every
+        // one of those into a bare "disconnected" with nothing to act on.
+        const clean = detail?.clean ?? false;
+        if (!clean) {
+          setErrorMsg(detail?.reason || tRef.current("dashboard.vnc.statusError"));
+        }
         setStatus(clean ? "disconnected" : "error");
       });
 
       rfb.addEventListener("securityfailure", (e) => {
-        const reason =
-          (e.detail as { reason?: string } | undefined)?.reason ?? "";
+        const detail = e.detail as { reason?: string } | undefined;
+        const reason = detail?.reason ?? "";
         if (reason) setErrorMsg(reason);
+        // Re-offer the prompt (e.g. a wrong password) instead of leaving the
+        // user with a dead session and a manual reconnect.
+        if (lastCredentialTypesRef.current.length > 0) {
+          setCredentialTypes(lastCredentialTypesRef.current);
+        }
         setStatus("error");
       });
 
@@ -151,7 +181,7 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost, onReconnect, 
         ).catch(() => {/* clipboard unavailable */});
       });
     })().catch((error: unknown) => {
-      if (!cancelled) { setErrorMsg(String(error)); setStatus("error"); }
+      if (!cancelled) { setErrorMsg(messageOf(error)); setStatus("error"); }
     });
 
     return () => {
@@ -171,7 +201,7 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost, onReconnect, 
         }),
       );
     };
-  }, [wsUrl, sessionId, pushClipboard, t]);
+  }, [wsUrl, sessionId, pushClipboard]);
 
   // Local → remote clipboard on window focus (VNC has no push mechanism;
   // re-announcing the local clipboard when the window regains focus is the
@@ -211,6 +241,9 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost, onReconnect, 
           {credentialTypes.length > 0 && !serverFingerprint && <form className="w-72 space-y-3" onSubmit={(event) => {
             event.preventDefault();
             rfbRef.current?.sendCredentials(credentials);
+            // Remember what was asked for: a rejected password must be
+            // retryable in place, not require tearing the session down.
+            lastCredentialTypesRef.current = credentialTypes;
             setCredentials({});
             setCredentialTypes([]);
           }}>
