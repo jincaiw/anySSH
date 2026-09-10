@@ -303,8 +303,15 @@ pub async fn term_duplicate(
     if reconnect {
         state.stop_for_reconnect(&source_session_id).await;
     }
+    // TODO: 80x24 is a placeholder — the frontend fits the terminal and
+    // sends `term_resize` ~150ms later, but a full-screen program that starts
+    // immediately renders at the wrong size first. Passing the real cols/rows
+    // through this command would fix it.
     let result = term_open(params, 80, 24, state.clone(), db, app_handle).await;
-    if reconnect && result.is_ok() {
+    if reconnect {
+        // Always drop the source. On success the new session has replaced it;
+        // on failure `stop_for_reconnect` re-registered a *closed* handle that
+        // would otherwise linger forever and make the id look alive.
         state.close(&source_session_id).await;
     }
     result

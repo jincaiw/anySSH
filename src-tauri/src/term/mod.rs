@@ -28,6 +28,7 @@ pub mod telnet;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, RwLock};
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::mpsc;
 use tokio::task::JoinHandle;
@@ -36,6 +37,18 @@ use crate::ssh::encoding::StreamConverter;
 use crate::ssh::sessionlog::{SessionLogContext, SessionLogger};
 use crate::types::ConnectionStatus;
 use dashmap::DashMap;
+
+/// A backend write that blocks this long is treated as a dead connection.
+///
+/// `tokio::select!` cannot cancel a future once a branch has been taken, so
+/// awaiting `io.write()` (or `io.resize()`) directly inside the branch body
+/// would freeze the whole loop — including the `Close` arm — whenever the
+/// backend stops draining (full socket/PTY buffer, half-open TCP link). The
+/// timeout is what keeps `term_close` able to interrupt a wedged session.
+const IO_OP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long `TermHandle::close()` waits for the loop before aborting it.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 // ---------------------------------------------------------------------------
 // Event payloads (`term:output` / `term:status`)
@@ -322,8 +335,16 @@ impl TermHandle {
     async fn close(&mut self) {
         self.logger.stop();
         let _ = self.cmd_tx.send(TermCmd::Close);
-        if let Some(task) = self.reader_task.take() {
-            let _ = task.await;
+        if let Some(mut task) = self.reader_task.take() {
+            // Race on `&mut task` (JoinHandle is Unpin) so the handle stays
+            // ours and can be aborted — `timeout` by value would drop it and
+            // leave the loop running detached.
+            if tokio::time::timeout(CLOSE_TIMEOUT, &mut task)
+                .await
+                .is_err()
+            {
+                task.abort();
+            }
         }
     }
 }
@@ -391,9 +412,10 @@ pub fn spawn_session(
                     let n = n.unwrap_or(0);
                     let data = out_conv.decode_to_utf8(&buf[..n]);
                     if task_logger.is_active() {
-                        if let Ok(text) = std::str::from_utf8(&data) {
-                            task_logger.on_output(text);
-                        }
+                        // A chunk boundary can split a multi-byte sequence;
+                        // the terminal renderer reassembles it, so the log
+                        // must not drop the whole chunk over it.
+                        task_logger.on_output(&String::from_utf8_lossy(&data));
                     }
                     let payload = TermOutputPayload {
                         session_id: reader_session_id.clone(),
@@ -406,12 +428,20 @@ pub fn spawn_session(
                         Some(TermCmd::Start) => started = true,
                         Some(TermCmd::Data(data)) => {
                             if task_logger.is_active() {
-                                if let Ok(text) = std::str::from_utf8(&data) {
-                                    task_logger.on_input(text);
-                                }
+                                task_logger.on_input(&String::from_utf8_lossy(&data));
                             }
                             let data = in_conv.encode_from_utf8(&data, false);
-                            if let Err(e) = io.write(&data).await {
+                            // Bounded: see `IO_OP_TIMEOUT`.
+                            let outcome =
+                                tokio::time::timeout(IO_OP_TIMEOUT, io.write(&data)).await;
+                            let result = match outcome {
+                                Ok(r) => r,
+                                Err(_) => Err(std::io::Error::new(
+                                    std::io::ErrorKind::TimedOut,
+                                    "backend write timed out",
+                                )),
+                            };
+                            if let Err(e) = result {
                                 let payload = TermStatusPayload {
                                     session_id: reader_session_id.clone(),
                                     status: ConnectionStatus::Error(e.to_string()),
@@ -421,7 +451,12 @@ pub fn spawn_session(
                             }
                         }
                         Some(TermCmd::Resize { cols, rows }) => {
-                            io.resize(cols, rows).await;
+                            // Bounded for the same reason as the write above.
+                            let _ = tokio::time::timeout(
+                                IO_OP_TIMEOUT,
+                                io.resize(cols, rows),
+                            )
+                            .await;
                         }
                         Some(TermCmd::SetEncoding { label }) => {
                             out_conv = StreamConverter::new(&label);

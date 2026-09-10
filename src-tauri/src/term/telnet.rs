@@ -330,12 +330,18 @@ impl LoginRunner {
                 LoginAction::Send(send.clone())
             }
             Some(re) => {
-                if re.is_match(&self.buffer) {
-                    self.index += 1;
-                    self.buffer.clear();
-                    LoginAction::Send(send.clone())
-                } else {
-                    LoginAction::Wait
+                match re.find(&self.buffer) {
+                    Some(m) => {
+                        self.index += 1;
+                        // Drop only up to the end of the match. Devices
+                        // routinely emit "Username:" and the following
+                        // "Password:" in a single write, so clearing the
+                        // whole buffer discarded the next prompt and the
+                        // script stalled until it timed out.
+                        self.buffer.drain(..m.end());
+                        LoginAction::Send(send.clone())
+                    }
+                    None => LoginAction::Wait,
                 }
             }
         }
@@ -405,6 +411,12 @@ impl TelnetIo {
             rows,
         };
 
+        // Offer window-size negotiation up front. Plenty of devices (network
+        // gear, embedded telnetd) never send `DO NAWS` on their own, and a
+        // purely reactive client leaves them — and their full-screen TUIs —
+        // stuck at the 80x24 the frontend opened with.
+        let _ = io.write_half.write_all(&command(WILL, OPT_NAWS)).await;
+
         // Drain immediate-send steps (empty expect) right after connect.
         if io.login.is_some() {
             io.drain_immediate_sends().await?;
@@ -418,7 +430,11 @@ impl TelnetIo {
         while let Some(action) = self.login.as_mut().map(|login| login.step(&[])) {
             match action {
                 LoginAction::Send(bytes) => {
-                    self.write_half.write_all(&bytes).await?;
+                    // Scripted bytes need the same escaping as typed input:
+                    // a literal 0xFF (e.g. from a `\xFF` escape in the
+                    // password) would otherwise be parsed by the server as
+                    // the start of a command.
+                    self.write_half.write_all(&iac_escape(&bytes)).await?;
                     self.write_half.write_all(b"\r").await?;
                 }
                 LoginAction::Wait => break,
@@ -433,13 +449,24 @@ impl TelnetIo {
 
     /// Apply the negotiation policy; returns the bytes to send (if any).
     fn reply_for_command(&mut self, cmd: u8, opt: u8) -> Option<Vec<u8>> {
-        if cmd == DO && opt == OPT_NAWS {
-            // Acknowledge and push the current size right away — many
-            // devices only start layout correctly after this first NAWS.
-            self.naws_negotiated = true;
-            let mut out = command(WILL, opt);
-            out.extend_from_slice(&subneg(OPT_NAWS, &naws_payload(self.cols, self.rows)));
-            return Some(out);
+        if opt == OPT_NAWS {
+            match cmd {
+                DO => {
+                    // Acknowledge and push the current size right away — many
+                    // devices only start layout correctly after this first NAWS.
+                    self.naws_negotiated = true;
+                    let mut out = command(WILL, opt);
+                    out.extend_from_slice(&subneg(OPT_NAWS, &naws_payload(self.cols, self.rows)));
+                    return Some(out);
+                }
+                DONT => {
+                    // The server refused window-size reports; stop sending
+                    // them (previously we kept firing NAWS into the void).
+                    self.naws_negotiated = false;
+                    return Some(command(WONT, opt));
+                }
+                _ => {}
+            }
         }
         policy_reply(cmd, opt).map(|(c, o)| command(c, o))
     }
@@ -504,7 +531,7 @@ impl TermIo for TelnetIo {
                 Some(login) => {
                     let sent = match login.step(&data) {
                         LoginAction::Send(bytes) => {
-                            self.write_half.write_all(&bytes).await?;
+                            self.write_half.write_all(&iac_escape(&bytes)).await?;
                             self.write_half.write_all(b"\r").await?;
                             true
                         }
@@ -526,9 +553,14 @@ impl TermIo for TelnetIo {
                     return Ok(n);
                 }
                 None => {
-                    let c = buf.len().min(data.len());
-                    buf[..c].copy_from_slice(&data[..c]);
-                    return Ok(c);
+                    // Stash in `pending` rather than truncating: `data` can
+                    // be larger than the caller's buffer, and the tail would
+                    // otherwise be dropped on the floor.
+                    self.pending.extend_from_slice(&data);
+                    let n = buf.len().min(self.pending.len());
+                    buf[..n].copy_from_slice(&self.pending[..n]);
+                    self.pending.drain(..n);
+                    return Ok(n);
                 }
             }
         }
@@ -729,7 +761,9 @@ mod tests {
         let server = tokio::spawn(async move {
             let (mut stream, _) = listener.accept().await.unwrap();
             stream.write_all(b"login:").await.unwrap();
-            let mut received = [0u8; 10];
+            // 3 bytes of `IAC WILL NAWS` (the client now offers window-size
+            // negotiation up front) + the 10 script bytes.
+            let mut received = [0u8; 13];
             tokio::time::timeout(Duration::from_secs(1), stream.read_exact(&mut received))
                 .await
                 .expect("client stalled waiting for more server output")
@@ -751,7 +785,14 @@ mod tests {
             .unwrap();
         let mut output = [0u8; 32];
         assert_eq!(io.read(&mut output).await.unwrap(), 6);
-        assert_eq!(&server.await.unwrap(), b"user\rnext\r");
+        // Pins two behaviours at once: NAWS is offered without waiting for
+        // the server to ask, and the script's immediate-send step still
+        // chains off a matched step with no further server output.
+        assert_eq!(
+            &server.await.unwrap(),
+            b"\xff\xfb\x1fuser\rnext\r",
+            "expected IAC WILL NAWS followed by the scripted credentials"
+        );
     }
 
     #[test]

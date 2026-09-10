@@ -35,7 +35,11 @@ const READ_TIMEOUT: Duration = Duration::from_millis(50);
 
 pub struct SerialIo {
     writer: Box<dyn serialport::SerialPort>,
-    rx: mpsc::Receiver<Vec<u8>>,
+    /// `Ok(..)` carries a chunk; `Err(..)` the reader's terminal failure, so
+    /// an unplugged adapter is reported as such instead of a clean EOF.
+    rx: mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    /// Bytes left over when a chunk was larger than the caller's buffer.
+    pending: Vec<u8>,
     stop: Arc<AtomicBool>,
     reader_thread: Option<std::thread::JoinHandle<()>>,
 }
@@ -76,7 +80,7 @@ impl SerialIo {
             .try_clone()
             .map_err(|e| TermError::Io(format!("clone {path}: {e}")))?;
 
-        let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
+        let (tx, rx) = mpsc::channel::<std::io::Result<Vec<u8>>>(64);
         let stop = Arc::new(AtomicBool::new(false));
         let reader_stop = stop.clone();
         let reader_thread = std::thread::Builder::new()
@@ -87,7 +91,7 @@ impl SerialIo {
                     match reader.read(&mut buf) {
                         Ok(0) => break,
                         Ok(n) => {
-                            if tx.blocking_send(buf[..n].to_vec()).is_err() {
+                            if tx.blocking_send(Ok(buf[..n].to_vec())).is_err() {
                                 break; // session loop gone
                             }
                         }
@@ -96,9 +100,16 @@ impl SerialIo {
                             // (io::Read surfaces serialport errors as
                             // io::Error with the kind carried over.)
                             IoErrorKind::TimedOut | IoErrorKind::WouldBlock => continue,
-                            // Adapter unplugged (NoDevice maps to NotFound).
-                            IoErrorKind::NotFound => break,
-                            _ => break,
+                            // Everything else is terminal (adapter unplugged,
+                            // permission revoked, device reset). Hand the real
+                            // error to the session loop instead of collapsing
+                            // it into a clean EOF — otherwise the UI shows a
+                            // plain "disconnected" with no way to tell the
+                            // user their cable came loose.
+                            _ => {
+                                let _ = tx.blocking_send(Err(e));
+                                break;
+                            }
                         },
                     }
                 }
@@ -108,6 +119,7 @@ impl SerialIo {
         Ok(Self {
             writer: port,
             rx,
+            pending: Vec::new(),
             stop,
             reader_thread: Some(reader_thread),
         })
@@ -117,12 +129,25 @@ impl SerialIo {
 #[async_trait::async_trait]
 impl TermIo for SerialIo {
     async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // Drain what the previous call could not fit first — truncating here
+        // would silently drop bytes.
+        if !self.pending.is_empty() {
+            let n = self.pending.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.pending[..n]);
+            self.pending.drain(..n);
+            return Ok(n);
+        }
         match self.rx.recv().await {
-            Some(chunk) => {
+            Some(Ok(chunk)) => {
                 let n = chunk.len().min(buf.len());
                 buf[..n].copy_from_slice(&chunk[..n]);
+                if n < chunk.len() {
+                    self.pending.extend_from_slice(&chunk[n..]);
+                }
                 Ok(n)
             }
+            // Reader thread reported why it stopped (unplugged, lost perms…).
+            Some(Err(e)) => Err(std::io::Error::new(e.kind(), e.to_string())),
             None => Ok(0), // reader thread ended: unplugged or closed
         }
     }

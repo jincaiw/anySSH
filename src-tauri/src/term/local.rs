@@ -20,9 +20,14 @@ use super::{TermError, TermIo};
 pub struct LocalPtyIo {
     writer: Box<dyn Write + Send>,
     master: Box<dyn MasterPty + Send>,
-    /// Output from the blocking reader thread. `None`-terminates when the
-    /// child exits (EOF) or the thread dies.
-    rx: mpsc::Receiver<Vec<u8>>,
+    /// Output from the blocking reader thread. `Ok(..)` carries a chunk,
+    /// `Err(..)` the reader's terminal failure (distinct from a clean EOF,
+    /// which the session loop must be able to tell apart for the UI), and a
+    /// closed channel means "child exited / thread gone".
+    rx: mpsc::Receiver<std::io::Result<Vec<u8>>>,
+    /// Bytes left over when a chunk was larger than the caller's buffer.
+    /// Without this the tail would be dropped (see `read`).
+    pending: Vec<u8>,
     /// Kept so `shutdown` can kill the shell; `None` after shutdown.
     child: Option<Box<dyn Child + Send + Sync>>,
 }
@@ -82,16 +87,23 @@ impl LocalPtyIo {
 
         // Blocking reader → async channel. Capacity 64 chunks (~512 KiB) is
         // plenty of burst buffer for prompt/MOTD output.
-        let (tx, rx) = mpsc::channel::<Vec<u8>>(64);
+        let (tx, rx) = mpsc::channel::<std::io::Result<Vec<u8>>>(64);
         std::thread::spawn(move || {
             let mut buf = vec![0u8; 8192];
             loop {
                 match reader.read(&mut buf) {
-                    Ok(0) | Err(_) => break,
+                    Ok(0) => break, // EOF: closing the channel signals it
                     Ok(n) => {
-                        if tx.blocking_send(buf[..n].to_vec()).is_err() {
+                        if tx.blocking_send(Ok(buf[..n].to_vec())).is_err() {
                             break; // session loop gone — stop reading
                         }
+                    }
+                    // Report *why* the PTY died instead of collapsing it into
+                    // a clean EOF (EIO is what a closed slave / pty collapse
+                    // actually looks like).
+                    Err(e) => {
+                        let _ = tx.blocking_send(Err(e));
+                        break;
                     }
                 }
             }
@@ -101,6 +113,7 @@ impl LocalPtyIo {
             writer,
             master,
             rx,
+            pending: Vec::new(),
             child: Some(child),
         })
     }
@@ -109,12 +122,27 @@ impl LocalPtyIo {
 #[async_trait]
 impl TermIo for LocalPtyIo {
     async fn read(&mut self, buf: &mut [u8]) -> std::io::Result<usize> {
+        // Drain whatever the previous call could not fit — the loop reuses an
+        // 8 KiB buffer, but a caller is free to pass a smaller one.
+        if !self.pending.is_empty() {
+            let n = self.pending.len().min(buf.len());
+            buf[..n].copy_from_slice(&self.pending[..n]);
+            self.pending.drain(..n);
+            return Ok(n);
+        }
         match self.rx.recv().await {
-            Some(chunk) => {
+            Some(Ok(chunk)) => {
                 let n = chunk.len().min(buf.len());
                 buf[..n].copy_from_slice(&chunk[..n]);
+                // Keep the tail; dropping it silently corrupted output for
+                // any buffer smaller than the chunk.
+                if n < chunk.len() {
+                    self.pending.extend_from_slice(&chunk[n..]);
+                }
                 Ok(n)
             }
+            // Reader thread reported the PTY failure (EIO / device gone).
+            Some(Err(e)) => Err(e),
             // Reader thread ended: child exited or channel closed.
             None => Ok(0),
         }
@@ -136,14 +164,61 @@ impl TermIo for LocalPtyIo {
     }
 
     async fn shutdown(&mut self) {
-        if let Some(mut child) = self.child.take() {
-            let _ = child.kill();
+        let Some(mut child) = self.child.take() else {
+            return;
+        };
+        // Unblock the reader thread even if the child somehow survives: a
+        // closed receiver makes `blocking_send` fail and the thread exit.
+        self.rx.close();
+
+        let pid = child.process_id();
+        // portable-pty's `kill()` sends SIGHUP on Unix — a shell that traps it
+        // (or one with a stopped job) survives, and the master never sees EOF.
+        let _ = child.kill();
+
+        // Poll instead of blocking on `wait()`: the old code awaited
+        // `spawn_blocking(child.wait())` with no timeout, so an unkillable
+        // shell pinned `term_close` (and one blocking thread) forever.
+        const GRACE: std::time::Duration = std::time::Duration::from_millis(100);
+        let mut exited = false;
+        for _ in 0..20 {
+            match child.try_wait() {
+                Ok(Some(_)) => {
+                    exited = true;
+                    break;
+                }
+                Ok(None) => tokio::time::sleep(GRACE).await,
+                Err(_) => break,
+            }
+        }
+
+        if !exited {
+            // Escalate. Foreground jobs (top, vim, an editor's shell-out) hold
+            // the PTY's slave end open, so killing only the shell leaves the
+            // master — and the reader thread — alive after the tab is closed.
+            // portable-pty's spawn calls `setsid()`, so pid == pgid == sid and
+            // a negative pid reaches the whole group.
+            kill_process_group(pid);
             let _ = tokio::task::spawn_blocking(move || child.wait()).await;
         }
         // Dropping `self` drops the master, which closes the PTY and ends
         // the reader thread.
     }
 }
+
+/// SIGKILL the child's whole process group. No-op off Unix (Windows'
+/// `TerminateProcess` already kills the job, and ConPTY tracks it).
+#[cfg(unix)]
+fn kill_process_group(pid: Option<u32>) {
+    if let Some(pid) = pid {
+        unsafe {
+            libc::kill(-(pid as i32), libc::SIGKILL);
+        }
+    }
+}
+
+#[cfg(not(unix))]
+fn kill_process_group(_pid: Option<u32>) {}
 
 /// Shell resolution (plan §5.3): explicit override → `$SHELL` → zsh → bash →
 /// sh on Unix; pwsh → powershell → cmd (resolved against PATH) on Windows.
