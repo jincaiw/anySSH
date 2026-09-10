@@ -396,8 +396,12 @@ pub async fn inspect_certificate(host: &str, port: u16) -> Result<String, Bridge
 /// describes the failure with timing (FIN vs RST vs timeout).
 async fn probe_variant(host: &str, port: u16, cr: &[u8]) -> Result<(TcpStream, Vec<u8>), String> {
     let started = std::time::Instant::now();
-    let mut tcp = TcpStream::connect((host, port))
+    // Bounded: an unreachable/blackholed host would otherwise rely on the OS
+    // connect timeout and burn the caller's whole 90s inspection budget with
+    // a message that names no host.
+    let mut tcp = tokio::time::timeout(Duration::from_secs(10), TcpStream::connect((host, port)))
         .await
+        .map_err(|_| format!("connect to {host}:{port} timed out after 10s"))?
         .map_err(|e| format!("connect failed: {e}"))?;
     tcp.write_all(cr)
         .await
@@ -521,7 +525,17 @@ pub async fn handle_rdp_client(
             result.unwrap_or_else(|_| Err(BridgeError::Upstream("RDP handshake timed out".into()))),
     };
 
-    if let Err(_err) = result {
+    if let Err(err) = result {
+        // The RDCleanPath error PDU carries no text, so the client can only
+        // render a generic failure. Without this line a changed certificate,
+        // a TLS error and a plain refused connection are indistinguishable in
+        // the field — log the actual cause before telling the client.
+        tracing::warn!(
+            host = %host,
+            port = port,
+            error = %err,
+            "RDP handshake failed"
+        );
         // Tell the WASM client why it failed (it surfaces RDCleanPathErr).
         let error_pdu = ironrdp_rdcleanpath::RDCleanPathPdu::new_general_error().to_der();
         if let Ok(bytes) = error_pdu {

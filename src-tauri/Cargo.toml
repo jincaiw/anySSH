@@ -115,6 +115,11 @@ chrono = { version = "0.4", default-features = false, features = ["clock"] }
 # Unix) for the `term` layer's local backend.
 portable-pty = "0.9"
 
+# Local terminal shutdown: portable-pty's `Child::kill()` only sends SIGHUP to
+# the shell (which it may ignore) and never reaches foreground jobs. We need
+# `kill(2)` on the process group to guarantee the PTY's slave end is released.
+libc = "0.2"
+
 # Telnet login scripts (P1b): byte-oriented regex for the expect steps.
 regex = "1"
 

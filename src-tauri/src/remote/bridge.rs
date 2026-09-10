@@ -13,7 +13,10 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
 use tokio::task::JoinHandle;
 use tokio_tungstenite::tungstenite::handshake::server::{ErrorResponse, Request, Response};
+use tokio_tungstenite::tungstenite::protocol::frame::coding::CloseCode;
+use tokio_tungstenite::tungstenite::protocol::CloseFrame;
 use tokio_tungstenite::tungstenite::Message;
+use tokio_tungstenite::WebSocketStream;
 use tokio_util::sync::CancellationToken;
 
 const IDLE_SHUTDOWN: Duration = Duration::from_secs(30);
@@ -84,8 +87,23 @@ pub struct WsEndpoint {
 // Shared state
 // ---------------------------------------------------------------------------
 
+/// A route waiting for its client to connect.
+pub(crate) struct PendingRoute {
+    pub(crate) route: Route,
+    /// When the token was handed out. See [`PENDING_TOKEN_TTL`].
+    pub(crate) created: Instant,
+}
+
+/// How long a token stays routable without a client connecting.
+///
+/// A client that never shows up (WASM load failure, tab killed right after
+/// `*_open`) used to leave its entry in `pending` forever, which kept the
+/// "not idle" check false and pinned the loopback listener — and its port —
+/// for the rest of the process lifetime.
+const PENDING_TOKEN_TTL: Duration = Duration::from_secs(60);
+
 pub(crate) struct Shared {
-    pub(crate) pending: DashMap<String, Route>,
+    pub(crate) pending: DashMap<String, PendingRoute>,
     pub(crate) active: DashMap<String, CancellationToken>,
     last_activity: Mutex<Instant>,
 }
@@ -95,6 +113,12 @@ impl Shared {
         if let Ok(mut t) = self.last_activity.lock() {
             *t = Instant::now();
         }
+    }
+
+    /// Drop tokens whose client never connected (see [`PENDING_TOKEN_TTL`]).
+    fn expire_pending(&self) {
+        self.pending
+            .retain(|_, p| p.created.elapsed() < PENDING_TOKEN_TTL);
     }
 }
 
@@ -136,9 +160,13 @@ impl BridgeManager {
     /// webview client.
     pub fn open_vnc(&self, host: String, port: u16, listener_port: u16) -> WsEndpoint {
         let token = new_token();
-        self.shared
-            .pending
-            .insert(token.clone(), Route::Vnc { host, port });
+        self.shared.pending.insert(
+            token.clone(),
+            PendingRoute {
+                route: Route::Vnc { host, port },
+                created: Instant::now(),
+            },
+        );
         self.shared.touch();
         WsEndpoint {
             ws_url: format!("ws://127.0.0.1:{listener_port}/vnc/{token}"),
@@ -158,10 +186,13 @@ impl BridgeManager {
         let token = new_token();
         self.shared.pending.insert(
             token.clone(),
-            Route::Rdp {
-                host,
-                port,
-                fingerprint,
+            PendingRoute {
+                route: Route::Rdp {
+                    host,
+                    port,
+                    fingerprint,
+                },
+                created: Instant::now(),
             },
         );
         self.shared.touch();
@@ -174,10 +205,10 @@ impl BridgeManager {
     /// Drop a pending token or cancel a live session.
     pub fn close_session(&self, token: &str) -> Result<(), BridgeError> {
         self.shared.touch();
-        if let Some((_, route)) = self.shared.pending.remove(token) {
-            // A token nobody connected to yet — cancel its upstream dial if
-            // one raced in (dialer holds no map entry until connected).
-            let _ = route;
+        if self.shared.pending.remove(token).is_some() {
+            // A token nobody connected to yet — dropping it is enough; the
+            // only other thing holding it (a racing dialer) keys off the same
+            // map entry.
             return Ok(());
         }
         if let Some((_, cancel)) = self.shared.active.remove(token) {
@@ -260,6 +291,8 @@ async fn idle_watchdog(shared: Arc<Shared>, shutdown: CancellationToken) {
             .last_activity
             .lock()
             .unwrap_or_else(|p| p.into_inner());
+        // Tokens whose client never connected must not keep the listener up.
+        shared.expire_pending();
         if shared.pending.is_empty()
             && shared.active.is_empty()
             && idle_since.elapsed() >= IDLE_SHUTDOWN
@@ -294,6 +327,16 @@ async fn accept_loop(
     }
 }
 
+/// Close a WebSocket with a reason the client can surface, then let it drop.
+async fn close_with_reason(mut ws: WebSocketStream<TcpStream>, reason: String) {
+    let _ = ws
+        .close(Some(CloseFrame {
+            code: CloseCode::Error,
+            reason: reason.into(),
+        }))
+        .await;
+}
+
 /// Handshake, resolve the one-time token, then pump bytes both ways until
 /// either side closes.
 // tungstenite's accept_hdr_async callback error type (ErrorResponse) is an
@@ -324,15 +367,15 @@ async fn handle_connection(stream: TcpStream, shared: Arc<Shared>) {
     // Route by path: /vnc/<token> (byte passthrough) or /rdp/<token>
     // (RDCleanPath proxy, see rdp.rs).
     let (token, route) = if let Some(token) = path.strip_prefix("/vnc/") {
-        let Some((_, route)) = shared.pending.remove(token) else {
+        let Some((_, pending)) = shared.pending.remove(token) else {
             return;
         };
-        (token, route)
+        (token, pending.route)
     } else if let Some(token) = path.strip_prefix("/rdp/") {
-        let Some((_, route)) = shared.pending.remove(token) else {
+        let Some((_, pending)) = shared.pending.remove(token) else {
             return;
         };
-        (token, route)
+        (token, pending.route)
     } else {
         return;
     };
@@ -359,8 +402,22 @@ async fn handle_connection(stream: TcpStream, shared: Arc<Shared>) {
         result = dial => result,
     } {
         Ok(Ok(tcp)) => tcp,
-        _ => return, // upstream unreachable — client sees an abrupt close
+        Ok(Err(e)) => {
+            // Say *why* we are closing. Dropping the stream instead gives the
+            // client a bare abrupt close, which noVNC surfaces as an
+            // unexplained "connection error" — the single least actionable
+            // message when the host is simply unreachable.
+            close_with_reason(ws, format!("upstream {host}:{port}: {e}")).await;
+            return;
+        }
+        Err(_) => {
+            close_with_reason(ws, format!("upstream {host}:{port}: connect timed out")).await;
+            return;
+        }
     };
+    // Interactive traffic (keystrokes, mouse moves) is small and latency
+    // sensitive — don't let Nagle batch it.
+    let _ = tcp.set_nodelay(true);
 
     shared.touch();
 

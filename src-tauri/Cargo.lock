@@ -150,6 +150,7 @@ dependencies = [
  "hostname",
  "ironrdp-rdcleanpath",
  "keyring",
+ "libc",
  "notify",
  "portable-pty",
  "rcgen",
