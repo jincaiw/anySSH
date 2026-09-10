@@ -492,8 +492,13 @@ mod tests {
         assert_eq!(get_key_fingerprint(&key_path), "unknown");
     }
 
+    /// The fingerprint string is persisted as the trusted-host fingerprint in
+    /// SQLite, so it is asserted against OpenSSH's own `ssh-keygen -lf` output
+    /// for this vector rather than just the `SHA256:` prefix: a change in
+    /// encoding (or hash) would silently invalidate every host the user has
+    /// already approved.
     #[test]
-    fn fingerprint_valid_pub_returns_sha256_prefix() {
+    fn fingerprint_valid_pub_matches_openssh_ssh_keygen_lf() {
         let dir = tempfile::tempdir().expect("tempdir");
         let key_path = dir.path().join("id_ed25519");
         write_file(&key_path, "-----BEGIN OPENSSH PRIVATE KEY-----\n");
@@ -503,10 +508,10 @@ mod tests {
             &pub_path,
             "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJdD7y3aLq454yWBdwLWbieU1ebz9/cu7/QEXn9OIeZJ user@host\n",
         );
-        let fp = get_key_fingerprint(&key_path);
-        assert!(
-            fp.starts_with("SHA256:"),
-            "expected SHA256: prefix, got: {fp}"
+        assert_eq!(
+            get_key_fingerprint(&key_path),
+            "SHA256:T7SvZ2cslqpPj6nKzitCBHHlpVF3r3MvLwmFL0fk0IE",
+            "must match `ssh-keygen -lf` for this key"
         );
     }
 
