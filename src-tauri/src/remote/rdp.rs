@@ -116,6 +116,13 @@ fn x224_inspect_variants() -> Vec<(&'static str, Vec<u8>)> {
         ("nocookie+SSL|HYBRID", build_x224_cr(None, Some(0x3))),
         ("host+legacy-no-nego", build_x224_cr(Some(&host), None)),
         ("host+RDP-only(0x0)", build_x224_cr(Some(&host), Some(0x0))),
+        // Same shape as #1, tried last (with the inter-variant delay in
+        // between): if #1 failed and this succeeds, the upstream is rate
+        // limiting / punishing rapid attempts rather than rejecting a shape.
+        (
+            "retry#host+SSL|HYBRID",
+            build_x224_cr(Some(&host), Some(0x3)),
+        ),
     ]
 }
 
@@ -308,6 +315,11 @@ pub async fn inspect_certificate(host: &str, port: u16) -> Result<String, Bridge
         let mut tried: Vec<String> = Vec::new();
         let mut saw_standard_rdp = false;
         for (idx, (name, cr)) in variants.iter().enumerate() {
+            // Space attempts out: some bastions punish rapid successive
+            // handshakes, which would otherwise mask the real CR policy.
+            if idx > 0 {
+                tokio::time::sleep(Duration::from_millis(1500)).await;
+            }
             let (tcp, confirm) = match probe_variant(host, port, cr).await {
                 Ok(pair) => pair,
                 Err(detail) => {
@@ -887,7 +899,7 @@ mod tests {
     #[test]
     fn inspect_variants_are_well_formed() {
         let variants = x224_inspect_variants();
-        assert_eq!(variants.len(), 7);
+        assert_eq!(variants.len(), 8);
         for (name, pdu) in &variants {
             assert_eq!(
                 u16::from_be_bytes([pdu[2], pdu[3]]) as usize,
