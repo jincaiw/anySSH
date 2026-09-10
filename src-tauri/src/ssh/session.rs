@@ -2,12 +2,25 @@ use crate::types::{ConnectionStatus, SshError, SshOutputPayload, SshStatusPayloa
 use russh::client::Handle;
 use russh::ChannelMsg;
 use std::sync::Arc;
+use std::time::Duration;
 use tauri::{AppHandle, Emitter};
 use tokio::sync::{mpsc, Mutex};
 
 use super::encoding::{SessionSettings, StreamConverter};
 use super::handler::SshClientHandler;
 use super::sessionlog::SessionLogContext;
+
+/// A channel write that blocks this long is treated as a dead connection.
+///
+/// `tokio::select!` cannot cancel a future once its branch has been taken, so
+/// awaiting `channel.data()` / `window_change()` directly in the branch body
+/// would freeze the loop — including the `Eof` arm — whenever the server stops
+/// sending window adjustments (a wedged or hostile server, or a link that
+/// dropped without a FIN). Without this, `ssh_disconnect` could hang forever.
+const CHANNEL_OP_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// How long `disconnect()` waits for the reader task before aborting it.
+const CLOSE_TIMEOUT: Duration = Duration::from_secs(5);
 
 /// Commands sent from the frontend to the reader/writer task.
 enum SessionCmd {
@@ -169,9 +182,11 @@ impl SshSession {
                             Some(ChannelMsg::Data { data }) => {
                                 let data = out_conv.decode_to_utf8(&data);
                                 if task_log.is_active() {
-                                    if let Ok(text) = std::str::from_utf8(&data) {
-                                        task_log.on_output(text);
-                                    }
+                                    // A chunk boundary can split a multi-byte
+                                    // sequence; the terminal reassembles it,
+                                    // so the log must not drop the chunk.
+                                    task_log
+                                        .on_output(&String::from_utf8_lossy(&data));
                                 }
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
@@ -182,9 +197,8 @@ impl SshSession {
                             Some(ChannelMsg::ExtendedData { data, .. }) => {
                                 let data = out_conv.decode_to_utf8(&data);
                                 if task_log.is_active() {
-                                    if let Ok(text) = std::str::from_utf8(&data) {
-                                        task_log.on_output(text);
-                                    }
+                                    task_log
+                                        .on_output(&String::from_utf8_lossy(&data));
                                 }
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
@@ -207,15 +221,22 @@ impl SshSession {
                         match cmd {
                             Some(SessionCmd::Data(data)) => {
                                 if task_log.is_active() {
-                                    if let Ok(text) = std::str::from_utf8(&data) {
-                                        task_log.on_input(text);
-                                    }
+                                    task_log.on_input(&String::from_utf8_lossy(&data));
                                 }
                                 let data = in_conv.encode_from_utf8(&data, false);
-                                let _ = channel.data(&data[..]).await;
+                                // Bounded: see `CHANNEL_OP_TIMEOUT`.
+                                let _ = tokio::time::timeout(
+                                    CHANNEL_OP_TIMEOUT,
+                                    channel.data(&data[..]),
+                                )
+                                .await;
                             }
                             Some(SessionCmd::Resize { cols, rows }) => {
-                                let _ = channel.window_change(cols, rows, 0, 0).await;
+                                let _ = tokio::time::timeout(
+                                    CHANNEL_OP_TIMEOUT,
+                                    channel.window_change(cols, rows, 0, 0),
+                                )
+                                .await;
                             }
                             Some(SessionCmd::SetEncoding { label }) => {
                                 out_conv = StreamConverter::new(&label);
@@ -326,9 +347,11 @@ impl SshSession {
                             Some(ChannelMsg::Data { data }) => {
                                 let data = out_conv.decode_to_utf8(&data);
                                 if task_log.is_active() {
-                                    if let Ok(text) = std::str::from_utf8(&data) {
-                                        task_log.on_output(text);
-                                    }
+                                    // A chunk boundary can split a multi-byte
+                                    // sequence; the terminal reassembles it,
+                                    // so the log must not drop the chunk.
+                                    task_log
+                                        .on_output(&String::from_utf8_lossy(&data));
                                 }
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
@@ -339,9 +362,8 @@ impl SshSession {
                             Some(ChannelMsg::ExtendedData { data, .. }) => {
                                 let data = out_conv.decode_to_utf8(&data);
                                 if task_log.is_active() {
-                                    if let Ok(text) = std::str::from_utf8(&data) {
-                                        task_log.on_output(text);
-                                    }
+                                    task_log
+                                        .on_output(&String::from_utf8_lossy(&data));
                                 }
                                 let payload = SshOutputPayload {
                                     session_id: reader_session_id.clone(),
@@ -364,15 +386,22 @@ impl SshSession {
                         match cmd {
                             Some(SessionCmd::Data(data)) => {
                                 if task_log.is_active() {
-                                    if let Ok(text) = std::str::from_utf8(&data) {
-                                        task_log.on_input(text);
-                                    }
+                                    task_log.on_input(&String::from_utf8_lossy(&data));
                                 }
                                 let data = in_conv.encode_from_utf8(&data, false);
-                                let _ = channel.data(&data[..]).await;
+                                // Bounded: see `CHANNEL_OP_TIMEOUT`.
+                                let _ = tokio::time::timeout(
+                                    CHANNEL_OP_TIMEOUT,
+                                    channel.data(&data[..]),
+                                )
+                                .await;
                             }
                             Some(SessionCmd::Resize { cols, rows }) => {
-                                let _ = channel.window_change(cols, rows, 0, 0).await;
+                                let _ = tokio::time::timeout(
+                                    CHANNEL_OP_TIMEOUT,
+                                    channel.window_change(cols, rows, 0, 0),
+                                )
+                                .await;
                             }
                             Some(SessionCmd::SetEncoding { label }) => {
                                 out_conv = StreamConverter::new(&label);
@@ -476,7 +505,17 @@ impl SshSession {
     pub async fn disconnect(self) -> Result<(), SshError> {
         self.log.logger.stop();
         let _ = self.cmd_tx.send(SessionCmd::Eof);
-        let _ = self.reader_task.await;
+        // Never block the caller forever: a loop wedged in a channel write
+        // would otherwise pin `ssh_disconnect` (and the UI) indefinitely.
+        // Race on `&mut` (JoinHandle is Unpin) so the handle stays ours and
+        // can be aborted instead of being dropped mid-flight.
+        let mut task = self.reader_task;
+        if tokio::time::timeout(CLOSE_TIMEOUT, &mut task)
+            .await
+            .is_err()
+        {
+            task.abort();
+        }
         Ok(())
     }
 }
