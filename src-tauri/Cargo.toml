@@ -60,8 +60,10 @@ rusqlite = { version = "0.31", features = ["bundled"] }
 # File watching (for edit-in-vscode re-upload on save)
 notify = { version = "7", default-features = false, features = ["macos_kqueue"] }
 
-# SFTP
-russh-sftp = "2.1"
+# SFTP. 3.0.0 is transport-agnostic (no russh dependency of its own): the
+# session is built from any `AsyncRead + AsyncWrite` channel stream, so the
+# russh version bump does not constrain it.
+russh-sftp = "3.0.0"
 
 # Cancellation tokens for in-flight transfers
 tokio-util = { version = "0.7" }
