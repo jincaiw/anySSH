@@ -68,7 +68,7 @@ mod protocol {
 ///
 /// Layout: TPKT header, CR TPDU (LI, code 0xE0, five zero bytes), an
 /// optional `Cookie: mstshash=<value>` line, and an optional RDP_NEG_REQ
-/// (type 1, flags 0, len 8, big-endian requestedProtocols).
+/// (type 1, flags 0, len 8, little-endian requestedProtocols).
 fn build_x224_cr(cookie: Option<&str>, protocols: Option<u32>) -> Vec<u8> {
     let mut var = Vec::new();
     if let Some(c) = cookie {
@@ -76,7 +76,12 @@ fn build_x224_cr(cookie: Option<&str>, protocols: Option<u32>) -> Vec<u8> {
     }
     if let Some(p) = protocols {
         var.extend_from_slice(&[0x01, 0x00, 0x08, 0x00]);
-        var.extend_from_slice(&p.to_be_bytes());
+        // MS-RDPBCGR encodes every negotiation integer little-endian (ironrdp's
+        // `WriteCursor::write_u32` is `to_le_bytes`; `write_u32_be` exists only
+        // for the rare big-endian fields). Emitting this big-endian made the
+        // server read `requestedProtocols = 0x03000000` — an undefined flag
+        // combination — and drop the connection instantly.
+        var.extend_from_slice(&p.to_le_bytes());
     }
     let li = 6 + var.len();
     let total = (4 + 1 + li) as u16;
@@ -195,23 +200,26 @@ fn rewrite_x224_cookie(request: &mut Vec<u8>, hostname: &str) {
 }
 
 /// Inspect the X.224 Connection Confirm for the server's RDP_NEG_RSP and
-/// return the negotiated protocol. Falls back to `PROTOCOL_SSL` when the
-/// server replies with a bare X.224 CC (no negotiation payload) — that's the
-/// default for most Windows / bastion hosts.
+/// return the negotiated protocol. Falls back to `PROTOCOL_RDP` when the
+/// server replies with a bare X.224 CC (no negotiation payload): per
+/// MS-RDPBCGR, an absent RDP_NEG_RSP means no negotiation took place, so the
+/// connection runs under standard RDP security — *not* TLS. Assuming TLS here
+/// made the probe attempt a handshake the server never agreed to.
 fn selected_security_protocol(x224_confirm: &[u8]) -> u32 {
     // TPKT(4) + X.224 header(7) + RDP_NEG_RSP(type 1, flags 1, length 2, pad 2, proto 4) = 19.
     const RDP_NEG_RSP_TYPE: u8 = 0x02;
     if x224_confirm.len() >= 19 && x224_confirm[11] == RDP_NEG_RSP_TYPE {
-        // MS-RDPBCGR multi-byte integers in negotiation payloads are big-endian.
-        return u32::from_be_bytes([
+        // MS-RDPBCGR negotiation integers are little-endian.
+        return u32::from_le_bytes([
             x224_confirm[15],
             x224_confirm[16],
             x224_confirm[17],
             x224_confirm[18],
         ]);
     }
-    // No explicit negotiation — assume SSL (mstsc's behaviour for legacy peers).
-    protocol::SSL
+    // No negotiation structure — the server ignored RDP_NEG_REQ, so the
+    // session uses standard RDP security (PROTOCOL_RDP).
+    protocol::RDP
 }
 
 /// Human-readable summary of an X.224 Connection Confirm, used by the
@@ -224,7 +232,7 @@ fn describe_confirm(confirm: &[u8]) -> String {
         .collect::<Vec<_>>()
         .join("");
     let body = if confirm.len() >= 19 && confirm[11] == 0x02 {
-        let proto = u32::from_be_bytes([confirm[15], confirm[16], confirm[17], confirm[18]]);
+        let proto = u32::from_le_bytes([confirm[15], confirm[16], confirm[17], confirm[18]]);
         match proto {
             0 => "NEG_RSP selected=PROTOCOL_RDP (standard security, no TLS)".to_string(),
             1 => "NEG_RSP selected=PROTOCOL_SSL".to_string(),
@@ -232,8 +240,16 @@ fn describe_confirm(confirm: &[u8]) -> String {
             other => format!("NEG_RSP selected=0x{other:x}"),
         }
     } else if confirm.len() >= 19 && confirm[11] == 0x03 {
-        let code = u32::from_be_bytes([confirm[15], confirm[16], confirm[17], confirm[18]]);
-        format!("RDP_NEG_FAILURE code=0x{code:x}")
+        let code = u32::from_le_bytes([confirm[15], confirm[16], confirm[17], confirm[18]]);
+        let name = match code {
+            1 => "SSL_REQUIRED_BY_SERVER",
+            2 => "SSL_NOT_ALLOWED_BY_SERVER",
+            3 => "SSL_CERT_NOT_ON_SERVER",
+            4 => "INCONSISTENT_FLAGS",
+            5 => "HYBRID_REQUIRED_BY_SERVER",
+            _ => "unknown",
+        };
+        format!("RDP_NEG_FAILURE code=0x{code:x} ({name})")
     } else {
         format!(
             "plain X.224 CC (len={}, no RDP_NEG_RSP) -> server wants standard RDP security",
@@ -665,28 +681,35 @@ mod tests {
     use tokio_rustls::TlsAcceptor;
 
     /// X.224 Connection Confirm with an RDP Negotiation Response selecting
-    /// PROTOCOL_HYBRID (CredSSP) — 19 bytes, exactly what a real server
-    /// sends for NLA (see netbird `detectCredSSPFromX224`).
+    /// PROTOCOL_HYBRID (CredSSP) — 19 bytes, in the real little-endian wire
+    /// format (`02 00 08 00` header, protocol LE at offset 15).
     const X224_CONFIRM: [u8; 19] = [
         0x03, 0x00, 0x00, 0x13, // TPKT: version 3, reserved, total len 19
         0x0E, 0xD0, // LI=14, CC TPDU code 0xD0
         0x00, 0x00, 0x00, 0x00, 0x00, // dst-ref, src-ref, class
-        0x02, 0x00, 0x00, 0x08, // NEG_RSP: type 2, flags 0, len 8
-        0x00, 0x00, 0x00, 0x02, // selectedProtocol = PROTOCOL_HYBRID
+        0x02, 0x00, 0x08, 0x00, // NEG_RSP: type 2, flags 0, len 8 (little-endian)
+        0x02, 0x00, 0x00, 0x00, // selectedProtocol = PROTOCOL_HYBRID (little-endian)
     ];
 
     /// Same shape but selecting PROTOCOL_SSL — what mstsc sees from a Windows
     /// host that has NLA off and only supports RDP-over-TLS.
     const X224_CONFIRM_SSL: [u8; 19] = [
-        0x03, 0x00, 0x00, 0x13, 0x0E, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x08,
-        0x00, 0x00, 0x00, 0x01,
+        0x03, 0x00, 0x00, 0x13, 0x0E, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x08, 0x00,
+        0x01, 0x00, 0x00, 0x00,
     ];
 
     /// X.224 CC selecting PROTOCOL_RDP only — the server wants no TLS at all.
     /// `inspect_certificate` must refuse this path (no cert to inspect).
     const X224_CONFIRM_PLAIN: [u8; 19] = [
-        0x03, 0x00, 0x00, 0x13, 0x0E, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x00, 0x08,
+        0x03, 0x00, 0x00, 0x13, 0x0E, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x08, 0x00,
         0x00, 0x00, 0x00, 0x00,
+    ];
+
+    /// RDP_NEG_FAILURE (type 3) with HYBRID_REQUIRED_BY_SERVER — the canonical
+    /// hardened-server reply when the client offers too little.
+    const X224_CONFIRM_FAILURE: [u8; 19] = [
+        0x03, 0x00, 0x00, 0x13, 0x0E, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x03, 0x00, 0x08, 0x00,
+        0x05, 0x00, 0x00, 0x00,
     ];
 
     /// Fake RDP server: X.224 exchange, then a real TLS 1.2 handshake with a
@@ -804,9 +827,10 @@ mod tests {
         // The mstshash cookie sits in the variable part, before the NEG_REQ.
         let cookie = format!("Cookie: mstshash={}\r\n", mstshash_value());
         assert_eq!(&pdu[11..11 + cookie.len()], cookie.as_bytes());
-        // NEG_REQ tail: type 1, flags 0, length 8, protocols RDP|SSL|HYBRID (big-endian).
+        // NEG_REQ tail: type 1, flags 0, length 8, protocols RDP|SSL|HYBRID
+        // encoded little-endian (`03 00 00 00`, not `00 00 00 03`).
         let neg = &pdu[11 + cookie.len()..];
-        assert_eq!(neg, &[0x01, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x03][..]);
+        assert_eq!(neg, &[0x01, 0x00, 0x08, 0x00, 0x03, 0x00, 0x00, 0x00][..]);
     }
 
     /// The session-path CR (from the WASM connector) must end up carrying the
@@ -829,12 +853,12 @@ mod tests {
     fn rewrite_x224_cookie_inserts_when_absent() {
         let mut pdu = vec![
             0x03, 0x00, 0x00, 0x13, 0x0E, 0xE0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00, 0x08,
-            0x00, 0x00, 0x00, 0x00, 0x03,
+            0x00, 0x03, 0x00, 0x00, 0x00,
         ];
         rewrite_x224_cookie(&mut pdu, "HOST-X");
         let text = String::from_utf8_lossy(&pdu);
         assert!(text.contains("Cookie: mstshash=HOST-X\r\n"));
-        assert!(text.ends_with("\u{01}\u{00}\u{08}\u{00}\u{00}\u{00}\u{00}\u{03}"));
+        assert!(text.ends_with("\u{01}\u{00}\u{08}\u{00}\u{03}\u{00}\u{00}\u{00}"));
         assert_eq!(u16::from_be_bytes([pdu[2], pdu[3]]) as usize, pdu.len());
         assert_eq!(pdu[4] as usize, pdu.len() - 5);
     }
@@ -852,10 +876,9 @@ mod tests {
         }
     }
 
-    /// `selected_security_protocol` must parse the big-endian wire format
-    /// (MS-RDPBCGR negotiation payloads are big-endian).
+    /// `selected_security_protocol` must parse the little-endian wire format.
     #[test]
-    fn selected_security_protocol_parses_big_endian_wire_format() {
+    fn selected_security_protocol_parses_little_endian_wire_format() {
         assert_eq!(selected_security_protocol(&X224_CONFIRM), protocol::HYBRID);
         assert_eq!(selected_security_protocol(&X224_CONFIRM_SSL), protocol::SSL);
         assert_eq!(
@@ -864,8 +887,53 @@ mod tests {
         );
     }
 
+    /// Regression: a bare X.224 CC (no RDP_NEG_RSP) means *no negotiation*, so
+    /// the session runs under standard RDP security. Assuming TLS here made the
+    /// probe attempt a handshake the server never agreed to.
+    #[test]
+    fn selected_security_protocol_defaults_to_rdp_without_negotiation() {
+        let bare_cc: [u8; 11] = [
+            0x03, 0x00, 0x00, 0x0b, 0x06, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00,
+        ];
+        assert_eq!(selected_security_protocol(&bare_cc), protocol::RDP);
+    }
+
+    /// Regression for the endianness bug that produced the bogus "bastion only
+    /// accepts standard RDP security" conclusion: the same protocol value
+    /// encoded big-endian must NOT be recognised. A server reading anySSH's
+    /// big-endian `0x3` saw `0x03000000` — undefined flags — and dropped the
+    /// connection, which the diagnostic then misreported as a policy refusal.
+    #[test]
+    fn big_endian_protocol_field_is_rejected() {
+        let be_ssl: [u8; 19] = [
+            0x03, 0x00, 0x00, 0x13, 0x0E, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x08,
+            0x00, 0x00, 0x00, 0x00, 0x01,
+        ];
+        let parsed = selected_security_protocol(&be_ssl);
+        assert_ne!(parsed, protocol::SSL, "big-endian must not read as SSL");
+        assert_eq!(parsed, 0x0100_0000);
+    }
+
+    /// The CR builder must place `requestedProtocols` little-endian. This is
+    /// the field the whole incident traced back to.
+    #[test]
+    fn build_x224_cr_encodes_requested_protocols_little_endian() {
+        let cr = build_x224_cr(Some("HOST"), Some(0x3));
+        let neg = &cr[11 + "Cookie: mstshash=HOST\r\n".len()..];
+        assert_eq!(neg, &[0x01, 0x00, 0x08, 0x00, 0x03, 0x00, 0x00, 0x00][..]);
+
+        // Single-bit and combined values keep the same little-endian layout.
+        let ssl = build_x224_cr(None, Some(0x1));
+        assert_eq!(&ssl[ssl.len() - 4..], &[0x01, 0x00, 0x00, 0x00][..]);
+        let hybrid_ex = build_x224_cr(None, Some(0xA));
+        assert_eq!(
+            &hybrid_ex[hybrid_ex.len() - 4..],
+            &[0x0A, 0x00, 0x00, 0x00][..]
+        );
+    }
+
     /// CR builder framing: TPKT/LI consistent, cookie before NEG_REQ,
-    /// protocols big-endian; legacy mode has no NEG_REQ at all.
+    /// protocols little-endian; legacy mode has no NEG_REQ at all.
     #[test]
     fn build_x224_cr_framing_and_variants() {
         let pdu = build_x224_cr(Some("HOST"), Some(0x3));
@@ -875,7 +943,7 @@ mod tests {
         assert_eq!(&pdu[11..11 + 8], b"Cookie: ");
         let text = String::from_utf8_lossy(&pdu);
         assert!(text.contains("Cookie: mstshash=HOST\r\n"));
-        assert!(text.ends_with("\u{1}\u{0}\u{8}\u{0}\0\0\0\u{3}"));
+        assert!(text.ends_with("\u{1}\u{0}\u{8}\u{0}\u{3}\0\0\0"));
 
         let legacy = build_x224_cr(Some("HOST"), None);
         assert!(!String::from_utf8_lossy(&legacy).ends_with('\u{3}'));
@@ -919,6 +987,13 @@ mod tests {
 
         let plain = describe_confirm(&X224_CONFIRM_PLAIN);
         assert!(plain.contains("selected=PROTOCOL_RDP"), "{plain}");
+
+        let hybrid = describe_confirm(&X224_CONFIRM);
+        assert!(hybrid.contains("selected=PROTOCOL_HYBRID"), "{hybrid}");
+
+        let failure = describe_confirm(&X224_CONFIRM_FAILURE);
+        assert!(failure.contains("RDP_NEG_FAILURE"), "{failure}");
+        assert!(failure.contains("HYBRID_REQUIRED_BY_SERVER"), "{failure}");
 
         let bare_cc: [u8; 11] = [
             0x03, 0x00, 0x00, 0x0b, 0x06, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00,
