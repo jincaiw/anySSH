@@ -96,3 +96,19 @@ IronRDP 上游 `ironrdp-connector/src/connection.rs:266-268` 硬拒绝 `is_stand
 - 结论句必须放在 `tried` 变体列表**之前**：该列表约 700 字符，会把结论挤出连接弹窗可见区（表现为句子断在半个从句上）。
 
 
+
+## 测试/审计口径基线（2026-09-11 实测，勿重复测量）
+
+- 单测 **308**；`--test-threads=1|32` 与 `--release` 结果一致 ⇒ 无顺序依赖、无抖动。报告：`docs/pre-release-test-report-2026-09-11.md`。
+- **llvm-cov 只能 `--lib`**：行 47.18% / 函数 34.02% / 区域 52.85%。**20 个文件 0%** 属口径限制（命令层由 75 个 E2E spec 驱动成品二进制，不插桩），**不要再当成覆盖缺口重复调查**。
+- **`cargo-miri` 在本项目不可用**：`rusqlite`（C SQLite）、`ring`（汇编）、`portable-pty`（FFI）。数据竞争改以「多时序一致 + `unsafe` 零处 + 并发上限 3」举证。
+- 统计生产 `unwrap/expect` 时：测试模块可能写作 **`#[cfg(all(test, unix))]`** 而非 `#[cfg(test)]`，只匹配后者会误报。当前基线 **13 处**。
+- 无 `benches/`、无 `criterion` ⇒ 零基准数据；`tracing` 级别**硬编码** `anyssh=debug,russh=info`（**不读 `RUST_LOG`**）、无文件/rolling appender、**无 panic hook**。
+- `tauri.conf.json` 的 `app.windows` 是 **`[]`**；主窗口在 `src-tauri/src/lib.rs:179-182` 用 `WebviewWindowBuilder` 建（默认 1200×800，最小 800×500）。找窗口配置别只搜 conf。
+- 兼容矩阵：CI `ubuntu-22.04`(x86_64/WebKitGTK 4.1) · `macos-14`(aarch64 + x86_64/WKWebView) · `windows-latest`(x64/WebView2 **offlineInstaller** ⇒ `.msi` 229 MB，而 `.dmg` 仅 17 MB)。
+
+## 已知的死事件与遗留缺口（2026-09-11 确认，非本项目回归）
+
+- **`sftp:file-edited` / `scp:file-edited` / `s3:file-edited` 前端从未订阅**（前端只 listen `term:status`、`ssh:status`、`${channel}:output`、`*/:transfer`、`pf:status`、`serial:ports-changed`；`git log -S` 证明自初始提交起前端全历史无监听）⇒ 外部编辑器保存回传后远端列表不自动刷新。
+- 遥测**无应用内开关**，唯一退出为 `ANYSSH_DISABLE_TELEMETRY`；`remote/bridge.rs` 的 loopback WS **不校验 `Origin`**（靠 32B CSPRNG 单次令牌 + 60s TTL + 空闲自动关停兜底）。
+- **本机前端完全不可验证**（`node_modules` 为空）：任何前端改动只能以 CI 为准，不要在本地下结论。
