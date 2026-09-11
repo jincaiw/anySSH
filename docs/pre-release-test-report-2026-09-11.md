@@ -3,7 +3,9 @@
 **日期**：2026-09-11
 **被测基线**：`main` @ `0fc493d`（已推送 `jincaiw/anySSH`）
 **本轮改动**：8 个提交，全部已推送（清单见 §10）
-**CI**：run `34609578512` @ `0fc493d` —— **8/8 job success**（代码基线）
+**CI**：
+- run `34609578512` @ `0fc493d` —— **8/8 job success**（attempt 1 即绿，代码基线）
+- run `34613427870` @ `2c31fd2`（本轮末提交）—— attempt 1 有 3 个 E2E shard 失败，**attempt 2 重跑同一二进制后 8/8 success**、75 spec PASSED。详见 §3.4：两次失败均为**环境性**，且**未通过放宽超时/加重试掩盖**
 **范围**：基础质量 / 自动化测试 / 功能验收 / 安全 / 性能与稳定性 / 数据与部署 / 兼容性 / 可运维性
 
 ---
@@ -22,7 +24,7 @@
 | 8. 可运维性 | **WARN** | 无日志落盘、无 panic hook、级别硬编码 |
 
 **无 FAIL 项**（无阻塞级缺陷、无高危安全问题）。
-**CI 已全绿**，但需知悉：E2E 任务存在**环境性抖动**，详见 §3.4——这是本轮发现的一项独立风险，不是代码缺陷。
+**CI 已达全绿**，但需知悉两点：① E2E 存在**环境性抖动**（§3.4），末次全绿是**重跑失败 job 后**取得的；② 因此判绿时务必分清「一次即绿」与「重跑才绿」。
 
 ---
 
@@ -93,22 +95,37 @@ cd src-tauri && cargo test --release --lib -- --ignored --nocapture soak_pty_chu
 
 **75 个 spec**（`tests/e2e/specs/`），分 4 shard 跑在 Docker 内；覆盖主机 CRUD、口令/密钥连接、SFTP 全流程（导航/上传/下载/递归/复制/移动/chmod/属性/软链接）、SCP 回退、S3、端口转发与跳板链、片段与变量、导入 ssh_config、备份恢复、多标签/分屏/缩放、i18n、协议连接面板、RDP WASM CSP。
 
-**最终 CI：4 个 shard 全部 success。**
+**最终 CI：4 个 shard 全部 success。但必须记录：E2E 存在环境性抖动。** 本轮累计观察 **8 次失败，分属 7 个不同 spec、3 个不同 shard**，无一次指向 anySSH 行为错误：
 
-**但必须记录：E2E 存在环境性抖动。** 本轮共观察 **4 次失败，分属 4 个不同 spec、3 个不同 shard**，无一次指向 anySSH 行为错误：
+| 失败 spec | 现象 | 实际等待 | 性质 |
+|---|---|---|---|
+| `04-connect-key`（shard 4，该 shard 首个用例） | `publickey ssh-ed25519 rejected` | TCP 探活即放行 | **已修**：`entrypoint.sh` 只做 TCP 探活，而 `sshd-key` 需要 `authorized_keys` 已装入；端口可连 ≠ 可用 |
+| `04-connect-key`（同上，另一次） | `Temporary failure in name resolution` | — | 容器 DNS 瞬时故障 |
+| `02-host-crud`（shard 2，该 shard 首个用例） | host card 未出现（同 spec 后续两用例通过） | **固定 10 s** | 冷容器首次启动/首次写库超过固定等待 |
+| `26-split-pane`（shard 2） | xterm 未在分屏后重挂载 | **固定 10 s** | 同上 |
+| `61-sftp-properties-chmod`（shard 3） | `explorer did not open` | **30 s 条件轮询** | 见下 |
+| `19-sftp-refresh`（shard 3） | `explorer did not open` | **30 s 条件轮询** | 见下 |
+| `16-sftp-navigate`（shard 4） | `explorer did not open` | **30 s 条件轮询** | 见下 |
+| `22-snippet-palette-run`（shard 2） | `[data-snippet-name='Echo Sentinel']` 5 s 内不可点击 | **5 s** | 见下 |
+| shard 2（一次） | `failed to fetch oauth token … connection reset by peer` | — | **Docker Hub 注册表鉴权失败**，连测试都没跑起来 |
 
-| 失败 spec | 现象 | 性质 |
-|---|---|---|
-| `04-connect-key`（shard 4，shard 首个用例） | `publickey ssh-ed25519 rejected` | **已修**：`entrypoint.sh` 只做 TCP 探活，而 `sshd-key` 需要 `authorized_keys` 已装入；端口可连 ≠ 可用 |
-| `04-connect-key`（同上，另一次） | `Temporary failure in name resolution` | 容器 DNS 瞬时故障 |
-| `02-host-crud`（shard 2，shard 首个用例） | 10s 内 host card 未出现（同 spec 后续两用例通过） | 冷容器首屏/首次写库超过固定 10s 等待 |
-| `61-sftp-properties-chmod`（shard 3） | `explorer did not open` | 同类等待超时 |
-| `26-split-pane`（shard 2） | xterm 元素未在 split 后重挂载（10s 等待） | 同类等待超时 |
-| shard 2（一次） | `failed to fetch oauth token ... connection reset by peer` | **Docker Hub 注册表鉴权失败**，连测试都没跑起来 |
+**三处必须说清的事实**（此前一轮的表述不够准确，已按日志更正）：
 
-**判定**：以上**均非产品缺陷**——证据是同一 spec 在其它轮次通过、且其中两类带明确的基础设施错误信息（容器 DNS、Docker Hub oauth）。同时已修复其中**唯一可复现**的一类（`sshd-key` 就绪，修复前 2/2 失败、修复后转绿）。
+1. `waitForExplorer()` **不是固定短超时**：它是 30 秒的**条件轮询**（每 200 ms 检查 `explorer-refresh` 是否存在且可见，并自动点击主机密钥信任弹窗）。所以 `explorer did not open` 的含义是「30 秒内 SFTP 浏览器根本没渲染出来」，**不能**与固定 10 s 的用例混为一谈——把两者合并会低估该类失败的严重程度。
+2. 有 **1 次发生在零代码改动的纯文档提交（`25b2a92`）上**（失败 spec `19-sftp-refresh`）：该提交只改 `docs/` 与 `.workbuddy/memory/`，产物与上一次全绿提交逐字节相同。同 shard 紧随其后的 4 个 spec（`23-settings-persist`、`27-pane-zoom`、`31-reconnect-after-disconnect`、`35-sftp-large-listing`）全部 PASS，环境在数秒内即恢复。
+3. **最强的一条证据**：本轮末提交 `2c31fd2` 的 run `34613427870` 在 **attempt 1 有 3 个 shard 同时失败**（`22-snippet-palette-run` / `19-sftp-refresh` / `16-sftp-navigate`），随后**只重跑失败 job（attempt 2，二进制与配置完全相同）→ 8/8 success、75 spec 全过**。同一产物、同一套测试，一次红一次绿，唯一变量是 runner 当时的负载。
 
-**顺带得出的一条真实结论**：E2E **不能**作为「首屏性能」的门禁——它对冷启动的等待是固定 10s，而冷启动本身恰恰是用户可感的第一印象。该量尚未测量，列入人工项（§12 第 4、6 项）。
+**最可能的机制（有日志支撑，非猜测）**：容器内 `libEGL warning: DRI3 error: Could not get DRI3 device` 反复出现 ⇒ WebKitGTK 退回**软件渲染**；同一 runner 上多个 worker 并行各起一个 GUI 实例，CPU 争用下首次渲染偶发超过 30 s。这解释了「换一个 spec 失败、下次又全绿、重跑即过」的随机性。
+
+**一条必须澄清的误读**：shard 4 日志里出现 `Incorrect password, or the backup file is corrupt` 与 `Not a valid anySSH backup file` 的 `ERROR webdriver` 行，**不是失败**——那是 `62-data-backup-restore` 的负向用例，该 spec 最终 **6 passing**。应用在这两条路径上正确地拒绝了错误口令与非法文件。
+
+**因此产出一条对用户可见的结论**：E2E **不能**作为「首屏 / 首次打开耗时」的门禁——它在冷容器里对首屏的等待是固定值，而首屏恰恰是用户第一印象。该量至今未测，列入人工项（§12 第 4、6 项）。
+
+**判定**：以上**均非产品缺陷**——证据是同一 spec 在其它轮次通过、其中两类带明确的基础设施错误信息（容器 DNS、Docker Hub oauth）、一类在**零代码改动**的提交上复现、且**同一产物重跑即全绿**。其中**唯一可复现**的一类（`sshd-key` 就绪）已修复（修复前 2/2 失败、修复后转绿）。
+
+**保留的不确定性（不粉饰）**：自动化只能证明「这些失败与本次代码改动无关」，**不能**排除「存在仅在负载下才触发的竞态」。要在实机上排除，靠的是 §12 第 6 项（真实安装 + 首次启动）与第 8 项（4 小时长跑）——这正是剩下的最后一道闸门。
+
+**未采取的手段**：未放宽任何超时、未加重试、未屏蔽断言来「消除」这些失败——它们是环境特征，改测试只会把证据藏起来。
 
 ### 3.5 覆盖率（实测）
 
@@ -200,7 +217,7 @@ cd src-tauri && cargo test --release --lib -- --ignored --nocapture soak_pty_chu
 - 仓库**无 `benches/`、无 `criterion`** ⇒ 核心数据通路（SSH 吞吐、SFTP/SCP/S3 速率、终端渲染延迟）**无任何基准数据**；响应时间 / 吞吐量 / 错误率 / CPU / 内存占用均未测量。
 - 压力测试（大文件、海量小文件、多会话并发、弱网/高丢包/高延迟）未执行。
 - **长时间运行稳定性仅部分验证**：终端（PTY）层的句柄曲线已有 400 轮实测数据且无漂移，但**应用层 >1 小时的混合负载仍未验证**（无连续运行记录）；**内存增长趋势仍无数据**（本次受沙箱限制未能采样 RSS，见 §3.3），线程数、连接数的长期曲线同样无数据。
-- **冷启动耗时未测量**——E2E 的首个用例抖动（§3.4）提示受限容器内冷启动可能超过 10s，需实机确认。
+- **冷启动耗时未测量**——E2E 里连「条件轮询 30 s 都等不到首次渲染」的用例（§3.4）暗示 CI 软件渲染下单次首屏可能非常慢，但**这是 CI 容器（无 GPU、多 worker 争用）的特征，不能当作实机结论**，必须实机确认（§12 第 4 项）。
 
 ---
 
@@ -262,7 +279,7 @@ CI 覆盖 **3 平台 × 4 目标**：
 | `25b2a92` | （非修复）报告定稿 + 记忆压缩 | 按 CI 全绿结果重写报告；`MEMORY.md` 超限故压缩为四段式 |
 | `824555a` | （非修复）长跑无数据 | 新增 `#[ignore]` 的 400 轮 PTY 测量工装（§3.3），并把「RSS 采不到」显式输出为不可用而非 0；默认套件仍为 311 例（1 ignored） |
 
-> 末条仅改 Markdown 的提交与 `824555a` 之后若再有纯文档提交，**不重跑 CI**：用 `git diff --name-only <已验证 SHA>..HEAD` 自证改动范围仅限于 `docs/` 与 `.workbuddy/memory/`。
+> 本报告自身的最后一次修订（纯 Markdown）**不重跑 CI**：以 `git diff --name-only 2c31fd2..HEAD` 自证改动范围仅限于 `docs/` 与 `.workbuddy/memory/`，而 `2c31fd2` 已由 run `34613427870` 完整验证（attempt 2 全绿、75 spec PASSED）。
 
 **未采用的手段**：未删除任何测试、未屏蔽任何错误、未降低任何标准、未为提高通过率而放宽既有断言或加宽超时、未为通过检查而改动既有功能。
 
@@ -273,7 +290,7 @@ CI 覆盖 **3 平台 × 4 目标**：
 | 编号 | 问题 | 级别 | 状态 |
 |---|---|---|---|
 | R-1 | ~~本轮提交未推送 / 未过 CI~~ | — | **已解决**：`0fc493d` CI 8/8 green |
-| R-2 | E2E 抖动：4 次失败分属 4 个不同 spec / 3 个 shard，含容器 DNS 与 Docker Hub oauth 两类基础设施错误；同类等待超时（固定 10s）在冷容器下边际 | 中 | 已修其中唯一可复现的一类；其余**未修**，需在 CI 层面关注 |
+| R-2 | E2E 抖动：**8 次失败分属 7 个不同 spec / 3 个 shard**；含容器 DNS 与 Docker Hub oauth 两类基础设施错误；其余为「等待边际」（固定 5 s / 10 s 与 30 s 条件轮询），最可能源于 CI 软件渲染（`libEGL DRI3` 不可用）+ 多 worker 并行争用。1 次复现于**零代码改动**的文档提交；同一产物 attempt 1 三 shard 红、attempt 2 全绿。对**产品风险低**，对**作为发布门禁的可用性影响中等**——判绿时必须看清是「一次即绿」还是「重跑才绿」 | 中 | 已修其中唯一可复现的一类（`sshd-key` 就绪门）；其余**未通过放宽超时/加重试掩盖**，且无法排除「仅在负载下触发的竞态」（需 §12 第 6、8 项实机排除） |
 | R-3 | 前端完全不可本地验证（`node_modules` 为空）⇒ 任何前端改动只能以 CI 为准 | 中 | 环境限制 |
 | WARN-1 | 外部编辑器保存回传后前端不刷新（`*:file-edited` 三事件前端从未订阅） | 低 | 未修复，见 §4 |
 | WARN-2/3 | 遥测披露已补；**无应用内开关**（仅环境变量）；bridge 未校验 `Origin` | 低 | 已披露，设计取舍 |
@@ -313,7 +330,7 @@ CI 覆盖 **3 平台 × 4 目标**：
 
 **已达成（本轮闭环）**：
 
-1. **CI 全绿**：`0fc493d` 上 8/8 job success，本地与远端一致；
+1. **CI 全绿**：`0fc493d` 上 run `34609578512` 8/8 success（**一次即绿**）；本轮末提交 `2c31fd2` 上 run `34613427870` 经**重跑失败 job 后** 8/8 success、75 spec PASSED —— 两次失败均为环境性（§3.4），**但未以任何放宽手段掩盖**；
 2. 核心功能全部通过：311 单测（四种时序一致、五连跑无抖动）+ 75 E2E spec + Rust/frontend/依赖审计；
 3. **无阻塞级缺陷、无高危安全问题**：SQL / 命令注入与 XSS 均无路径，CSRF 不适用，凭据入 OS keychain 或 AES-256-GCM + Argon2id，备份同等级加密且口令不入日志，`unsafe` 零处；依赖公告均属低可利用性且已登记；
 4. 具备可靠部署与恢复能力：更新器签名链路实测有效（11 平台），备份/恢复有单测与 E2E 双覆盖，DB 有 schema 版本保护与迁移幂等测试；

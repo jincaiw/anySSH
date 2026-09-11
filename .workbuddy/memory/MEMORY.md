@@ -45,4 +45,8 @@
 - `sftp:file-edited`/`scp:file-edited`/`s3:file-edited` 前端从未订阅 ⇒ 外部编辑器保存回传后远端列表不自动刷新。
 - 遥测无应用内开关，唯一退出 `ANYSSH_DISABLE_TELEMETRY`；bridge 的 loopback WS **不校验 Origin**（靠 32B CSPRNG 单次令牌 + 60s TTL 兜底）。
 - quick-xml 不可升级（**已定案勿再当待办**）：`aws-creds`/`rust-s3` 最新版都锁 `^0.38`，修复需 `>=0.41`，跨 semver 必冲突。0.39.4 来自 proc-macro 构建期。
-- E2E 环境性抖动未根治：冷容器固定 10s 等待、容器 DNS、Docker Hub oauth。唯一可复现类（`sshd-key` 就绪门）已修为**能力探测**（`wait_for_key_auth` 用 `ssh -o PreferredAuthentications=publickey` 试真连，而非 TCP 探活）。
+- E2E 环境性抖动未根治（**判绿前必须分清「一次即绿」还是「重跑才绿」**）：本轮共 8 次失败 / 7 spec / 3 shard。唯一可复现类（`sshd-key` 就绪门）已修为**能力探测**（`wait_for_key_auth` 用 `ssh -o PreferredAuthentications=publickey` 试真连，而非 TCP 探活）。
+  - 归因证据：① 有 1 次复现于**零代码改动**的纯文档提交；② 同一产物 attempt 1 三 shard 红、attempt 2 重跑即 8/8 全绿。⇒ 与代码改动无关，但**不能排除「仅在高负载下才触发的竞态」**，需实机排除。
+  - 机制：容器 `libEGL warning: DRI3 error` ⇒ WebKitGTK 退软件渲染 + 多 worker 并行 ⇒ 首屏偶发超 30s。
+  - **别把不同超时混为一谈**：`waitForExplorer()` 是 **30s 条件轮询**（非固定 10s），`waitForEntry` 10s，`02-host-crud` 10s，`22-snippet-palette` 5s。
+  - 读日志陷阱：`--log-failed` 里 `Incorrect password…` / `Not a valid anySSH backup file` 的 `ERROR webdriver` 行是 `62-data-backup-restore` 的**负向用例**（该 spec 6 passing），不是失败；另外 `libEGL` 噪音会淹没 grep，要先 `grep -v libEGL`。
