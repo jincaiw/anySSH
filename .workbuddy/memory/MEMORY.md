@@ -83,6 +83,8 @@
 
 **待办：分支合并 main（未合并）。**
 
+> **2026-09-11 已完成**：该分支与 RDP 修复分支已 rebase 合并进 main（`a2f53d8`，10 个线性提交），并发布 **v0.15.0**（tag → `a2f53d8`，25 资产，latest.json 11 平台全签名）。**main 历史是线性的，合分支用 rebase 不要用 merge commit。**
+
 ## RDP 只支持 TLS/NLA；标准 RDP 安全层无法连接（2026-09-11 定案，非缺陷）
 
 IronRDP 上游 `ironrdp-connector/src/connection.rs:266-268` 硬拒绝 `is_standard_rdp_security()`，官方原话 "The legacy RC4-based security is not supported in IronRDP"。这是**故意的设计决策**（标准 RDP 安全无预认证、易 MITM），不是 bug。
