@@ -280,6 +280,20 @@ src-tauri/src/                # Rust 后端
 - **认证失败**：检查密码或 SSH 密钥权限
 - **超时**：检查防火墙设置和网络连通性
 
+### RDP 连接问题
+
+- **`no X.224 variant completed TLS` / `selected=PROTOCOL_RDP`**：服务端只提供**标准 RDP 安全层**（旧版 RC4，无 TLS）。anySSH 的 RDP 后端（IronRDP）只实现 TLS/NLA，并**按设计拒绝**该模式 —— 标准 RDP 安全层没有预认证，易受中间人攻击。这属于服务端策略，客户端无法绕过。
+
+若目标是 Windows 主机，可要求使用网络级别身份验证（NLA）与加密安全层，使其改为协商 TLS：
+
+```powershell
+$ws = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+Set-ItemProperty -Path $ws -Name SecurityLayer -Value 2
+Set-ItemProperty -Path $ws -Name UserAuthentication -Value 1
+```
+
+随后重启该主机，并确认它有可用证书 —— 否则 Windows 会回退到标准 RDP 安全层。若目标是仅代理标准 RDP 安全层的堡垒机或跳板机，请在设备侧调整（若支持），否则该主机继续使用 `mstsc`。
+
 ### S3 连接问题
 
 - **Access Denied**：确认 Access Key 和 Secret Key 正确

@@ -291,6 +291,20 @@ Please open an issue first to discuss what you'd like to change.
 - **Authentication failed**: Check password or SSH key permissions
 - **Timeout**: Check firewall settings and network connectivity
 
+### RDP Connection Issues
+
+- **`no X.224 variant completed TLS` / `selected=PROTOCOL_RDP`**: the server accepts only **standard RDP security** (legacy RC4, no TLS). AnySSH's RDP backend (IronRDP) implements TLS/NLA only and refuses that mode by design -- standard RDP security has no pre-authentication and is vulnerable to man-in-the-middle attacks. This is a server-side policy; there is no client-side workaround.
+
+If the target is a Windows host, make it negotiate TLS by requiring Network Level Authentication and an encrypted security layer:
+
+```powershell
+$ws = 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp'
+Set-ItemProperty -Path $ws -Name SecurityLayer -Value 2
+Set-ItemProperty -Path $ws -Name UserAuthentication -Value 1
+```
+
+Then restart the host and confirm it has a usable certificate -- without one, Windows falls back to standard RDP security. If the target is a bastion or jump appliance that only proxies standard RDP security, change the setting on the appliance if it supports it, otherwise keep using `mstsc` for that host.
+
 ### S3 Connection Issues
 
 - **Access Denied**: Verify your access key and secret key are correct

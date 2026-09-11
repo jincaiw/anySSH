@@ -222,6 +222,49 @@ fn selected_security_protocol(x224_confirm: &[u8]) -> u32 {
     protocol::RDP
 }
 
+/// Explanation appended when the inspector failed *not* because anything went
+/// wrong on the wire, but because the server admits only standard RDP security
+/// (legacy RC4, no TLS). IronRDP refuses that mode by design — no
+/// pre-authentication, trivially MITM-able — so there is no client-side fix.
+///
+/// Two distinct wire shapes prove that policy and they are deliberately
+/// reported apart:
+///
+/// - `explicit_rdp_rsp`: the server understood `RDP_NEG_REQ` and answered with
+///   an `RDP_NEG_RSP` whose `selectedProtocol` is `PROTOCOL_RDP`.
+/// - `ignored_negotiation`: the server replied with a bare X.224 Connection
+///   Confirm carrying no negotiation payload at all, so it never named a
+///   protocol; per MS-RDPBCGR that also lands on standard RDP security.
+///
+/// Collapsing the two used to produce a message that contradicted its own hex
+/// dump: it claimed the server "answers only a CR without RDP_NEG_REQ with a
+/// plain X.224 CC" while the same error printed
+/// `NEG_RSP selected=PROTOCOL_RDP` once per variant.
+fn standard_security_conclusion(explicit_rdp_rsp: bool, ignored_negotiation: bool) -> &'static str {
+    match (explicit_rdp_rsp, ignored_negotiation) {
+        (false, false) => "",
+        (true, false) => {
+            " — the server answered RDP_NEG_REQ with RDP_NEG_RSP selecting PROTOCOL_RDP, \
+             i.e. it admits standard RDP security (legacy RC4, no TLS) and nothing else. \
+             The IronRDP backend implements only TLS/NLA and refuses that mode by design, \
+             so this target cannot be opened in anySSH; mstsc still supports it"
+        }
+        (false, true) => {
+            " — the server ignored RDP_NEG_REQ and replied with a bare X.224 Connection \
+             Confirm (no RDP_NEG_RSP), i.e. it falls back to standard RDP security (legacy \
+             RC4, no TLS), which the IronRDP backend does not implement; mstsc still \
+             supports it"
+        }
+        (true, true) => {
+            " — the server both answers RDP_NEG_REQ with RDP_NEG_RSP selecting \
+             PROTOCOL_RDP and replies to some request shapes with a bare X.224 Connection \
+             Confirm: it admits standard RDP security (legacy RC4, no TLS) and nothing \
+             else. The IronRDP backend implements only TLS/NLA and refuses that mode by \
+             design, so this target cannot be opened in anySSH; mstsc still supports it"
+        }
+    }
+}
+
 /// Human-readable summary of an X.224 Connection Confirm, used by the
 /// variant-matrix diagnostic so one user test reveals the server's policy.
 fn describe_confirm(confirm: &[u8]) -> String {
@@ -329,7 +372,12 @@ pub async fn inspect_certificate(host: &str, port: u16) -> Result<String, Bridge
     tokio::time::timeout(Duration::from_secs(90), async {
         let variants = x224_inspect_variants();
         let mut tried: Vec<String> = Vec::new();
-        let mut saw_standard_rdp = false;
+        // Two separate wire facts — see `standard_security_conclusion`. Only
+        // tracking the bare-CC case made the "server wants standard RDP
+        // security" explanation disappear whenever the server selected
+        // PROTOCOL_RDP explicitly, which is the shape the field target sends.
+        let mut explicit_rdp_rsp = false;
+        let mut ignored_negotiation = false;
         for (idx, (name, cr)) in variants.iter().enumerate() {
             // Space attempts out: some bastions punish rapid successive
             // handshakes, which would otherwise mask the real CR policy.
@@ -347,8 +395,10 @@ pub async fn inspect_certificate(host: &str, port: u16) -> Result<String, Bridge
             let nego_rsp = confirm.len() >= 19 && confirm[11] == 0x02;
             let selected = selected_security_protocol(&confirm);
             if !nego_rsp || selected == protocol::RDP {
-                if !nego_rsp {
-                    saw_standard_rdp = true;
+                if nego_rsp {
+                    explicit_rdp_rsp = true;
+                } else {
+                    ignored_negotiation = true;
                 }
                 tried.push(format!("[{name}: X.224 OK but {described}]"));
                 continue;
@@ -375,15 +425,14 @@ pub async fn inspect_certificate(host: &str, port: u16) -> Result<String, Bridge
                 )),
             }
         }
-        let conclusion = if saw_standard_rdp {
-            " — the server answers only a CR without RDP_NEG_REQ with a plain X.224 CC, \
-             i.e. it requires standard RDP security (which the IronRDP backend does not \
-             implement; mstsc still supports it)"
-        } else {
-            ""
-        };
+        // The explanation goes *first*, before the variant list: the list is
+        // ~700 characters and pushes anything appended after it out of the
+        // connect modal's visible area, which is what users were seeing (a
+        // sentence cut mid-clause) instead of the diagnosis.
+        let conclusion = standard_security_conclusion(explicit_rdp_rsp, ignored_negotiation);
         Err(BridgeError::Upstream(format!(
-            "no X.224 variant completed TLS; tried {}{conclusion}",
+            "no X.224 variant completed TLS{conclusion}. Tried all {} shapes, in order: {}",
+            variants.len(),
             tried.join(" ")
         )))
     })
@@ -712,11 +761,29 @@ mod tests {
         0x01, 0x00, 0x00, 0x00,
     ];
 
-    /// X.224 CC selecting PROTOCOL_RDP only — the server wants no TLS at all.
-    /// `inspect_certificate` must refuse this path (no cert to inspect).
-    const X224_CONFIRM_PLAIN: [u8; 19] = [
+    /// X.224 CC carrying an explicit `RDP_NEG_RSP` that selects PROTOCOL_RDP:
+    /// the server understood `RDP_NEG_REQ` and answered "standard RDP security,
+    /// no TLS". This is the shape `29.1.0.122:33890` sends.
+    /// `inspect_certificate` must refuse it — there is no certificate to
+    /// inspect and no TLS session to open.
+    ///
+    /// The name matters: this used to be called `X224_CONFIRM_PLAIN`, which
+    /// conflated it with a *bare* CC (no negotiation payload at all). That
+    /// conflation is exactly why the diagnostic once claimed the server "answers
+    /// only a CR without RDP_NEG_REQ" while its own hex dump printed
+    /// `NEG_RSP selected=PROTOCOL_RDP` eight times.
+    const X224_CONFIRM_RDP: [u8; 19] = [
         0x03, 0x00, 0x00, 0x13, 0x0E, 0xD0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x08, 0x00,
         0x00, 0x00, 0x00, 0x00,
+    ];
+
+    /// A genuinely bare X.224 Connection Confirm: 11 bytes, no negotiation
+    /// payload, so it cannot name a selected protocol at all. The server
+    /// ignored `RDP_NEG_REQ`; MS-RDPBCGR still lands the session on standard
+    /// RDP security, but the wire fact is different from [`X224_CONFIRM_RDP`]
+    /// and the diagnostic must say so.
+    const X224_CONFIRM_BARE_CC: [u8; 11] = [
+        0x03, 0x00, 0x00, 0x0b, 0x06, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00,
     ];
 
     /// RDP_NEG_FAILURE (type 3) with HYBRID_REQUIRED_BY_SERVER — the canonical
@@ -734,8 +801,9 @@ mod tests {
 
     /// Same as `spawn_fake_rdp_server` but lets the test pick which X.224
     /// Connection Confirm (and therefore which selected RDP security
-    /// protocol) the server replies with.
-    async fn spawn_fake_rdp_server_with(confirm: &'static [u8; 19]) -> (String, u16, Vec<u8>) {
+    /// protocol) the server replies with. Takes a slice rather than a fixed
+    /// 19-byte array so the bare 11-byte CC can be exercised too.
+    async fn spawn_fake_rdp_server_with(confirm: &'static [u8]) -> (String, u16, Vec<u8>) {
         let certified_key =
             rcgen::generate_simple_self_signed(["anyssh-fake-rdp".to_string()]).unwrap();
         let cert_der = certified_key.cert.der().to_vec();
@@ -812,18 +880,53 @@ mod tests {
         );
     }
 
-    /// When the server only accepts plain RDP (no TLS), the inspector must
-    /// refuse with a precise error rather than getting stuck or returning
-    /// a TLS handshake failure.
+    /// When the server answers `RDP_NEG_REQ` with an explicit
+    /// `RDP_NEG_RSP selected=PROTOCOL_RDP`, the inspector must refuse — and the
+    /// explanation must be the *first* thing in the message. Regression: the
+    /// sentence used to be appended after the ~700-character variant list, so
+    /// the connect modal showed a sentence cut off mid-clause and the user
+    /// never saw the diagnosis.
     #[tokio::test]
-    async fn certificate_inspection_rejects_plain_rdp_negotiation() {
-        // Server replies PROTOCOL_RDP, then hangs up — no TLS, no cert.
-        let (host, port, _) = spawn_fake_rdp_server_with(&X224_CONFIRM_PLAIN).await;
-        let err = inspect_certificate(&host, port).await.unwrap_err();
-        let msg = err.to_string();
+    async fn certificate_inspection_reports_explicit_rdp_selection_up_front() {
+        // Server replies PROTOCOL_RDP, then waits for a TLS handshake that
+        // anySSH correctly never starts.
+        let (host, port, _) = spawn_fake_rdp_server_with(&X224_CONFIRM_RDP).await;
+        let msg = inspect_certificate(&host, port)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(msg.contains("no X.224 variant completed TLS"), "{msg}");
         assert!(
-            msg.contains("no X.224 variant completed TLS") && msg.contains("selected=PROTOCOL_RDP"),
-            "expected the aggregate 'no TLS' diagnostic, got: {msg}"
+            msg.contains("RDP_NEG_RSP selecting PROTOCOL_RDP"),
+            "expected the explicit-selection explanation, got: {msg}"
+        );
+        let explanation = msg
+            .find("RDP_NEG_RSP selecting PROTOCOL_RDP")
+            .expect("explanation present");
+        let list = msg.find("shapes, in order:").expect("variant list present");
+        assert!(
+            explanation < list,
+            "the explanation must precede the variant list, got: {msg}"
+        );
+    }
+
+    /// The other half of the same server policy: the server replies with a bare
+    /// X.224 CC and never names a protocol. The diagnostic must say *that*,
+    /// not claim a `selectedProtocol` that was never sent.
+    #[tokio::test]
+    async fn certificate_inspection_reports_ignored_negotiation() {
+        let (host, port, _) = spawn_fake_rdp_server_with(&X224_CONFIRM_BARE_CC).await;
+        let msg = inspect_certificate(&host, port)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            msg.contains("ignored RDP_NEG_REQ"),
+            "expected the ignored-negotiation explanation, got: {msg}"
+        );
+        assert!(
+            !msg.contains("RDP_NEG_RSP selecting PROTOCOL_RDP"),
+            "a bare CC never carries a selected protocol: {msg}"
         );
     }
 
@@ -895,8 +998,9 @@ mod tests {
     fn selected_security_protocol_parses_little_endian_wire_format() {
         assert_eq!(selected_security_protocol(&X224_CONFIRM), protocol::HYBRID);
         assert_eq!(selected_security_protocol(&X224_CONFIRM_SSL), protocol::SSL);
+        assert_eq!(selected_security_protocol(&X224_CONFIRM_RDP), protocol::RDP);
         assert_eq!(
-            selected_security_protocol(&X224_CONFIRM_PLAIN),
+            selected_security_protocol(&X224_CONFIRM_BARE_CC),
             protocol::RDP
         );
     }
@@ -999,7 +1103,7 @@ mod tests {
         assert!(ssl.contains("selected=PROTOCOL_SSL"), "{ssl}");
         assert!(ssl.contains("hex[:32]="), "{ssl}");
 
-        let plain = describe_confirm(&X224_CONFIRM_PLAIN);
+        let plain = describe_confirm(&X224_CONFIRM_RDP);
         assert!(plain.contains("selected=PROTOCOL_RDP"), "{plain}");
 
         let hybrid = describe_confirm(&X224_CONFIRM);
@@ -1009,14 +1113,44 @@ mod tests {
         assert!(failure.contains("RDP_NEG_FAILURE"), "{failure}");
         assert!(failure.contains("HYBRID_REQUIRED_BY_SERVER"), "{failure}");
 
-        let bare_cc: [u8; 11] = [
-            0x03, 0x00, 0x00, 0x0b, 0x06, 0xd0, 0x00, 0x00, 0x00, 0x00, 0x00,
-        ];
-        let s = describe_confirm(&bare_cc);
+        let s = describe_confirm(&X224_CONFIRM_BARE_CC);
         assert!(
             s.contains("plain X.224 CC") && s.contains("standard RDP security"),
             "{s}"
         );
+        assert!(
+            !s.contains("selected="),
+            "a bare CC carries no negotiation structure, so it cannot name a selected protocol: {s}"
+        );
+    }
+
+    /// The explanation is chosen by two independent wire facts, and must be
+    /// absent when neither occurred — otherwise a plain TLS failure would be
+    /// mislabelled as a server security policy.
+    #[test]
+    fn standard_security_explanation_tracks_the_wire_facts() {
+        assert_eq!(standard_security_conclusion(false, false), "");
+
+        let explicit = standard_security_conclusion(true, false);
+        assert!(
+            explicit.contains("RDP_NEG_RSP selecting PROTOCOL_RDP"),
+            "{explicit}"
+        );
+        assert!(!explicit.contains("ignored RDP_NEG_REQ"), "{explicit}");
+
+        let ignored = standard_security_conclusion(false, true);
+        assert!(ignored.contains("ignored RDP_NEG_REQ"), "{ignored}");
+        assert!(
+            !ignored.contains("RDP_NEG_RSP selecting PROTOCOL_RDP"),
+            "{ignored}"
+        );
+
+        let both = standard_security_conclusion(true, true);
+        assert!(
+            both.contains("RDP_NEG_RSP selecting PROTOCOL_RDP"),
+            "{both}"
+        );
+        assert!(both.contains("bare X.224 Connection"), "{both}");
     }
 
     /// Winning-variant cache round-trip.
