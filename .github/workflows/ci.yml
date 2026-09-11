@@ -95,6 +95,34 @@ jobs:
         working-directory: src-tauri
         run: cargo test
 
+  # Dependency audit gate. `deny.toml` at the repo root carries the accepted-risk
+  # register (quick-xml, rsa) plus the ignored-but-still-reported unmaintained
+  # crates, so anything NOT listed there fails this job.
+  #
+  # This job is deliberately blocking: shipping a dependency with a freshly
+  # published advisory is worth an explicit human decision before a release.
+  # The cargo-deny-action README suggests `continue-on-error` here to avoid a
+  # new advisory suddenly breaking unrelated runs -- if that turns out to be
+  # noisy, flip that one line rather than deleting the job, and move the
+  # register maintenance into a scheduled workflow.
+  #
+  # Note: cargo-deny only checks the advisories database here. `bans`, `licenses`
+  # and `sources` are intentionally not enabled yet -- each needs its own
+  # allow-list derived from the real dependency graph before it can gate CI.
+  advisories:
+    name: Advisory audit (cargo-deny)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          # `manifest-path` is always passed by the action; point it at the
+          # crate rather than relying on a root ./Cargo.toml that does not exist.
+          manifest-path: src-tauri/Cargo.toml
+          command: check advisories
+          log-level: warn
+
   # Build the runner image ONCE per CI run and warm a cross-run GitHub Actions
   # layer cache. Without this, every e2e shard would rebuild the image from
   # scratch — including the multi-minute `cargo install tauri-driver` compile —

@@ -1,0 +1,82 @@
+# cargo-deny configuration for anySSH.
+#
+# Enforced in CI by the "Advisory audit" job in .github/workflows/ci.yml.
+# Run it locally from src-tauri/:
+#
+#     cargo deny check advisories
+#
+# ---------------------------------------------------------------------------
+# The `ignore` list below is an ACCEPTED-RISK REGISTER, not a mute button.
+# Every entry states why the advisory is tolerable FOR THIS APPLICATION and
+# what would let us drop it again. Anything not listed here fails the build --
+# which is the point: a newly published advisory against any dependency has to
+# be seen and judged by a human before the next release ships.
+# ---------------------------------------------------------------------------
+
+[advisories]
+ignore = [
+    # -- quick-xml: denial of service while parsing XML ---------------------
+    # Two advisories, same crate, same story. Reached through
+    # `aws-creds 0.39.1 -> rust-s3` (S3 responses) and `plist -> tauri`.
+    #
+    # Not upgradable in isolation: aws-creds 0.39.1 *is* the newest published
+    # version and it pins `quick-xml = "0.38"` (i.e. <0.39); rust-s3 0.37.2,
+    # also the newest, declares `quick-xml = "^0.38"` itself. The fixed
+    # releases (>= 0.41) fall outside both ranges, so `cargo update -p
+    # quick-xml --precise 0.41.x` cannot resolve. Fixing this needs a vendored
+    # fork or replacing the S3 client -- tracked separately.
+    #
+    # Impact here: availability only, and only when the user deliberately
+    # connects to a malicious or compromised S3 endpoint. No confidentiality or
+    # integrity impact. The affected parser is not reachable from the SSH,
+    # terminal, Telnet, serial, RDP or VNC paths.
+    #
+    # Drop when: aws-creds or rust-s3 moves past quick-xml 0.41.
+    { id = "RUSTSEC-2026-0194", reason = "quick-xml pinned to ^0.38 by aws-creds 0.39.1 and rust-s3 0.37.2 (both newest); fix needs >=0.41 which is unreachable. DoS only, requires a malicious S3 endpoint." },
+    { id = "RUSTSEC-2026-0195", reason = "same crate and same constraint as RUSTSEC-2026-0194 above; unbounded namespace allocation, DoS only." },
+
+    # -- rsa: Marvin timing sidechannel -------------------------------------
+    # Reached through russh's `rsa` feature (russh 0.63.3) and `ssh-key`.
+    # There is no upstream fix: the advisory lists `patched: []`. Dropping the
+    # feature would also remove RSA host-key verification and RSA key
+    # authentication, which a large share of servers still require, so the
+    # feature stays enabled.
+    #
+    # Impact here: the advisory describes an RSA *decryption* (PKCS#1 v1.5
+    # unpadding) oracle observed by a remote attacker. anySSH verifies server
+    # signatures and signs with the user's own local private key; it never
+    # exposes a decryption oracle to a remote party, so the described attack
+    # model does not apply. CVSS already rates it AC:H.
+    #
+    # Drop when: RustCrypto/RSA#626 ships a fix and russh adopts it.
+    { id = "RUSTSEC-2023-0071", reason = "no upstream fix (patched: []). Targets an RSA decryption oracle; anySSH only verifies signatures and signs locally. Disabling russh/rsa would drop RSA host-key and key auth support." },
+
+    # -- unmaintained transitive crates -------------------------------------
+    # "Unmaintained" is a hygiene signal, not a vulnerability: none of these
+    # have a known exploit, and all eight arrive transitively through the Tauri
+    # 2 / GTK / WASM toolchain rather than through a dependency choice anySSH
+    # makes. There is no version of anySSH that avoids them, and pinning them
+    # would mean vendoring half the toolchain.
+    #
+    # cargo-deny still prints a note for every ignored advisory, so these stay
+    # visible in the CI log instead of disappearing. They are re-checked
+    # whenever the toolchain moves.
+    #
+    # Drop when: Tauri / the unic family replaces them upstream.
+    { id = "RUSTSEC-2025-0057", reason = "fxhash unmaintained; transitive via the Tauri toolchain, no known exploit." },
+    { id = "RUSTSEC-2024-0384", reason = "instant unmaintained; transitive, superseded by std::time::Instant upstream." },
+    { id = "RUSTSEC-2024-0370", reason = "proc-macro-error unmaintained; build-time proc-macro only, not in the shipped binary path." },
+    { id = "RUSTSEC-2025-0081", reason = "unic-char-property unmaintained; transitive via the unic/idna chain." },
+    { id = "RUSTSEC-2025-0075", reason = "unic-char-range unmaintained; transitive via the unic/idna chain." },
+    { id = "RUSTSEC-2025-0080", reason = "unic-common unmaintained; transitive via the unic/idna chain." },
+    { id = "RUSTSEC-2025-0098", reason = "unic-ucd-ident unmaintained; transitive via the unic/idna chain." },
+    { id = "RUSTSEC-2025-0100", reason = "unic-ucd-version unmaintained; transitive via the unic/idna chain." },
+]
+
+# Unmaintained / unsound / yanked advisories are reported but do NOT gate a
+# release by default, so they are deliberately left at their cargo-deny
+# defaults here. They are tracked for opportunistic cleanup instead -- see
+# docs/pre-release-acceptance-audit-2026-09-10.md (C-1).
+#
+# Note: in cargo-deny 0.20 `unmaintained` and `unsound` take a SCOPE
+# ("all" | "workspace" | "transitive" | "none"), not a lint level.
