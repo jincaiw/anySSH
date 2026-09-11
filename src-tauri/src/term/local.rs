@@ -388,4 +388,145 @@ mod tests {
              floor after first batch={first}, after second batch={second} (allowance 3)"
         );
     }
+
+    /// Long-run measurement harness — **not** part of the default suite.
+    ///
+    /// ```text
+    /// cargo test --release --lib -- --ignored --nocapture soak_pty_churn
+    /// ```
+    ///
+    /// Exists because the pre-release review had no data at all on two
+    /// questions the short differential test above cannot answer: how the
+    /// process's descriptor count and RSS behave over hundreds of session
+    /// cycles (a per-cycle cost too small to show up in 6 cycles adds up over a
+    /// working day), and whether teardown latency drifts as the process ages.
+    ///
+    /// `#[ignore]` is deliberate. Its primary product is the printed curve; the
+    /// bound asserted at the end is intentionally loose so that running it on a
+    /// loaded developer box reports drift rather than flaking. The tight,
+    /// always-run invariant lives in
+    /// `repeated_pty_lifecycle_does_not_leak_descriptors`.
+    ///
+    /// Run it from a **normal terminal**: RSS is sampled by shelling out to
+    /// `ps`, which restricted sandboxes deny — and a sandboxed run then reports
+    /// the RSS column as unavailable rather than as zero, because "0 KiB of
+    /// growth" and "never measured" must not print the same way.
+    #[tokio::test]
+    #[ignore = "long-running soak; run explicitly and read the printed curve"]
+    async fn soak_pty_churn_reports_descriptor_and_rss_drift() {
+        let shell = "/bin/sh";
+        if !Path::new(shell).exists() {
+            eprintln!("soak: {shell} is absent, nothing to measure on this host");
+            return;
+        }
+
+        const CYCLES: usize = 400;
+        const REPORT_EVERY: usize = 50;
+
+        /// Resident set size of this process, in KiB.
+        ///
+        /// Shelled out to `ps` instead of a platform API so the harness stays
+        /// identical on Linux and macOS — `ps -o rss=` is the one spelling both
+        /// accept. `None` means "could not sample", which is deliberately
+        /// distinct from `Some(0)`.
+        fn rss_kib() -> Option<u64> {
+            let pid = std::process::id().to_string();
+            let out = std::process::Command::new("ps")
+                .args(["-o", "rss=", "-p", &pid])
+                .output()
+                .ok()?;
+            if !out.status.success() {
+                return None;
+            }
+            String::from_utf8_lossy(&out.stdout).trim().parse().ok()
+        }
+
+        /// `rss=NNNN KiB (+N)` or an explicit refusal to claim a number.
+        fn rss_note(now: Option<u64>, base: Option<u64>) -> String {
+            match (now, base) {
+                (Some(now), Some(base)) => {
+                    format!("rss={now} KiB ({:+} KiB)", now as i64 - base as i64)
+                }
+                _ => "rss=unavailable (`ps` is not runnable in this environment)".to_string(),
+            }
+        }
+
+        // Warm up so lazily-created runtime descriptors (kqueue/epoll, timer fd)
+        // are already in the baseline rather than counted as growth.
+        {
+            let mut io =
+                LocalPtyIo::open(Some(shell), None, 80, 24, "xterm-256color").expect("warm-up pty");
+            io.shutdown().await;
+        }
+
+        let base_fd = fd_floor(8).await;
+        let base_rss = rss_kib();
+        let started = std::time::Instant::now();
+        eprintln!(
+            "soak: baseline fd={base_fd} {}",
+            rss_note(base_rss, base_rss)
+        );
+
+        let mut slowest = std::time::Duration::ZERO;
+
+        for cycle in 1..=CYCLES {
+            let mut io = LocalPtyIo::open(Some(shell), None, 80, 24, "xterm-256color")
+                .unwrap_or_else(|e| panic!("cycle {cycle}: pty open failed: {e}"));
+            let cycle_started = std::time::Instant::now();
+            tokio::time::timeout(std::time::Duration::from_secs(10), io.shutdown())
+                .await
+                .expect("pty shutdown must not hang");
+            let elapsed = cycle_started.elapsed();
+            slowest = slowest.max(elapsed);
+            let mut buf = [0u8; 64];
+            let eof = tokio::time::timeout(std::time::Duration::from_secs(5), io.read(&mut buf))
+                .await
+                .expect("read after shutdown must not block")
+                .expect("read after shutdown must not fail");
+            assert_eq!(eof, 0, "cycle {cycle}: a torn-down session must report EOF");
+            drop(io);
+
+            if cycle % REPORT_EVERY == 0 {
+                let fd = fd_floor(4).await;
+                eprintln!(
+                    "soak: cycles={cycle} fd={fd} ({:+}) {} slowest_teardown={slowest:?} \
+                     elapsed={:?}",
+                    fd as i64 - base_fd as i64,
+                    rss_note(rss_kib(), base_rss),
+                    started.elapsed()
+                );
+            }
+        }
+
+        let end_fd = fd_floor(8).await;
+        let end_rss = rss_kib();
+        eprintln!(
+            "soak: done — {CYCLES} cycles in {:?}, fd {base_fd}→{end_fd} ({:+}), {}, \
+             slowest teardown {slowest:?}",
+            started.elapsed(),
+            end_fd as i64 - base_fd as i64,
+            rss_note(end_rss, base_rss)
+        );
+
+        // Loose sanity bound only — this is a measurement, not a gate. One
+        // descriptor per cycle would put the drift far above this, so even after
+        // allowing for bookkeeping slack a genuine per-session leak cannot pass.
+        assert!(
+            end_fd <= base_fd + 10,
+            "descriptor drift over {CYCLES} cycles: {base_fd} → {end_fd}"
+        );
+
+        // Only asserted when it was actually sampled; a missing measurement is
+        // reported, never silently treated as healthy.
+        if let (Some(base), Some(end)) = (base_rss, end_rss) {
+            assert!(
+                end <= base + 64 * 1024,
+                "rss drift over {CYCLES} cycles: {base} → {end} KiB"
+            );
+        } else {
+            eprintln!(
+                "soak: memory drift NOT measured here — re-run from a normal terminal so `ps` works"
+            );
+        }
+    }
 }
