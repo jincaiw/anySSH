@@ -90,9 +90,28 @@ const MAX_AUTO_RECONNECT = 3;
 
 /**
  * P4 RDP viewer — embeds the official `<iron-remote-desktop>` web component
- * backed by `@devolutions/iron-remote-desktop-rdp` (ironrdp-web WASM, base64
- * embedded in the JS bundle — no extra asset fetch, no CSP change needed
- * since Tauri CSP is null).
+ * backed by `@devolutions/iron-remote-desktop-rdp` (ironrdp-web WASM).
+ *
+ * The WASM ships as an inline `data:application/wasm;base64,…` constant inside
+ * that package's JS bundle. Its boot sequence is
+ * `init()` → `fetch(<data URL>)` → `WebAssembly.instantiateStreaming(response)`
+ * (wasm-bindgen's `__wbg_init`, which passes the string straight to `fetch`).
+ * So it is *not* asset-fetch-free — the fetch is just inlined.
+ *
+ * CSP: `tauri.conf.json` sets a Content-Security-Policy. Three directives in it
+ * exist specifically for this component and must not be dropped, or the RDP
+ * viewer breaks outright:
+ *   - `script-src ... 'wasm-unsafe-eval'` — compiling the WASM module needs it.
+ *     Without it `rdp.init()` rejects and the component never mounts (it lands
+ *     in the outer `catch` below, before `host.appendChild(el)`).
+ *   - `connect-src ... data:` — the `fetch()` above reads a `data:` URL. CSP
+ *     treats that as a network request and checks it against `connect-src`;
+ *     `'self'` and even `*` do NOT cover it, the `data:` scheme must be listed
+ *     explicitly. Omit it and `fetch()` rejects, so the WASM never boots.
+ *   - `connect-src ... ws://127.0.0.1:*` — the session proxies through our own
+ *     loopback bridge at `ws://127.0.0.1:<ephemeral port>/rdp/<token>` (see
+ *     `remote/bridge.rs`), which `'self'` does not cover either.
+ * `tests/e2e/specs/75-rdp-wasm-csp.spec.ts` guards all three.
  *
  * Flow: `init()` loads the WASM → the component gets the `Backend` module via
  * its `module` property → the `ready` event exposes the PublicAPI surface →
