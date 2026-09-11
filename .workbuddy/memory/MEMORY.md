@@ -83,3 +83,14 @@
 
 **待办：分支合并 main（未合并）。**
 
+## RDP 只支持 TLS/NLA；标准 RDP 安全层无法连接（2026-09-11 定案，非缺陷）
+
+IronRDP 上游 `ironrdp-connector/src/connection.rs:266-268` 硬拒绝 `is_standard_rdp_security()`，官方原话 "The legacy RC4-based security is not supported in IronRDP"。这是**故意的设计决策**（标准 RDP 安全无预认证、易 MITM），不是 bug。
+
+- 判定：看 X.224 CC 的 `NEG_RSP selectedProtocol`（偏移 15..19，小端）。`0x0`=PROTOCOL_RDP（anySSH 无解）/ `0x1`=SSL / `0x2`=HYBRID(NLA)。
+- **服务端解法**：`HKLM\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp` 下 `SecurityLayer=2` + `UserAuthentication=1`，重启主机，且需有可用证书。堡垒机只代理标准 RDP 安全层时只能在设备侧改，或该主机继续用 `mstsc`。
+- anySSH 有**双重闸门**：① `rd_inspect_certificate` 必须先完成 TLS 握手取得证书指纹才能开标签页；② IronRDP 协议层拒绝。绕过 ① 也会被 ② 挡住。
+- `rdp.rs` 诊断的两个布尔必须分开：`explicit_rdp_rsp`（服务端回显式 `NEG_RSP selected=PROTOCOL_RDP`）与 `ignored_negotiation`（回裸 11 字节 CC、无协商载荷）。**合并二者会产出与自身 hex 自相矛盾的错误文本。** 测试常量同样要分清：`X224_CONFIRM_RDP`（显式选 RDP，19 字节）≠ `X224_CONFIRM_BARE_CC`（裸 CC，11 字节）。
+- 结论句必须放在 `tried` 变体列表**之前**：该列表约 700 字符，会把结论挤出连接弹窗可见区（表现为句子断在半个从句上）。
+
+
