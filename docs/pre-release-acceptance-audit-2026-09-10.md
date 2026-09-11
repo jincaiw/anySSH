@@ -429,8 +429,35 @@ H-3 当时只写了起步策略 `connect-src 'self' ipc: http://ipc.localhost`�
 | `tauri.conf.json` JSON 合法性与 `csp` 取值 | **已验证** | `json.load` 通过，四条关键指令逐一核对 |
 | 新 E2E 用例的 TS 结构 | **部分验证** | 单文件 `tsc --strict` 无非环境性报错；剩余报错全部为本地缺失 `@wdio/globals`/`mocha`/`chai` 类型定义（既有 helper 同样如此） |
 | `cargo tree -i quick-xml@0.38.4` / `@0.39.4` | **已验证** | 前者命中 `aws-creds → rust-s3`、`plist → tauri`；后者 host 图无输出，`--target all` 指向 `wayland-scanner` proc-macro |
-| **CSP 生效后应用能否启动并加载 WASM** | **需要人工验证 → 交由 CI 判定** | 本地无 Docker / WebKitGTK，E2E 无法在本机运行。**在 `75` 号用例与 4 个 E2E shard 全绿之前，CSP 这一行不得视为「已通过」** |
-| 远端 CI（含新 `Advisory audit` job） | **需要人工验证** | 已按 `workflow_dispatch` 触发于本分支；结论未出前保持未验证 |
+| **CSP 生效后应用能否启动并加载 WASM** | **已验证**（见附录 E） | 4 个 E2E shard 全绿；`75-rdp-wasm-csp.spec.ts` 在真实 `wry 0.54.4 linux` webview 内 PASS |
+| 远端 CI（含新 `Advisory audit` job） | **已验证**（见附录 E） | run `34562021131` @ `c3084f0`，8/8 job success，`run_attempt=1` |
 
-未执行（按约定不得执行）：打 tag、发布 Release、推送远程。
+未执行（按约定不得执行）：打 tag、发布 Release、推送 `main`。
+
+## 附录 E　CI 判定结果（结论已出）
+
+**run `34562021131`，ref `chore/pre-release-hardening`，sha `c3084f0`，event `workflow_dispatch`，`run_attempt = 1`（首次运行即绿，无重跑），耗时 9 分 03 秒。**
+
+| Job | 结论 |
+|---|---|
+| Frontend (typecheck + build) | **success** |
+| Advisory audit (cargo-deny) | **success**（新门禁在真实 CI 生效） |
+| Rust (fmt, clippy, test) | **success** |
+| Build E2E runner image | **success** |
+| E2E shard 1/4 · 2/4 · 3/4 · 4/4 | **success**（4/4） |
+
+判定依据（逐条取自 job 日志，非推断）：
+
+- **E2E 覆盖完整**：4 个 shard 共报 **75 spec PASSED / 0 FAILED**（原 74 + 新增 1），shard 分布 19/19/19/18，`FAIL:` 与 `skipped` **均为 0 次**。
+- **CSP 未破坏启动**：整套 E2E 全绿即证明应用在新策略下正常启动（本地 PTY、telnet、**VNC 像素级断言**、SFTP、S3 等既有用例全部通过），RDP 相关的三条指令按预期工作。
+- **新用例真实执行而非被跳过**：`specs/75-rdp-wasm-csp.spec.ts` 被分配到 **shard 4/4**，日志含 `RUNNING … 75-rdp-wasm-csp.spec.ts → PASSED`，两条 `it` 均为 `✓`：
+  - `keeps the three directives the RDP viewer depends on`
+  - `instantiates the RDP WASM in the real webview (fetch data: + compile)`
+  运行环境 `[wry 0.54.4 linux #0-17]` —— 即**真实 WebKitGTK webview**，`fetch(data:)` 与 `WebAssembly.instantiate` 均成功 ⇒ **`connect-src data:` 与 `script-src 'wasm-unsafe-eval'` 两条策略均被运行时证实有效**，附录 C-1 的缺陷已闭环。
+- **Rust 侧独立复核**：CI 报 `test result: ok. 306 passed; 0 failed`（与本机一致）；3 个新增 DB 测试在 CI 中可见并通过：
+  `db::tests::fresh_database_reaches_the_latest_schema_version ... ok`、`refuses_a_database_written_by_a_newer_build ... ok`、`accepts_a_database_at_the_latest_schema_version ... ok`。
+- **依赖升级在 CI 中真实生效**：日志含 `Downloaded serialport v4.10.1`。
+
+**范围声明**：本附录的 CI 证据属于 sha `c3084f0`。此后追加的提交**仅改动本 Markdown 文件**（`git diff --name-only c3084f0..HEAD` 可自证），代码字节与已验证 SHA 一致，故未为文档改动重跑 CI。
+
 
