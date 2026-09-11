@@ -29,6 +29,7 @@
 - `node_modules` 为空、沙箱 FS 代理拒绝 `pnpm install` 的 `symlink`/`mkdir` ⇒ **本机前端命令（tsc/vitest/vite build）结论一律不可采信，以 CI 为准**。
 - `cargo` 不在非交互 PATH：`export PATH="/Volumes/My-Data/jason.wa/.cargo/bin:$PATH"; export CARGO_HOME=/Volumes/My-Data/jason.wa/.cargo; export RUSTUP_HOME=/Volumes/My-Data/jason.wa/.rustup`。**cargo 命令必须先 `cd src-tauri`**（根目录无 Cargo.toml）。`gh` 用 `/opt/homebrew/bin/gh -R jincaiw/anySSH`（`gh api` 不支持 `-R`，要写全路径）。
 - macOS BSD `grep` 不支持 `\b`/`\s`，BRE `\|` 也不可靠 → 一律 `grep -E`。
+- **沙箱（seatbelt）禁止 `ps`**（`Operation not permitted`），且 macOS 无 `/proc`。⇒ 任何以 `ps` 采样的指标会拿到**空输出**：必须把「采不到」显式表示为**不可用并跳过断言**，绝不能 `unwrap_or(0)` —— 那会印成「零增长」。「测不到」与「没增长」不能长得一样。RSS 类指标只能在普通终端采（`cargo test -- --ignored` 由人手动跑）。
 - CI 仅在 main/PR/`workflow_dispatch` 触发；`ci.yml` 有 `concurrency.cancel-in-progress` ⇒ 再次 push 会取消同分支旧 run。
 - 合规：`cargo fmt` 以实际输出为准（100 列断行会改写手写换行）；核对提交必须 `git show --name-status`，不能信 message。
 
