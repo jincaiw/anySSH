@@ -574,29 +574,36 @@ pub async fn handle_rdp_client(
             result.unwrap_or_else(|_| Err(BridgeError::Upstream("RDP handshake timed out".into()))),
     };
 
-    if let Err(err) = result {
-        // The RDCleanPath error PDU carries no text, so the client can only
-        // render a generic failure. Without this line a changed certificate,
-        // a TLS error and a plain refused connection are indistinguishable in
-        // the field — log the actual cause before telling the client.
-        tracing::warn!(
-            host = %host,
-            port = port,
-            error = %err,
-            "RDP handshake failed"
-        );
-        // Tell the WASM client why it failed (it surfaces RDCleanPathErr).
-        let error_pdu = ironrdp_rdcleanpath::RDCleanPathPdu::new_general_error().to_der();
-        if let Ok(bytes) = error_pdu {
-            let _ =
-                tokio::time::timeout(STEP_TIMEOUT, ws.send(Message::Binary(bytes.into()))).await;
+    // Match rather than `if let Err(..) { return }` + `result.unwrap()`: the
+    // unwrap was reachable only because the error arm returned, so any later
+    // edit to that arm would turn a handled failure into a panic inside a
+    // detached task -- which is exactly the failure mode that leaves the
+    // viewer hanging with nothing in the log.
+    let tls = match result {
+        Ok(tls) => tls,
+        Err(err) => {
+            // The RDCleanPath error PDU carries no text, so the client can only
+            // render a generic failure. Without this line a changed certificate,
+            // a TLS error and a plain refused connection are indistinguishable in
+            // the field — log the actual cause before telling the client.
+            tracing::warn!(
+                host = %host,
+                port = port,
+                error = %err,
+                "RDP handshake failed"
+            );
+            // Tell the WASM client why it failed (it surfaces RDCleanPathErr).
+            let error_pdu = ironrdp_rdcleanpath::RDCleanPathPdu::new_general_error().to_der();
+            if let Ok(bytes) = error_pdu {
+                let _ = tokio::time::timeout(STEP_TIMEOUT, ws.send(Message::Binary(bytes.into())))
+                    .await;
+            }
+            shared.active.remove(&token);
+            shared.touch();
+            return;
         }
-        shared.active.remove(&token);
-        shared.touch();
-        return;
-    }
+    };
 
-    let tls = result.unwrap();
     let (mut up_rx, mut up_tx) = tokio::io::split(tls);
     let (mut ws_tx, mut ws_rx) = ws.split();
 

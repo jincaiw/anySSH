@@ -513,18 +513,42 @@ pub async fn scp_edit_external(
         use std::sync::mpsc;
 
         let (tx, rx) = mpsc::channel::<Event>();
-        let mut watcher = notify::RecommendedWatcher::new(
+        // Failing to watch is environmental, not a programming error: Linux
+        // refuses once `fs.inotify.max_user_watches` is exhausted, and the
+        // watcher itself can fail to initialise. Panicking inside this detached
+        // `spawn_blocking` task swallowed the failure *and* skipped the
+        // temp-file cleanup at the end, so save-and-re-upload silently stopped
+        // working while the staging directories leaked. Report and unwind
+        // instead: the user still has the editor open and can re-save by hand.
+        let mut watcher = match notify::RecommendedWatcher::new(
             move |res: Result<Event, notify::Error>| {
                 if let Ok(event) = res {
                     let _ = tx.send(event);
                 }
             },
             Config::default(),
-        )
-        .expect("Failed to create file watcher");
-        watcher
-            .watch(&local_path_bg, RecursiveMode::NonRecursive)
-            .expect("Failed to watch file");
+        ) {
+            Ok(watcher) => watcher,
+            Err(e) => {
+                tracing::error!(
+                    error = %e,
+                    path = %local_path_bg.display(),
+                    "Cannot watch for saves; the file will not be re-uploaded"
+                );
+                crate::editors::edit_temp_cleanup(&local_path_bg);
+                return;
+            }
+        };
+
+        if let Err(e) = watcher.watch(&local_path_bg, RecursiveMode::NonRecursive) {
+            tracing::error!(
+                error = %e,
+                path = %local_path_bg.display(),
+                "Cannot watch for saves; the file will not be re-uploaded"
+            );
+            crate::editors::edit_temp_cleanup(&local_path_bg);
+            return;
+        }
 
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30 * 60);
 
