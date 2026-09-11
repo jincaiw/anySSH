@@ -1,114 +1,47 @@
 # anySSH 项目长期笔记
 
-## 会话循环的两处「不可取消 await」陷阱（2026-09-10 已修，勿再引入）
+## 一、破坏即出 bug 的不变量
 
-`term/mod.rs` 的 `spawn_session` 与 `ssh/session.rs` 的 PTY 任务**结构相同**，改动其中一个时另一个要同步看：
+**会话循环**（`term/mod.rs::spawn_session` 与 `ssh/session.rs` 结构相同，改一个必看另一个）
 
-- `tokio::select!` 的分支**一旦被选中就无法取消**。在分支体内直接 `await` 后端 I/O（`io.write` / `channel.data` / `resize`）会在对端停止排空时冻结整个循环，包括 `Close`/`Eof` 分支 → `term_close` / `ssh_disconnect` 永久挂起。所有后端 I/O 必须包 `IO_OP_TIMEOUT`(5s)。
-- `close()` 不能无条件 `task.await`。用 `tokio::time::timeout(dur, &mut join_handle).await`（JoinHandle 是 Unpin，`&mut F` 实现 Future），失败后 `handle.abort()`。
-  **坑**：`Elapsed::into_inner()` 在本项目 tokio 版本**不存在**，别照抄记忆。
-- 会话日志对解码后的字节必须用 `String::from_utf8_lossy`：chunk 边界会切断多字节序列，`str::from_utf8` 失败即整块丢弃日志。
+- `tokio::select!` 分支一旦被选中**不可取消**。分支体内直接 `await` 后端 I/O（`io.write`/`channel.data`/`resize`）会在对端停止排空时冻结整个循环（含 `Close`/`Eof`）→ `term_close`/`ssh_disconnect` 永久挂起。所有后端 I/O 必须包 `IO_OP_TIMEOUT`(5s)。
+- `close()` 不能无条件 `task.await`：用 `timeout(dur, &mut join_handle)`，失败后 `abort()`。`Elapsed::into_inner()` 在本项目 tokio 版本不存在，勿照抄。
+- 会话日志对解码字节必须 `String::from_utf8_lossy`（chunk 边界会切断多字节序列，`from_utf8` 失败即整块丢日志）。
+- 关闭 portable-pty：`Child::kill()` 只发 SIGHUP 且只作用于 shell 自身；`spawn_command` 的 `pre_exec` 调 `setsid()` ⇒ pid==pgid==sid，`kill(-pid, SIGKILL)` 可杀整个进程组（否则 `top`/`vim`/后台作业仍持 slave fd，master 收不到 EOF）。顺序：SIGHUP → `try_wait()` 轮询 ~2s → 组 SIGKILL → reap；**不要**无超时 `spawn_blocking(child.wait())`。
 
-## portable-pty 语义（读上游 0.9.0 源码实证）
+**CSP（`tauri.conf.json` → `app.security.csp`，三条缺一 RDP 即静默全废）**
 
-- `Child::kill()` 在 Unix 只发 **SIGHUP** 且只作用于 shell 自身（`src/lib.rs:347`）。
-- `spawn_command` 的 `pre_exec` 里调用 `setsid()`（`src/unix.rs:257`）→ **pid == pgid == sid**，因此 `kill(-pid, SIGKILL)` 可杀整个进程组（否则 `top`/`vim`/后台作业会继续持有 slave fd，master 收不到 EOF，读线程不退出）。
-- 关闭顺序：SIGHUP → `try_wait()` 轮询 ~2s → 进程组 SIGKILL → reap。**不要**用无超时的 `spawn_blocking(child.wait())`。
+- `script-src 'wasm-unsafe-eval'` 编译 ironrdp WASM；`connect-src data:`（`rdp.init()` 第一步 `fetch(<内嵌 data:…wasm>)`，`'self'`/`*` 不覆盖 `data:` scheme）；`connect-src ws://127.0.0.1:*`（自家 loopback 桥）。`style-src 'unsafe-inline'` 不能去（xterm.js 4 处 `createElement("style")`）。
+- 失败模式：`rdp.init()` reject → 外层 catch → `RdpCanvas` 的 `host.appendChild(el)` 不执行 → 查看器根本不挂载、UI 无提示。
+- 写 CSP/WASM 测试：WebKit 只在**实例创建时**检查 `wasm-unsafe-eval`，`instantiateStreaming`/`compileStreaming`/`new Module` 全绕过 ⇒ 必须用 `WebAssembly.instantiate(bytes)`，否则 Linux CI 假阴性。
+- 护栏：`tests/e2e/specs/75-rdp-wasm-csp.spec.ts`（已在真实 wry webview 内证实两条指令有效）。
 
-## 协议后端分布
+**协议/前端约定**
 
-| 功能 | 后端 | 备注 |
-|---|---|---|
-| SSH/SFTP/SCP | `ssh/`（russh 0.63.3 直连 crates.io，vendor 补丁已退役） | 走 `ssh:*` 事件通道 |
-| 本地终端 / 串口 / telnet | `term/`（`local.rs` / `serial.rs` / `telnet.rs`，共用 `spawn_session`） | 走 `term:*` 事件通道 |
-| RDP | `remote/rdp.rs`（**ironrdp-rdcleanpath + WASM，不是 FreeRDP FFI**；`vendor/FreeRDP` 是空目录） | 位图/输入/resize 全在 WASM |
-| VNC | 前端 `VncCanvas.tsx`(noVNC) + `remote/bridge.rs` 的 WebSocket 代理 | 一次性 token 路由 |
+- Telnet 必须**主动**发 `IAC WILL NAWS`（大量网元从不发起协商，纯被动实现窗口永远 80×24）；脚本化发送的字节要过 `iac_escape`。
+- `useTranslation()` 的 `t` identity 随 `[locale]` 变化，放进 `useEffect` 依赖会导致 effect 重跑（`VncCanvas` 已改 ref）。
+- Tauri 命令拒绝值是对象，`String(err)` → `[object Object]`；统一 `messageOf(err)`。
 
-- Telnet 必须**主动**发 `IAC WILL NAWS`：大量网元/嵌入式 telnetd 从不发起协商，纯被动实现的窗口尺寸永远是 80×24。
-- Telnet 脚本化发送的字节要过 `iac_escape`（与用户键入同一路径）。
+**后端分布**：SSH/SFTP/SCP → `ssh/`（russh 0.63.3 直连 crates.io，vendor 补丁已退役，走 `ssh:*`）；本地终端/串口/telnet → `term/`（走 `term:*`）；RDP → `remote/rdp.rs`（ironrdp-rdcleanpath + WASM，**不是 FreeRDP FFI**）；VNC → 前端 noVNC + `remote/bridge.rs` WS 代理。
 
-## 前端约定
+## 二、环境与工具（本机）
 
-- `useTranslation()` 的 `t` memo 在 `[locale]`，**identity 会随语言切换变化**。把 `t` 放进 `useEffect` 依赖会导致 effect 重跑。`RdpCanvas` 依赖里没有 `t`，`VncCanvas` 已改为 ref —— 新增类似组件时勿再踩。
-- Tauri 命令拒绝值是对象（`BridgeError` 序列化为 `{kind, message}`），`String(err)` 会渲染 `[object Object]`。统一用 `messageOf(err)` 取 `.message`。
+- `node_modules` 为空、沙箱 FS 代理拒绝 `pnpm install` 的 `symlink`/`mkdir` ⇒ **本机前端命令（tsc/vitest/vite build）结论一律不可采信，以 CI 为准**。
+- `cargo` 不在非交互 PATH：`export PATH="/Volumes/My-Data/jason.wa/.cargo/bin:$PATH"; export CARGO_HOME=/Volumes/My-Data/jason.wa/.cargo; export RUSTUP_HOME=/Volumes/My-Data/jason.wa/.rustup`。**cargo 命令必须先 `cd src-tauri`**（根目录无 Cargo.toml）。`gh` 用 `/opt/homebrew/bin/gh -R jincaiw/anySSH`（`gh api` 不支持 `-R`，要写全路径）。
+- macOS BSD `grep` 不支持 `\b`/`\s`，BRE `\|` 也不可靠 → 一律 `grep -E`。
+- CI 仅在 main/PR/`workflow_dispatch` 触发；`ci.yml` 有 `concurrency.cancel-in-progress` ⇒ 再次 push 会取消同分支旧 run。
+- 合规：`cargo fmt` 以实际输出为准（100 列断行会改写手写换行）；核对提交必须 `git show --name-status`，不能信 message。
 
-## 环境（2026-09-11 修正根因）
+## 三、基线与发布事实
 
-- 主 worktree `/Volumes/My-Data/jason.wa/codebase/anySCP` 的 `node_modules` 是**部分安装树**。根因：WorkBuddy 沙箱用 `node-brokered-fs-shim.cjs` 代理 Node FS，**拒绝 `pnpm install` 的 `symlink`/`mkdir`**（`ERR_PNPM_CODEBUDDY_BROKER_DENY`），`/tmp` 与托管工作区都一样。残留物 `node_modules.partial-20260907/` 即证据。
-- 后果：本地 `tsc --noEmit` **run-to-run 不稳定**（实测同树同命令：一次 240 errors/exit 2，一次 0 errors/exit 0；`--traceResolution` 显示模块解析其实成功）。
-  **⇒ 本机任何依赖完整 node_modules 的前端命令（tsc/vitest/vite build）结论一律不可采信，以 CI 为准。** 修复需在非沙箱终端重跑 `pnpm install --frozen-lockfile`。
-- CI 只在 `main` / PR / `workflow_dispatch` 触发。worktree 分支要用 `gh workflow run ci.yml --ref <branch>` 手动触发验证。
-- `cargo` 不在非交互 shell PATH：`export PATH="/Volumes/My-Data/jason.wa/.cargo/bin:$PATH"; export CARGO_HOME="/Volumes/My-Data/jason.wa/.cargo"`。`gh` 用绝对路径 `/opt/homebrew/bin/gh` 且必须带 `-R jincaiw/anySSH`。
-- **macOS BSD `grep` 不支持 `\b` / `\s`，BRE 下 `\|` 交替也不可靠** → 审计脚本统一用 `grep -E`，否则会静默假阴性。
+- 单测 **311**（2026-09-11）；`--test-threads=1|32`/`--release` 一致，无顺序依赖。llvm-cov 只 `--lib`：行 **47.66%** / 函数 **34.44%** / 区域 53.26%；20 文件 0% 属口径限制（命令层由 75 spec 驱动成品二进制），**勿重复调查**。`cargo-miri` 不可用（rusqlite/ring/portable-pty）。生产 `unwrap/expect` 基线 **13 处**（统计时要匹配 `#[cfg(all(test, unix))]`）。无 `benches/`/`criterion`；`tracing` 硬编码 `anyssh=debug,russh=info`（不读 `RUST_LOG`）且**只写 stdout** ⇒ 人工验证必须从终端启动（Windows GUI 启动零日志）。
+- 主窗口在 `src-tauri/src/lib.rs` 的 `WebviewWindowBuilder` 建（`tauri.conf.json` 的 `app.windows` 是 `[]`）。
+- **main 历史线性，合分支用 rebase 不要 merge commit**。仅 `jincaiw` remote。v0.15.0 已发布（2026-09-11）。
+- RDP 只支持 TLS/NLA：IronRDP 硬拒绝标准 RDP 安全层（**设计决策非缺陷**）。判定看 X.224 CC 的 `NEG_RSP selectedProtocol`（偏移 15..19，小端）：0=PROTOCOL_RDP 无解/1=SSL/2=NLA。`rdp.rs` 的 `explicit_rdp_rsp` 与 `ignored_negotiation` 两个布尔必须分开，合并会产生自相矛盾的错误文本。
 
-## CSP / RDP WASM（2026-09-11 启用 CSP；**这是最容易再次踩坏的点**）
+## 四、已知遗留缺口（非回归）
 
-`tauri.conf.json` 的 `app.security.csp` 已由 `null` 改为务实策略。三条指令**专为 RDP 存在，去掉任何一条 RDP 就整体失效（且静默）**：
-
-| 指令 | 为什么必需 |
-|---|---|
-| `script-src 'wasm-unsafe-eval'` | 编译 ironrdp WASM 模块 |
-| **`connect-src data:`** | **`rdp.init()` 的第一步是 `fetch(<内嵌 data:…wasm URL>)`** —— CSP 把 `fetch()` 一个 `data:` URL 当网络请求按 `connect-src` 校验，**`'self'` 和 `*` 都不覆盖 `data:` scheme，必须显式列出** |
-| `connect-src ws://127.0.0.1:*` | 自家 loopback 桥 `ws://127.0.0.1:<临时端口>/rdp\|/vnc/<token>`（`remote/bridge.rs:172,200`） |
-
-- WASM 不是「无资源抓取」：`@devolutions/iron-remote-desktop-rdp` 把 WASM 以 `data:application/wasm;base64,…` 常量内嵌，wasm-bindgen `__wbg_init` 里 `B === void 0 && (B = kA)` → `B = fetch(B)` → `instantiateStreaming`。
-- 失败模式：`rdp.init()` reject → 落外层 `catch` → **`RdpCanvas.tsx` 的 `host.appendChild(el)` 不执行 → 查看器根本不挂载**，UI 无有效提示。
-- `style-src 'unsafe-inline'` **不能去掉**：`@xterm/xterm/lib/xterm.js` 有 4 处 `createElement("style")` + `textContent` 注入（含 `_injectCss`）。
-- CSP 面已收敛：`dist/index.html` 只有同源外部 `<script type="module">`/`<link>`，**无内联脚本**；应用代码 `convertFileSrc`/`new WebSocket`/`eval` 均 0 处。
-- 回归护栏：`tests/e2e/specs/75-rdp-wasm-csp.spec.ts`（既读配置，也在真实 webview 内探测 `fetch(data:)` + `WebAssembly.instantiate` + `instantiateStreaming` 并回报 `securitypolicyviolation`）。
-- **写 CSP/WASM 测试的坑**：WebKit 只**在实例创建时**检查 `wasm-unsafe-eval`，`instantiateStreaming`/`compileStreaming`/`new Module` 全部绕过（WebKit bug 315489，2026-05 才修）⇒ 只用 `instantiateStreaming` 写的测试在 Linux CI 上**会假阴性**，必须用 `WebAssembly.instantiate(bytes)`。
-
-## 依赖审计门禁（2026-09-11 建立）
-
-- `deny.toml`（仓库根）+ CI job `Advisory audit (cargo-deny)`，**阻断式**（未加 `continue-on-error`）。
-- **`unmaintained` 默认是 error 级**，不是 warning ⇒ 必须显式登记，否则 `check advisories` 直接失败。`unmaintained`/`unsound` 在 0.20 取**作用域**（`all|workspace|transitive|none`），写 `"warn"` 报 `unexpected-value` 反序列化错误。
-- `cargo-deny-action@v2` 需显式 `manifest-path: src-tauri/Cargo.toml`（根目录没有 `Cargo.toml`）。
-- **quick-xml 不可升级（已定案，勿再当待办）**：`aws-creds 0.39.1` 与 `rust-s3 0.37.2`（**均为最新**）都写 `quick-xml = "^0.38"`，修复要求 `>=0.41.0` —— 跨 semver 大版本，`cargo update --precise` 必然冲突，`[patch.crates-io]` 会撞破坏性 API 变更。
-- `quick-xml 0.39.4` 来自 **proc-macro 构建期**（`wayland-scanner → … → wl-clipboard-rs → arboard → tauri-plugin-clipboard-manager`），非运行期；`0.38.4` 才是 host 依赖。
-- `cargo-audit 0.22` 的 JSON **无 `severity` 键**（用 `cvss`）。
-
-## 已修复（2026-09-11，分支 `chore/pre-release-hardening`，**6 提交，未推送**）
-
-`bb43826` 真删 `vendor/FreeRDP` gitlink（`git submodule status` fatal→exit 0）｜`ecd38e0` `serialport 4.10.0→4.10.1`（原版本**已被 crates.io yank 且是直接依赖**，由 `cargo deny` 的 yanked 报告暴露，非 `cargo audit`）｜`0ec9add` DB「库版本高于 App」保护 + `LATEST_SCHEMA_VERSION=20` 常量 + 3 测试、`SECURITY.md`、`.gitattributes`、`bundle.copyright` 双版权、两处 README 过期表述｜`6384ab2` `deny.toml` + CI 审计 job｜`6d06d16` 启用 CSP + `75-rdp-wasm-csp.spec.ts`｜`c3084f0` 审计报告 `docs/pre-release-acceptance-audit-2026-09-10.md` + 附录。
-
-**教训（仍在生效）**：核对提交必须用 `git show --name-status`，不能信 message（`975dc25` 声称删 gitlink 却从未生效）。`0.0.0-dev` 是**刻意占位**（由 `release.yml` 从 tag 注入、不回写仓库），不是缺陷。
-
-## CI 判定（2026-09-11 已完成，全部闭环）
-
-分支 `chore/pre-release-hardening`（7 提交）已推送 `jincaiw`。**CI run `34562021131` @ `c3084f0`，`run_attempt=1` 首次即绿，8/8 job success**（含新增 `Advisory audit (cargo-deny)` 与 4 个 E2E shard）。
-
-- **CSP 已被运行时证实不破坏应用**：4 shard 合计 75 spec PASSED / 0 FAILED、0 skipped；`75-rdp-wasm-csp.spec.ts` 落在 shard 4/4，在**真实 `wry 0.54.4 linux` webview** 内两条断言均 PASS ⇒ `connect-src data:` 与 `script-src 'wasm-unsafe-eval'` 均有效。
-- CI 独立复核：Rust `306 passed; 0 failed`（与本地一致）；日志含 `Downloaded serialport v4.10.1`。
-- 末条 `131259c` 仅改审计报告 Markdown，代码与已验证 SHA 字节一致 ⇒ 未重跑 CI（用 `git diff --name-only c3084f0..HEAD` 自证范围）。
-
-**待办：分支合并 main（未合并）。**
-
-> **2026-09-11 已完成**：该分支与 RDP 修复分支已 rebase 合并进 main（`a2f53d8`，10 个线性提交），并发布 **v0.15.0**（tag → `a2f53d8`，25 资产，latest.json 11 平台全签名）。**main 历史是线性的，合分支用 rebase 不要用 merge commit。**
-
-## RDP 只支持 TLS/NLA；标准 RDP 安全层无法连接（2026-09-11 定案，非缺陷）
-
-IronRDP 上游 `ironrdp-connector/src/connection.rs:266-268` 硬拒绝 `is_standard_rdp_security()`，官方原话 "The legacy RC4-based security is not supported in IronRDP"。这是**故意的设计决策**（标准 RDP 安全无预认证、易 MITM），不是 bug。
-
-- 判定：看 X.224 CC 的 `NEG_RSP selectedProtocol`（偏移 15..19，小端）。`0x0`=PROTOCOL_RDP（anySSH 无解）/ `0x1`=SSL / `0x2`=HYBRID(NLA)。
-- **服务端解法**：`HKLM\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp` 下 `SecurityLayer=2` + `UserAuthentication=1`，重启主机，且需有可用证书。堡垒机只代理标准 RDP 安全层时只能在设备侧改，或该主机继续用 `mstsc`。
-- anySSH 有**双重闸门**：① `rd_inspect_certificate` 必须先完成 TLS 握手取得证书指纹才能开标签页；② IronRDP 协议层拒绝。绕过 ① 也会被 ② 挡住。
-- `rdp.rs` 诊断的两个布尔必须分开：`explicit_rdp_rsp`（服务端回显式 `NEG_RSP selected=PROTOCOL_RDP`）与 `ignored_negotiation`（回裸 11 字节 CC、无协商载荷）。**合并二者会产出与自身 hex 自相矛盾的错误文本。** 测试常量同样要分清：`X224_CONFIRM_RDP`（显式选 RDP，19 字节）≠ `X224_CONFIRM_BARE_CC`（裸 CC，11 字节）。
-- 结论句必须放在 `tried` 变体列表**之前**：该列表约 700 字符，会把结论挤出连接弹窗可见区（表现为句子断在半个从句上）。
-
-
-
-## 测试/审计口径基线（2026-09-11 实测，勿重复测量）
-
-- 单测 **308**；`--test-threads=1|32` 与 `--release` 结果一致 ⇒ 无顺序依赖、无抖动。报告：`docs/pre-release-test-report-2026-09-11.md`。
-- **llvm-cov 只能 `--lib`**：行 47.18% / 函数 34.02% / 区域 52.85%。**20 个文件 0%** 属口径限制（命令层由 75 个 E2E spec 驱动成品二进制，不插桩），**不要再当成覆盖缺口重复调查**。
-- **`cargo-miri` 在本项目不可用**：`rusqlite`（C SQLite）、`ring`（汇编）、`portable-pty`（FFI）。数据竞争改以「多时序一致 + `unsafe` 零处 + 并发上限 3」举证。
-- 统计生产 `unwrap/expect` 时：测试模块可能写作 **`#[cfg(all(test, unix))]`** 而非 `#[cfg(test)]`，只匹配后者会误报。当前基线 **13 处**。
-- 无 `benches/`、无 `criterion` ⇒ 零基准数据；`tracing` 级别**硬编码** `anyssh=debug,russh=info`（**不读 `RUST_LOG`**）、无文件/rolling appender、**无 panic hook**。
-- `tauri.conf.json` 的 `app.windows` 是 **`[]`**；主窗口在 `src-tauri/src/lib.rs:179-182` 用 `WebviewWindowBuilder` 建（默认 1200×800，最小 800×500）。找窗口配置别只搜 conf。
-- 兼容矩阵：CI `ubuntu-22.04`(x86_64/WebKitGTK 4.1) · `macos-14`(aarch64 + x86_64/WKWebView) · `windows-latest`(x64/WebView2 **offlineInstaller** ⇒ `.msi` 229 MB，而 `.dmg` 仅 17 MB)。
-
-## 已知的死事件与遗留缺口（2026-09-11 确认，非本项目回归）
-
-- **`sftp:file-edited` / `scp:file-edited` / `s3:file-edited` 前端从未订阅**（前端只 listen `term:status`、`ssh:status`、`${channel}:output`、`*/:transfer`、`pf:status`、`serial:ports-changed`；`git log -S` 证明自初始提交起前端全历史无监听）⇒ 外部编辑器保存回传后远端列表不自动刷新。
-- 遥测**无应用内开关**，唯一退出为 `ANYSSH_DISABLE_TELEMETRY`；`remote/bridge.rs` 的 loopback WS **不校验 `Origin`**（靠 32B CSPRNG 单次令牌 + 60s TTL + 空闲自动关停兜底）。
-- **本机前端完全不可验证**（`node_modules` 为空）：任何前端改动只能以 CI 为准，不要在本地下结论。
+- `sftp:file-edited`/`scp:file-edited`/`s3:file-edited` 前端从未订阅 ⇒ 外部编辑器保存回传后远端列表不自动刷新。
+- 遥测无应用内开关，唯一退出 `ANYSSH_DISABLE_TELEMETRY`；bridge 的 loopback WS **不校验 Origin**（靠 32B CSPRNG 单次令牌 + 60s TTL 兜底）。
+- quick-xml 不可升级（**已定案勿再当待办**）：`aws-creds`/`rust-s3` 最新版都锁 `^0.38`，修复需 `>=0.41`，跨 semver 必冲突。0.39.4 来自 proc-macro 构建期。
+- E2E 环境性抖动未根治：冷容器固定 10s 等待、容器 DNS、Docker Hub oauth。唯一可复现类（`sshd-key` 就绪门）已修为**能力探测**（`wait_for_key_auth` 用 `ssh -o PreferredAuthentications=publickey` 试真连，而非 TCP 探活）。
