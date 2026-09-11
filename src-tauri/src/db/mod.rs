@@ -234,6 +234,21 @@ impl HostDb {
     // Migrations
     // -----------------------------------------------------------------------
 
+    /// Highest schema version this build knows how to produce.
+    ///
+    /// Every migration is additive (`CREATE TABLE IF NOT EXISTS` plus
+    /// `ALTER TABLE ... ADD COLUMN`), so an *older* app reading a *newer*
+    /// database would usually keep working by accident. It still refuses to
+    /// start: silently operating on a structure this build does not understand
+    /// is how a saved-host list or the credential vault gets half-written, and
+    /// the resulting bug report would point at the wrong release. A loud
+    /// failure with a recovery path is the cheaper bug.
+    ///
+    /// `fresh_database_reaches_the_latest_schema_version` pins this constant to
+    /// the last migration, so adding a migration without bumping it fails the
+    /// test suite instead of shipping.
+    const LATEST_SCHEMA_VERSION: i64 = 20;
+
     /// Reads the current schema version from `_meta` and applies every
     /// pending migration in order.  Each migration increments the version
     /// atomically so a crash mid-way is safe to resume.
@@ -245,6 +260,20 @@ impl HostDb {
                 |row| row.get(0),
             )
             .unwrap_or(0);
+
+        // Refuse a database written by a newer build before touching anything.
+        if version > Self::LATEST_SCHEMA_VERSION {
+            return Err(DbError::InitError(format!(
+                "this database was created by a newer version of anySSH \
+                 (schema v{version}, but this build understands up to v{}). \
+                 Upgrade anySSH to the latest release to open it. To start over \
+                 instead, quit anySSH and delete 'anyssh.db' from the app data \
+                 directory - the database is recreated empty, so saved hosts, \
+                 groups, snippets, port-forwarding rules and connection history \
+                 would be lost.",
+                Self::LATEST_SCHEMA_VERSION
+            )));
+        }
 
         if version < 1 {
             conn.execute_batch(
@@ -3153,5 +3182,64 @@ mod tests {
             .map(|g| g.id)
             .collect::<Vec<_>>();
         assert_eq!(ids, vec!["a", "b"], "order unchanged after rollback");
+    }
+
+    /// Pins `LATEST_SCHEMA_VERSION` to the newest migration. Adding a migration
+    /// without bumping the constant would make the guard reject databases this
+    /// very build just wrote, so fail here instead of in a user's hands.
+    #[test]
+    fn fresh_database_reaches_the_latest_schema_version() {
+        let (db, _dir) = test_db();
+        let conn = db.conn.lock().unwrap();
+        let version: i64 = conn
+            .query_row(
+                "SELECT CAST(value AS INTEGER) FROM _meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("schema_version row");
+        assert_eq!(
+            version,
+            HostDb::LATEST_SCHEMA_VERSION,
+            "a migration was added - bump LATEST_SCHEMA_VERSION to match"
+        );
+    }
+
+    /// A database from a newer build is refused, and the message names both
+    /// versions plus a recovery path rather than just failing cryptically.
+    #[test]
+    fn refuses_a_database_written_by_a_newer_build() {
+        let (db, _dir) = test_db();
+        let newer = HostDb::LATEST_SCHEMA_VERSION + 1;
+        {
+            let conn = db.conn.lock().unwrap();
+            conn.execute(
+                "INSERT OR REPLACE INTO _meta (key, value) VALUES ('schema_version', ?1)",
+                [newer.to_string()],
+            )
+            .expect("bump schema_version");
+        }
+
+        let conn = db.conn.lock().unwrap();
+        let err = HostDb::run_migrations(&conn).expect_err("newer schema must be rejected");
+        let msg = err.to_string();
+        assert!(
+            msg.contains(&format!("v{newer}")),
+            "names found version: {msg}"
+        );
+        assert!(
+            msg.contains(&format!("v{}", HostDb::LATEST_SCHEMA_VERSION)),
+            "names supported version: {msg}"
+        );
+        assert!(msg.contains("Upgrade anySSH"), "offers recovery: {msg}");
+    }
+
+    /// The guard must not misfire on the version this build actually writes:
+    /// re-running migrations on a current database stays a no-op.
+    #[test]
+    fn accepts_a_database_at_the_latest_schema_version() {
+        let (db, _dir) = test_db();
+        let conn = db.conn.lock().unwrap();
+        HostDb::run_migrations(&conn).expect("current schema must be accepted");
     }
 }

@@ -303,7 +303,7 @@ src-tauri/src/                # Rust 后端
 
 - **anySSH 是 [anySCP](https://github.com/macnev2013/anySCP)（作者 Nevil Macwan）的 fork** —— 衷心感谢原作者的杰出工作。上游项目 README 声明采用 MIT 协议；本 fork 继续沿用 MIT，并在 [LICENSE](LICENSE) 文件中保留原版权声明。
 - 基于 [Tauri](https://tauri.app) 构建
-- SSH 实现来自 [russh](https://github.com/warp-tech/russh)（Apache-2.0，本地补丁见 `src-tauri/vendor/russh`）
+- SSH 实现来自 [russh](https://github.com/warp-tech/russh)（Apache-2.0，直接使用 crates.io 依赖，无本地补丁）
 - 终端模拟来自 [xterm.js](https://xtermjs.org)
 - S3 支持来自 [rust-s3](https://github.com/durch/rust-s3)
 

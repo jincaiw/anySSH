@@ -314,7 +314,7 @@ This project is licensed under the MIT License -- see the [LICENSE](LICENSE) fil
 
 - **anySSH is a fork of [anySCP](https://github.com/macnev2013/anySCP) by Nevil Macwan** — heartfelt thanks for the original work. The upstream project's README states it is MIT-licensed; this fork continues under MIT and preserves the original copyright notice in the [LICENSE](LICENSE) file.
 - Built with [Tauri](https://tauri.app) by the Tauri team
-- SSH implementation powered by [russh](https://github.com/warp-tech/russh) (Apache-2.0, with a small local patch under `src-tauri/vendor/russh`)
+- SSH implementation powered by [russh](https://github.com/warp-tech/russh) (Apache-2.0, used as an unmodified crates.io dependency)
 - Terminal emulation powered by [xterm.js](https://xtermjs.org)
 - S3 support powered by [rust-s3](https://github.com/durch/rust-s3)
 

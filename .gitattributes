@@ -1,0 +1,50 @@
+# Repository-wide line-ending and binary-asset policy.
+#
+# anySSH is built on macOS, Linux and Windows and ships a mix of text sources
+# plus binary assets (fonts, icons, the vendored IronRDP WebAssembly module,
+# screenshots). Without this file, a Windows checkout with `core.autocrlf=true`
+# would rewrite LF to CRLF on checkout, and Git would happily attempt to
+# line-ending-normalise and text-diff binary files.
+#
+# `text=auto` normalises text to LF in the repository. This is a deliberate
+# no-op for the current history: no tracked file contains CRLF (verified with
+# `git grep -lI $'\r'` returning zero matches), so adopting this file does not
+# rewrite any existing blob. It only prevents regressions going forward.
+
+* text=auto
+
+# --- Fonts -----------------------------------------------------------------
+*.woff   binary
+*.woff2  binary
+*.ttf    binary
+*.otf    binary
+
+# --- WebAssembly -----------------------------------------------------------
+*.wasm   binary
+
+# --- Icons and images ------------------------------------------------------
+*.icns   binary
+*.ico    binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.gif    binary
+*.webp   binary
+*.bmp    binary
+
+# --- Archives and installer payloads --------------------------------------
+*.zip    binary
+*.gz     binary
+*.tar    binary
+*.7z     binary
+*.dmg    binary
+*.exe    binary
+*.msi    binary
+*.deb    binary
+*.rpm    binary
+*.sig    binary
+
+# --- Generated files -------------------------------------------------------
+# Keep lockfiles out of language statistics and diff-noise review.
+pnpm-lock.yaml  linguist-generated=true
+Cargo.lock      linguist-generated=true

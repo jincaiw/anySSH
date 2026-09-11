@@ -18,7 +18,7 @@
   "bundle": {
     "active": true,
     "targets": "all",
-    "copyright": "© 2026 Nevil Macwan",
+    "copyright": "© 2025 Nevil Macwan (anySCP); © 2026 jincaiw and anySSH contributors",
     "category": "DeveloperTool",
     "shortDescription": "A modern desktop client for SSH, SFTP, and S3",
     "longDescription": "anySSH is a free, open-source desktop application that combines an SSH terminal, SFTP file explorer, and S3-compatible cloud storage browser into a single, fast, privacy-first tool. Built with Tauri v2, it runs natively on macOS, Windows, and Linux.",
