@@ -134,8 +134,32 @@ AnySSH 是一款免费开源的桌面应用，将 SSH 终端、SFTP 文件浏览
 
 - 凭据保存在**操作系统钥匙串**中（macOS Keychain、Windows 凭据管理器、Linux libsecret/KWallet）
 - SSH 私钥和密码永不离开 Rust 后端进程
-- 完全离线 —— 安装后无需联网
+- 使用 anySSH 无需联网 —— SSH、SFTP、SCP、S3、端口转发、终端与远程桌面查看器全部可完全离线工作
 - 开源 —— 代码可自行审计
+
+### 📊 遥测
+
+anySSH 会向 PostHog 端点发送**匿名使用计数**，用途是了解哪些功能真正被使用。它不是崩溃上报，也不会携带你的数据，并且可以关闭（见下）。
+
+**发送内容**：事件名（`sftp_upload_enqueued`、`tunnel_started`、`transfer_completed` 等共 51 个），以及粗粒度属性 —— 文件数量、字节总量、传输方向、协议名（`sftp`/`scp`/`s3`）、下拉框中所选的 S3 服务商预设 id、布尔标记，以及你启动的外部编辑器显示名。每个事件都会附带应用版本、操作系统与 CPU 架构。
+
+**不发送内容**：主机名、服务器地址、用户名、密码、密钥材料、文件路径、文件名、片段内容、存储桶名与对象名、端口转发目标。凭据永不离开操作系统钥匙串。
+
+**标识符**：首次启动时生成一个随机 UUID，保存在你的数据旁边（应用数据目录下的 `.device_id`；便携模式则位于便携目录内）。它不由你的机器、账号或网络派生。端点会从你的 IP 收到请求，并连同基于 IP 的粗略地理位置一并记录。
+
+**如何关闭**：启动前把 `ANYSSH_DISABLE_TELEMETRY` 设为任意值，此时不会创建任何 HTTP 客户端，数据永不发出。
+
+```bash
+# macOS / Linux
+ANYSSH_DISABLE_TELEMETRY=1 anyssh
+```
+
+```powershell
+# Windows（PowerShell）
+$env:ANYSSH_DISABLE_TELEMETRY = "1"; .\anySSH.exe
+```
+
+发送是「即发即忘」的：端点不可达时事件直接丢弃，不影响任何其它功能。
 
 ## 📸 截图
 

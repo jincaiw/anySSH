@@ -64,6 +64,29 @@ Out of scope:
   server, unless they cross a trust boundary anySSH is expected to enforce,
 - missing hardening that has no demonstrated impact.
 
+## Telemetry
+
+anySSH sends anonymous usage counters to PostHog. The user-facing description
+lives in the README's "Telemetry" section; for anyone auditing the app's
+network surface, the facts that matter are:
+
+- Exactly one kind of outbound request: an HTTPS `POST` to
+  `https://us.i.posthog.com/capture/` per event, fire-and-forget. The
+  application itself makes no other outbound request.
+- Payload: an event name, coarse counters and flags, the app version, OS and
+  CPU architecture, plus a per-install random UUID persisted as `.device_id`.
+  Fifty-one events are defined, none of which carries a hostname, username,
+  file path, file name, bucket or object name, snippet body, or credential.
+- The endpoint observes the source IP address and records coarse IP-based
+  geolocation.
+- Suppressed entirely when `ANYSSH_DISABLE_TELEMETRY` is set -- the HTTP client
+  is then never constructed (`src-tauri/src/telemetry.rs`).
+- There is currently **no in-app switch**; the environment variable is the only
+  opt-out.
+
+A telemetry payload that ever includes a credential, hostname, path or file
+name is a security bug -- please report it as one.
+
 ## Known accepted advisories
 
 These are knowingly carried and documented rather than silently ignored. See
@@ -88,6 +111,17 @@ These are knowingly carried and documented rather than silently ignored. See
 ## Dependency auditing
 
 `deny.toml` configures [`cargo-deny`](https://embarkstudios.github.io/cargo-deny/)
-and is enforced in CI (`Advisory audit` job in `.github/workflows/ci.yml`), so
-a newly published advisory against any dependency fails the build unless it is
-explicitly accepted with a documented reason.
+and is enforced in CI (`Dependency audit (cargo-deny)` job in
+`.github/workflows/ci.yml`), so a newly published advisory against any
+dependency fails the build unless it is explicitly accepted with a documented
+reason.
+
+The same job also gates **licences**. `deny.toml`'s `[licenses]` allow-list is
+permissive-only, so a dependency that is copyleft-only stops the release
+instead of shipping unnoticed. Copyleft licences do appear in the resolved
+graph -- `unescaper` is `MIT OR GPL-3.0-only`, `r-efi` is
+`MIT OR Apache-2.0 OR LGPL-2.1-or-later` -- but only as unused alternatives,
+which cargo-deny satisfies through the MIT/Apache branch. `MPL-2.0`
+(`attohttpc`, `cssparser`, `option-ext`, `selectors`, `serialport`,
+`dtoa-short`) is file-level copyleft and imposes no obligation on anySSH as an
+unmodified consumer.

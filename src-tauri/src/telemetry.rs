@@ -6,13 +6,25 @@
 
 use serde_json::{json, Value};
 use std::sync::OnceLock;
+use std::time::Duration;
 use tokio::sync::mpsc;
 
 const POSTHOG_KEY: &str = "phc_P7W8CuYM9uU4mnP8xAplcRNuBjOYTESTI9dTDNDo58A";
 const POSTHOG_HOST: &str = "https://us.i.posthog.com";
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-static TX: OnceLock<mpsc::UnboundedSender<(String, Value)>> = OnceLock::new();
+/// Depth of the outbound event queue, and per-request timeout.
+///
+/// Both are load-bearing. The worker below is the only consumer and it awaits
+/// the network, so an unbounded queue plus a request with no timeout meant a
+/// middlebox that accepts the TCP connection but never answers could stall the
+/// worker forever while events piled up in memory. Events are fire-and-forget
+/// by contract, so dropping the excess is the correct behaviour: a full queue
+/// (or a slow request) must never grow the process or block a caller.
+const QUEUE_DEPTH: usize = 256;
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(10);
+
+static TX: OnceLock<mpsc::Sender<(String, Value)>> = OnceLock::new();
 
 /// Initialize the telemetry background worker.
 /// Safe to call from `.setup()` — the worker is spawned on a background thread
@@ -25,7 +37,7 @@ pub fn init() {
         return;
     }
 
-    let (tx, mut rx) = mpsc::unbounded_channel::<(String, Value)>();
+    let (tx, mut rx) = mpsc::channel::<(String, Value)>(QUEUE_DEPTH);
     if TX.set(tx).is_err() {
         return;
     }
@@ -41,7 +53,12 @@ pub fn init() {
             .expect("telemetry runtime");
 
         rt.block_on(async move {
-            let client = reqwest::Client::new();
+            // `reqwest::Client::new()` has NO timeout by default; without one a
+            // half-open connection parks this worker indefinitely.
+            let client = match reqwest::Client::builder().timeout(REQUEST_TIMEOUT).build() {
+                Ok(client) => client,
+                Err(_) => return,
+            };
             while let Some((event, mut properties)) = rx.recv().await {
                 if let Some(obj) = properties.as_object_mut() {
                     obj.insert("$app_version".to_string(), json!(APP_VERSION));
@@ -72,10 +89,10 @@ pub fn init() {
 /// Send a telemetry event.  Non-blocking; safe to call from any thread or task.
 ///
 /// If `init()` has not been called yet (e.g. in unit tests) the call is a
-/// silent no-op.
+/// silent no-op, and so is a send to a full queue — see [`QUEUE_DEPTH`].
 pub fn capture(event: &str, properties: Value) {
     if let Some(tx) = TX.get() {
-        let _ = tx.send((event.to_string(), properties));
+        let _ = tx.try_send((event.to_string(), properties));
     }
 }
 

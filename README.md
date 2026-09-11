@@ -131,8 +131,47 @@ AnySSH is a free, open-source desktop application that combines an SSH terminal,
 
 - Credentials stored in your **OS keychain** (macOS Keychain, Windows Credential Manager, Linux libsecret/KWallet)
 - SSH private keys and passwords never leave the Rust backend process
-- Fully offline -- no internet connection required after installation
+- No internet connection is required to use anySSH -- SSH, SFTP, SCP, S3, tunnels, terminals and the remote-desktop viewers all work fully offline
 - Open source -- audit the code yourself
+
+### 📊 Telemetry
+
+anySSH sends **anonymous usage counters** to a PostHog endpoint. This is how we
+learn which features people actually use. It is not a crash reporter, and it
+never carries your data. It can be switched off (see below).
+
+**What is sent.** Event names -- `sftp_upload_enqueued`, `tunnel_started`,
+`transfer_completed` and 48 others -- plus coarse properties: file counts, byte
+totals, transfer direction, protocol name (`sftp`/`scp`/`s3`), the S3 provider
+preset id you picked from the dropdown, numeric flags, and the display name of
+the external editor you launched. App version, OS and CPU architecture are
+attached to every event.
+
+**What is never sent.** Hostnames, server addresses, usernames, passwords, key
+material, file paths, file names, snippet contents, bucket or object names, and
+port-forwarding targets. Your credentials never leave the OS keychain.
+
+**Identifier.** A random UUID is generated on first launch and stored beside
+your data (`.device_id` in the app data directory, or inside the portable folder
+in portable mode). It is not derived from your machine, your account, or your
+network. The endpoint receives the request from your IP address and records it
+along with coarse IP-based geolocation.
+
+**Turning it off.** Set `ANYSSH_DISABLE_TELEMETRY` to any value before launching
+the app; no HTTP client is then created and nothing is ever sent.
+
+```bash
+# macOS / Linux
+ANYSSH_DISABLE_TELEMETRY=1 anyssh
+```
+
+```powershell
+# Windows (PowerShell)
+$env:ANYSSH_DISABLE_TELEMETRY = "1"; .\anySSH.exe
+```
+
+Sending is fire-and-forget: if the endpoint is unreachable, events are dropped
+and nothing else is affected.
 
 ## 📸 Screenshots
 
