@@ -106,11 +106,13 @@ jobs:
   # noisy, flip that one line rather than deleting the job, and move the
   # register maintenance into a scheduled workflow.
   #
-  # Note: cargo-deny only checks the advisories database here. `bans`, `licenses`
-  # and `sources` are intentionally not enabled yet -- each needs its own
-  # allow-list derived from the real dependency graph before it can gate CI.
+  # Note: this job gates advisories AND licenses. `bans` and `sources` are
+  # still left out: both pass under cargo-deny's defaults, which are warn-level
+  # (`multiple-versions = "warn"`, `unknown-registry = "warn"`), so enabling
+  # them as-is would add noise without blocking anything. Promoting them to a
+  # deny-level policy is a separate change.
   advisories:
-    name: Advisory audit (cargo-deny)
+    name: Dependency audit (cargo-deny)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -120,7 +122,7 @@ jobs:
           # `manifest-path` is always passed by the action; point it at the
           # crate rather than relying on a root ./Cargo.toml that does not exist.
           manifest-path: src-tauri/Cargo.toml
-          command: check advisories
+          command: check advisories licenses
           log-level: warn
 
   # Build the runner image ONCE per CI run and warm a cross-run GitHub Actions

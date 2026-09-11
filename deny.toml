@@ -1,9 +1,10 @@
 # cargo-deny configuration for anySSH.
 #
-# Enforced in CI by the "Advisory audit" job in .github/workflows/ci.yml.
-# Run it locally from src-tauri/:
+# Enforced in CI by the "Dependency audit (cargo-deny)" job in
+# .github/workflows/ci.yml, which runs `check advisories licenses`.
+# Run the same thing locally from src-tauri/:
 #
-#     cargo deny check advisories
+#     cargo deny check
 #
 # ---------------------------------------------------------------------------
 # The `ignore` list below is an ACCEPTED-RISK REGISTER, not a mute button.
@@ -80,3 +81,43 @@ ignore = [
 #
 # Note: in cargo-deny 0.20 `unmaintained` and `unsound` take a SCOPE
 # ("all" | "workspace" | "transitive" | "none"), not a lint level.
+
+# ---------------------------------------------------------------------------
+# License policy. Deliberately PERMISSIVE-ONLY: if a future dependency -- or a
+# new version of an existing one -- is copyleft, CI must stop the release so a
+# human decides, exactly like the advisory register above.
+#
+# Copyleft licences DO appear in the resolved graph, but only as unused
+# alternatives inside dual/triple licences:
+#   unescaper 0.1.10  -> "MIT OR GPL-3.0-only"
+#   r-efi 5.3.0/6.0.0 -> "MIT OR Apache-2.0 OR LGPL-2.1-or-later"
+# cargo-deny satisfies an OR expression from any single branch, so both obey
+# via MIT/Apache. They are intentionally NOT listed below, so a genuinely
+# GPL- or LGPL-only dependency still fails the build.
+#
+# MPL-2.0 (attohttpc, cssparser, option-ext, selectors, serialport,
+# dtoa-short) is file-level copyleft: using these unmodified crates imposes no
+# source-disclosure obligation on anySSH itself.
+# ---------------------------------------------------------------------------
+
+[licenses]
+version = 2
+allow = [
+    "0BSD",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-1-Clause",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "BSL-1.0",
+    "CC0-1.0",
+    "CDLA-Permissive-2.0",
+    "ISC",
+    "MIT",
+    "MIT-0",
+    "MPL-2.0",
+    "Unicode-3.0",
+    "Unlicense",
+    "Zlib",
+]
+
