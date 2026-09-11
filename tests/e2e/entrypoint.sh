@@ -27,12 +27,58 @@ wait_for() {
     return 1
 }
 
+# Readiness by capability, for the one target where "the port is open" is not
+# the same thing as "the suite can use it".
+#
+# sshd-key authenticates with the keypair in the shared `test-ssh-keys` volume.
+# A TCP probe (or /dev/tcp) succeeds as soon as sshd binds the port, which can
+# happen before `authorized_keys` has been installed in the container's /config
+# volume — a fresh volume in CI means that install is genuinely on the critical
+# path. The suite then fails in whichever spec runs first with
+# `publickey ssh-ed25519 rejected`, which reads like an anySSH bug and is not.
+#
+# Probing an actual public-key authentication also absorbs transient container
+# DNS failures ("Temporary failure in name resolution"), the other way this
+# target has failed: resolving the name is part of the probe.
+#
+# Failure here is loud and early on purpose. A wrong key must not be waited out
+# and then reported as a mysterious spec failure.
+wait_for_key_auth() {
+    local host="$1" port="$2" user="$3" key="$4"
+    echo "[entrypoint] waiting for public-key auth on $host:$port as $user..."
+    if [ ! -r "$key" ]; then
+        echo "[entrypoint] private key $key is missing or unreadable" >&2
+        return 1
+    fi
+    for _ in $(seq 1 60); do
+        if ssh -i "$key" \
+            -o BatchMode=yes \
+            -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null \
+            -o ConnectTimeout=3 \
+            -o IdentitiesOnly=yes \
+            -o PreferredAuthentications=publickey \
+            -p "$port" "$user@$host" true >/dev/null 2>&1; then
+            echo "[entrypoint] $host accepts the test key"
+            return 0
+        fi
+        sleep 1
+    done
+    echo "[entrypoint] timed out: $host never accepted the test key at $key" >&2
+    return 1
+}
+
 wait_for "${SSHD_PASS_HOST:-sshd-pass}" "${SSHD_PASS_PORT:-2222}" sshd-pass
 wait_for "${SSHD_SUDO_HOST:-sshd-sudo}" "${SSHD_SUDO_PORT:-2222}" sshd-sudo
-wait_for "${SSHD_KEY_HOST:-sshd-key}"   "${SSHD_KEY_PORT:-2222}"   sshd-key
-wait_for "${SSHD_SCP_HOST:-sshd-scp}"   "${SSHD_SCP_PORT:-2222}"   sshd-scp
+# sshd-key is probed by capability rather than by port — see wait_for_key_auth.
+wait_for "${SSHD_SCP_HOST:-sshd-scp}" "${SSHD_SCP_PORT:-2222}" sshd-scp
 wait_for "${SSHD_SCP_BUSYBOX_HOST:-sshd-scp-busybox}" "${SSHD_SCP_BUSYBOX_PORT:-2222}" sshd-scp-busybox
 wait_for "${SSHD_BASTION_HOST:-sshd-bastion}" "${SSHD_BASTION_PORT:-2222}" sshd-bastion
+wait_for_key_auth \
+    "${SSHD_KEY_HOST:-sshd-key}" \
+    "${SSHD_KEY_PORT:-2222}" \
+    "${SSH_USER:-testuser}" \
+    "${SSH_KEY_PATH:-/keys/id_ed25519}"
 # NB: sshd-tunnel-target is intentionally unreachable from the runner (isolated
 # network) — its readiness is gated by `service_healthy` in docker-compose, so
 # there is deliberately no wait_for here (a TCP probe would always time out).
