@@ -284,4 +284,108 @@ mod tests {
         assert!(s.starts_with('/'));
         assert!(Path::new(&s).exists());
     }
+
+    /// Open descriptors for this process. `/proc/self/fd` on Linux, `/dev/fd`
+    /// on macOS. Both include the directory handle used to list them, which
+    /// cancels out of a before/after comparison.
+    fn open_fd_count() -> usize {
+        let dir = if cfg!(target_os = "linux") {
+            "/proc/self/fd"
+        } else {
+            "/dev/fd"
+        };
+        std::fs::read_dir(dir).map(|d| d.count()).unwrap_or(0)
+    }
+
+    /// Lowest descriptor count seen over a short window.
+    ///
+    /// `open_fd_count` is process-wide and the rest of the suite runs in
+    /// parallel in this same process (the bridge tests bind listeners and open
+    /// websockets), so a single sample is meaningless. Concurrent activity can
+    /// only ever *add* descriptors to this process — never remove one this
+    /// process holds — so the minimum over a window is the honest estimate of
+    /// this process's own floor.
+    async fn fd_floor(samples: usize) -> usize {
+        let mut floor = open_fd_count();
+        for _ in 0..samples {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            floor = floor.min(open_fd_count());
+        }
+        floor
+    }
+
+    /// One PTY session owns a master fd, a slave fd and a reader OS thread, and
+    /// `shutdown` is where all three are supposed to be retired — including the
+    /// SIGHUP-then-process-group-SIGKILL escalation that exists precisely for
+    /// shells which trap SIGHUP or hold a foreground job open.
+    ///
+    /// A single session can look fine while leaking: the shell exits, the tab
+    /// closes, everything "works" — but if the master never sees EOF the reader
+    /// thread and its descriptors live on, and the process only notices after a
+    /// few hundred tab open/close cycles as `EMFILE`.
+    ///
+    /// The check is deliberately **differential** (two equal batches back to
+    /// back) rather than against a single baseline taken up front: neighbour
+    /// tests perturb the process-wide count, and two measurements taken under
+    /// comparable conditions cancel that systematic noise, while a genuine
+    /// per-cycle leak still shows up as a step between the batches.
+    #[tokio::test]
+    async fn repeated_pty_lifecycle_does_not_leak_descriptors() {
+        // A shell guaranteed to exist on both CI (Linux) and macOS.
+        let shell = "/bin/sh";
+        if !Path::new(shell).exists() {
+            return;
+        }
+
+        // Warm up once so anything the runtime creates lazily on first use (the
+        // kqueue/epoll fd, timer fd, …) is already counted in both batches.
+        {
+            let mut io =
+                LocalPtyIo::open(Some(shell), None, 80, 24, "xterm-256color").expect("warm-up pty");
+            io.shutdown().await;
+        }
+
+        const BATCH: usize = 6;
+
+        /// Run `BATCH` full open → shutdown → drop cycles and return the
+        /// process's descriptor floor afterwards.
+        async fn run_batch(shell: &str) -> usize {
+            for cycle in 0..BATCH {
+                let mut io = LocalPtyIo::open(Some(shell), None, 80, 24, "xterm-256color")
+                    .unwrap_or_else(|e| panic!("cycle {cycle}: pty open failed: {e}"));
+                // `shutdown` must always make progress: the escalation loop is
+                // bounded, so a shell that ignores SIGHUP cannot pin this await.
+                tokio::time::timeout(std::time::Duration::from_secs(10), io.shutdown())
+                    .await
+                    .expect("pty shutdown must not hang");
+                // The session loop must observe the end of the session instead
+                // of blocking on a PTY that is still open.
+                let mut buf = [0u8; 64];
+                let eof =
+                    tokio::time::timeout(std::time::Duration::from_secs(5), io.read(&mut buf))
+                        .await
+                        .expect("read after shutdown must not block")
+                        .expect("read after shutdown must not fail");
+                assert_eq!(
+                    eof, 0,
+                    "a torn-down session must report EOF, got {eof} bytes"
+                );
+                // The descriptor is only released when the struct — and with it
+                // the master — is dropped, so this scope must end each cycle.
+            }
+            fd_floor(24).await
+        }
+
+        let first = run_batch(shell).await;
+        let second = run_batch(shell).await;
+
+        // Each batch is BATCH cycles, so a leak of even one descriptor per
+        // session raises the floor by 6. The allowance covers the pty bookkeeping
+        // slack that is not a leak; it is far below what a real leak produces.
+        assert!(
+            second <= first + 3,
+            "{BATCH} pty open/close cycles leaked descriptors: \
+             floor after first batch={first}, after second batch={second} (allowance 3)"
+        );
+    }
 }

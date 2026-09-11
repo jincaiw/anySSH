@@ -670,4 +670,71 @@ mod tests {
         assert!(mgr.shared.pending.is_empty());
         assert!(mgr.shared.active.is_empty());
     }
+
+    /// Registration and retirement are supposed to be exactly balanced: every
+    /// `open_*` adds one entry, every `close_session` removes one. An entry that
+    /// outlives its tab is not a cosmetic leak — a non-empty `pending` or
+    /// `active` map is what keeps the loopback listener (and its port) pinned
+    /// for the rest of the process lifetime, because the idle watchdog only
+    /// shuts down when both maps are empty.
+    ///
+    /// Deliberately oversized (thousands of cycles rather than a handful) so
+    /// that a per-cycle accounting error shows up as a count mismatch instead
+    /// of hiding inside an allowance.
+    #[test]
+    fn session_registry_accounting_returns_to_empty() {
+        let mgr = BridgeManager::new();
+        const N: usize = 2_000;
+        let mut tokens = Vec::with_capacity(N);
+
+        for i in 0..N {
+            // Interleave both route kinds: they share one registry, and the
+            // RDP arm carries an extra fingerprint field.
+            let endpoint = if i % 2 == 0 {
+                mgr.open_vnc("10.0.0.1".to_string(), 5900, 1)
+            } else {
+                mgr.open_rdp("10.0.0.2".to_string(), 3389, 1, "AA:BB:CC".to_string())
+            };
+            assert!(endpoint.ws_url.contains(&endpoint.token));
+            tokens.push(endpoint.token);
+        }
+
+        assert_eq!(mgr.shared.pending.len(), N, "registrations were dropped");
+        assert_eq!(mgr.shared.active.len(), 0);
+
+        for token in &tokens {
+            mgr.close_session(token).expect("close a pending route");
+        }
+
+        assert!(mgr.shared.pending.is_empty(), "pending routes leaked");
+        assert!(mgr.shared.active.is_empty(), "active sessions leaked");
+
+        // A second close of an already-retired token must be reported, not
+        // reported as success — otherwise a stale frontend id looks healthy.
+        assert!(matches!(
+            mgr.close_session(&tokens[0]),
+            Err(BridgeError::NoSuchSession(_))
+        ));
+    }
+
+    /// The token is the *only* thing guarding the loopback listener: any local
+    /// process, and any web page the user visits, can reach
+    /// `ws://127.0.0.1:<port>/…` without needing an Origin header to be
+    /// accepted. 32 bytes from the OS CSPRNG, hex-encoded, is what makes that
+    /// reachability irrelevant — so a repeat here would be a cross-session
+    /// access bug, not a harmless coincidence.
+    #[test]
+    fn tokens_are_unique_and_full_length_across_many_draws() {
+        const N: usize = 20_000;
+        let mut seen = std::collections::HashSet::with_capacity(N);
+        for i in 0..N {
+            let token = new_token();
+            assert_eq!(token.len(), 64, "draw {i}: token is not 32 hex bytes");
+            assert!(
+                token.bytes().all(|b| b.is_ascii_hexdigit()),
+                "draw {i}: token is not hex"
+            );
+            assert!(seen.insert(token), "draw {i}: duplicate bridge token");
+        }
+    }
 }
