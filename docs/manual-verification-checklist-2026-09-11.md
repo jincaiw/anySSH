@@ -79,13 +79,32 @@ shutdown /r /t 0
 
 ### 2.1 Telnet（交换机 / 网元 / 嵌入式设备）
 
+**先用夹具验证 NAWS 协商**（不需要任何真机，1 分钟）：
+
+```bash
+# 终端 A：启动"被动式网元"（它从不主动发 DO NAWS —— 这正是要测的场景）
+python3 tests/manual/telnet_naws_fixture.py --port 2323
+# 终端 B：不需要；直接在 anySSH 里新建 Telnet 会话连 127.0.0.1:2323
+```
+
+然后在 anySSH 里**改变窗口大小**（最大化 / 拖动边缘）。
+
+| 步骤 | 期望结果 |
+|---|---|
+| 连接 127.0.0.1:2323 | 出现夹具横幅，且终端里打印 `[device] window = <cols>x<rows>` |
+| 改变 anySSH 窗口大小 | 终端里**立刻**打印新的 `[device] window = …`；夹具日志出现新的 `client -> SB NAWS cols=… rows=…` |
+
+夹具日志里若出现 **`client -> WILL NAWS (its own initiative)`**，即证明客户端**不等服务端先问**就发起了协商（这是本项的核心）。夹具自测已通过（模拟客户端：`WILL NAWS` → `DO NAWS` → `SB 132x43` → `SB 100x30`）。
+
+> 夹具是「**支持 NAWS 但不主动发起**」的设备，覆盖最常见的一类网元。**真机仍是最强证据**——不同厂商对 NAWS 的响应时机不同，若手边有设备，下面这张表照做一遍：
+
 | 步骤 | 期望结果 |
 |---|---|
 | 连接一台真实 telnet 设备（23 端口） | 出现登录提示，可交互 |
 | 改变 anySSH 窗口大小（如最大化） | 设备端窗口尺寸同步变化 |
 | 在设备上执行 `show terminal`（或等效命令） | 报告的 rows/cols 与 anySSH 当前尺寸一致 |
 
-**为什么单独列为一步**：anySSH 必须**主动**发 `IAC WILL NAWS`。大量网元/嵌入式 telnetd 从不发起协商，纯被动实现的窗口尺寸会永远停在 80×24。**这一项失败即说明 NAWS 协商未生效。**
+**为什么单独列为一步**：anySSH 必须**主动**发 `IAC WILL NAWS`（`term/telnet.rs` 的 `connect()` 在建连后立即 `write_all(command(WILL, OPT_NAWS))`）。大量网元/嵌入式 telnetd 从不发起协商，纯被动实现的窗口尺寸会永远停在 80×24。**这一项失败即说明 NAWS 协商未生效。**
 
 | 步骤 | 期望结果 |
 |---|---|
