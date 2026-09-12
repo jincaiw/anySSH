@@ -7,6 +7,7 @@
 - run `34609578512` @ `0fc493d` —— **8/8 job success**（attempt 1 即绿，代码基线）
 - run `34613427870` @ `2c31fd2`（**含代码的末次提交**，其后 2 条为纯文档修订）—— attempt 1 有 3 个 E2E shard 失败，**attempt 2 重跑同一二进制后 8/8 success**、75 spec PASSED。详见 §3.4：均为**环境性**，且**未通过放宽超时/加重试掩盖**
 **范围**：基础质量 / 自动化测试 / 功能验收 / 安全 / 性能与稳定性 / 数据与部署 / 兼容性 / 可运维性
+**实机验证（2026-09-12 追加）**：§12 第 9 项（升级 + 回滚）已在 macOS arm64 实机执行完毕，另含**应用内升级端到端**、`autoUpdate` 开关语义、schema 闸门与 Gatekeeper 复现 —— 结果与证据见 **§12.1**
 
 ---
 
@@ -19,9 +20,9 @@
 | 3. 功能验收 | **PASS**（1 WARN） | 核心链路单测 + E2E 双覆盖；`*:file-edited` 死事件（低危） |
 | 4. 安全检查 | **PASS**（2 WARN） | 无注入/XSS 路径；`unsafe` 0；凭据加密存储；遥测已披露 |
 | 5. 性能与稳定性 | **WARN**（已收窄） | 新增资源泄漏回归 + 400 轮句柄/延迟实测；仍**无应用层基准、无 4 小时长跑与内存曲线** |
-| 6. 数据与部署 | **PASS** | schema 保护 + 迁移幂等 + 备份往返；实机安装待人工 |
-| 7. 兼容性 | **WARN** | 3 平台 × 4 目标由 CI 构建；DPI 与实机仅部分覆盖；**macOS 未签名/未公证（R-8）** |
-| 8. 可运维性 | **WARN** | 无日志落盘、无 panic hook、级别硬编码 |
+| 6. 数据与部署 | **PASS** | schema 保护 + 迁移幂等 + 备份往返；**macOS 实机安装、升级与回滚已实测通过**（§12.1 V3–V6） |
+| 7. 兼容性 | **WARN** | 3 平台 × 4 目标由 CI 构建；DPI 与实机仅部分覆盖（Windows/Linux 未做）；**macOS 未签名/未公证（R-8）** |
+| 8. 可运维性 | **WARN** | 无日志落盘、无 panic hook、级别硬编码；**启动期致命错误实测呈现为 SIGABRT 且 GUI 无提示（R-9）** |
 
 **无 FAIL 项**（无阻塞级缺陷、无高危安全问题）。
 **CI 已达全绿**，但需知悉两点：① E2E 存在**环境性抖动**（§3.4），末次全绿是**重跑失败 job 后**取得的；② 因此判绿时务必分清「一次即绿」与「重跑才绿」。
@@ -229,10 +230,11 @@ cd src-tauri && cargo test --release --lib -- --ignored --nocapture soak_pty_chu
 | schema 保护 | `LATEST_SCHEMA_VERSION` 常量 + 「库版本高于 App」保护 + 3 个配套测试 |
 | 迁移幂等 | `migrations_are_idempotent_across_reopen`：重复打开不重复迁移 |
 | 备份 / 恢复 | `build_and_restore_roundtrip_is_compact` 单测 + E2E `62-data-backup-restore`；AES-256-GCM + Argon2id，口令错误时 AEAD 标签校验失败、**不改动任何数据** |
-| 升级 | 更新器端点实测 http 200、`version 0.15.0`、**11 平台全部带签名**；`createUpdaterArtifacts: v1Compatible` |
+| 升级 | 更新器端点实测 http 200、`version 0.15.0`、**11 平台全部带签名**；`createUpdaterArtifacts: v1Compatible`。**应用内升级已端到端实测**：0.14.46 在 20 秒内自行升级为 0.15.0，且装出的 bundle 与官方 dmg **逐字节一致**（§12.1 V6）⇒ minisign 校验、下载、替换、重启四段全部有效 |
+| 回滚 | **实测通过**：0.14.46 能正常打开 0.15.0 写的库，且**对库零写入**（§12.1 V4）；schema 闸门在人为制造 `schema_version=21` 时**正确拒绝**且不改数据（§12.1 V5） |
 | Windows 无网安装 | `webviewInstallMode: offlineInstaller` ⇒ `.msi` 自带 WebView2 |
 | Linux 依赖 | `.deb` / `.rpm` 声明 `libwebkit2gtk-4.1` 等；AppImage 免安装 |
-| 全新安装与首启 | **需人工验证**（§12 第 4、7 项） |
+| 全新安装与首启 | macOS **已人工验证通过**（§12.1 V1）；**Windows / Linux 仍需人工验证**（§12 第 6 项） |
 
 ---
 
@@ -259,7 +261,7 @@ CI 覆盖 **3 平台 × 4 目标**：
 - **后果**：Windows 上从 GUI 启动时日志无处可去，现场排查基本无据可依。这一限制已写入人工验证手册，要求所有验证**从终端启动**。
 - **唯一落盘日志**：会话日志（`<app_data_dir>/session-logs`），带保留期与配额清理，有测试覆盖（`cleanup_respects_retention_and_quota`）。
 - **错误可定位性**：错误枚举统一序列化为 `{ kind, message }`，`kind` 作稳定翻译键，前端保留技术细节原文（如 `Connection refused (os error 61)`）——该设计良好。RDP 失败会 `tracing::warn!` 打印真实原因（证书变更 / TLS 错误 / 连接拒绝可区分）。
-- **崩溃恢复**：**无 panic hook、无 `catch_unwind`**。panic 无结构化落盘。
+- **崩溃恢复**：**无 panic hook、无 `catch_unwind`**。panic 无结构化落盘。**实测危害**（R-9）：schema 闸门触发时进程以 `exit 134` / SIGABRT 结束，报错只在 stderr；日志本身又不落盘 ⇒ **从 Finder 双击启动的用户拿不到窗口、对话框或日志**，现象是「点了没反应」。这是本轮唯一一项**有实测证据的用户可见缺陷**（§12.1 V5）。
 - **健康检查 / 监控**：桌面应用无服务端指标；应用内有主机健康检查功能（E2E `53-host-health-check` 覆盖）。
 
 ---
@@ -279,8 +281,9 @@ CI 覆盖 **3 平台 × 4 目标**：
 | `25b2a92` | （非修复）报告定稿 + 记忆压缩 | 按 CI 全绿结果重写报告；`MEMORY.md` 超限故压缩为四段式 |
 | `824555a` | （非修复）长跑无数据 | 新增 `#[ignore]` 的 400 轮 PTY 测量工装（§3.3），并把「RSS 采不到」显式输出为不可用而非 0；默认套件仍为 311 例（1 ignored） |
 | `2c31fd2` 及之后 | （非修复）报告修订 | 把长跑实测数据、CI 重跑转绿的完整经过写入报告；仅改 `docs/` |
+| 本次（2026-09-12 实机验证后） | （非修复）§12.1 执行记录 + R-9 | 把第 9 项（升级/回滚/schema 闸门/应用内升级）与 macOS 安装的实测结果写入报告与手册；新增 R-9（启动期致命错误呈现为 SIGABRT）；修正第 9 项原本错误的期望值。**仅改 `docs/`** |
 
-> 纯 Markdown 的报告修订**不重跑 CI**：以 `git diff --name-only 2c31fd2..HEAD` 自证改动范围仅限于 `docs/` 与 `.workbuddy/memory/`（产物与 `2c31fd2` 逐字节相同），而 `2c31fd2` 已由 run `34613427870` 完整验证（attempt 2 全绿、75 spec PASSED）。
+> 纯 Markdown 的报告修订**不重跑 CI**：以 `git diff --name-only 2c31fd2..HEAD` 自证改动范围仅限于 `docs/` 与 `.workbuddy/memory/`（产物与 `2c31fd2` 逐字节相同），而 `2c31fd2` 已由 run `34613427870` 完整验证（attempt 2 全绿、75 spec PASSED）。**本轮实机验证未改动任何源码**，故代码基线与 `2c31fd2` 完全一致。
 
 **未采用的手段**：未删除任何测试、未屏蔽任何错误、未降低任何标准、未为提高通过率而放宽既有断言或加宽超时、未为通过检查而改动既有功能。
 
@@ -298,8 +301,9 @@ CI 覆盖 **3 平台 × 4 目标**：
 | R-4 | `quick-xml` ×2 与 `rsa` 公告不可修；8 条 transitive `unmaintained` | 低 | 已登记于 `deny.toml` |
 | R-5 | 无基准与压力测试；**应用层**长跑与内存曲线、冷启动耗时未测量（PTY 层 400 轮句柄已实测、无漂移） | 中 | 部分验证，见 §6 |
 | R-6 | 无 MSRV（`Cargo.toml` 未声明 `rust-version`），CI 用 `stable` | 低 | 未修复 |
-| R-7 | 无 panic hook / 日志不落盘 / 级别硬编码 ⇒ Windows GUI 场景零日志 | 中 | 未修复，见 §9 |
+| R-7 | 无 panic hook / 日志不落盘 / 级别硬编码 ⇒ Windows GUI 场景零日志 | 中 | 未修复，见 §9；**危害已在 R-9 实测** |
 | R-8 | **macOS 包为 ad-hoc（linker-signed）签名、未用 Developer ID、未公证**（`spctl` rejected、`stapler validate` 无票据、无 `_CodeSignature`）。**从浏览器下载的用户首次启动会被 Gatekeeper 拦截**；命令行下载（`gh`/`curl`）不带 quarantine 故探测不到。与 v0.14.46 状态一致，**非本轮回归** | 中 | 未修复（需 Apple Developer 账号 + 公证流程，属发布决策）；已在手册 §4 给出复现与绕过步骤 |
+| R-9 | **启动期致命错误的呈现不可用**：`lib.rs` 的 `.setup()` 返回 `Err` → Tauri 内部 panic → 末端 `.run(...).expect(...)`；实测 schema 闸门触发时**进程 exit 134 / SIGABRT**，报错只走 stderr。**GUI 双击启动的用户看不到任何东西**——没有窗口、没有对话框、没有日志文件（日志不落盘，见 R-7），表现为「点了没反应」 | 中 | 未修复。这是 R-7 的具体危害实例（§12.1 V5）：**闸门本身工作正常**，坏在呈现。属发布前值得修的一项（加 panic hook + 原生错误对话框，或让 `.setup()` 失败时弹出模态提示） |
 
 ---
 
@@ -316,13 +320,36 @@ CI 覆盖 **3 平台 × 4 目标**：
 | 3 | Telnet 真机 + **NAWS 主动协商**（改窗口尺寸后设备端尺寸同步） | telnet 网元 |
 | 4 | 串口真机 + 热插拔（`serial:ports-changed`） | USB 转串口 + console 线 |
 | 5 | 堡垒机 / 设备互通（华为、H3C、DPtech、TopSec、StoneOS） | 相应设备 |
-| 6 | 三平台实机安装与**首次启动**（含 Windows 离线 WebView2） | macOS / Windows / Linux 实机 |
+| 6 | 三平台实机安装与**首次启动**（含 Windows 离线 WebView2） | macOS / Windows / Linux 实机 —— **macOS 已执行**，Windows / Linux 未做（§12.1 V1） |
 | 7 | 高 DPI / 多显示器（尤其 SFTP 拖拽落点） | Windows 150%/200% 缩放 |
 | 8 | 4 小时长跑：RSS 与句柄数**无单调上升**（另可先跑手册 6.1 的 PTY 工装取得可复现基线） | 任一实机 |
-| 9 | 升级 + **回滚**（旧版应给出「库版本高于 App」提示而非损坏数据） | 两个版本的安装包 |
+| 9 | 升级 + **回滚** | 两个版本的安装包 —— **已执行**（§12.1 V3–V6） |
 | 10 | 遥测关闭抓包（**必须带对照组**，否则抓包无效不得判过） | 抓包工具 + root |
 
+> **第 9 项的期望值已修正。** 原表述「旧版应给出『库版本高于 App』提示」**在事实上不可能成立**：该闸门（`LATEST_SCHEMA_VERSION` 与 `version > LATEST_SCHEMA_VERSION`）是 v0.15.0 才引入的，且 v0.14.46 与 v0.15.0 **同为 schema 20** ⇒ 0.14.46 打开 0.15.0 写的库既不报错、也不迁移（**零次迁移**，故本项**不能**用来证明「迁移已验证」）。正确拆法见手册 §7.2 的 A（回滚本身）/ B（人为制造 `schema_version=21` 才有闸门可测）。
+
 > 手册第 0 节写明：因日志只走 stdout，**所有验证必须从终端启动**；Windows GUI 启动拿不到日志。
+
+### 12.1 已执行的实机验证（2026-09-12，macOS arm64 实机）
+
+在 jason 的真实安装（`$HOME/Library/Application Support/com.jincaiw.anyssh`，`schema_version=20`，3 分组 / 11 设置）上执行。**采集前已完整备份数据目录**（`.workbuddy/backups/anyssh-data-20260912-134059`，`integrity: ok`）。全部结论均有命令输出或文件哈希支撑，**未凭推测判定**。
+
+| 编号 | 验证项 | 方法 | 结果 | 证据 |
+|---|---|---|---|---|
+| V1 | macOS 安装 + 首次启动（第 6 项 macOS 部分） | `ditto` 覆盖安装 v0.15.0 → 从终端启动 | **PASS** | 日志 `INFO anyssh_lib::db: database initialised path=…`；进程存活；无 stderr 报错 |
+| V2 | Gatekeeper 拦截复现（R-8 取证） | 手工打 `com.apple.quarantine` → `spctl -a -t exec` | **PASS（复现了缺陷）** | `spctl` rejected；`xcrun stapler validate` 无票据；`codesign` 显示 `Signature=adhoc` / `TeamIdentifier=not set`；`xattr -dr` 后可启动。**注意**：`gh`/`curl` 下载的 dmg **不带** quarantine ⇒ 命令行路径测不到浏览器下载用户的遭遇，必须手工补上 |
+| V3 | 升级后数据保留（第 9 项 A 的一半） | 0.14.46 → 0.15.0 后逐表逐行比对 | **PASS** | 各表行数一致；3 个分组逐字段一致；原有 10 条设置逐字未变（唯一新增为 `app_auto_update`）；`integrity: ok` |
+| V4 | **回滚本身**（0.15.0 → 0.14.46） | 覆盖安装 0.14.46 → 启动 → 读 0.15.0 写的库 | **PASS** | 启动日志无 schema / 损坏报错；`PRAGMA integrity_check` = ok；`schema_version` 仍为 20；**旧版对库零写入**（`anyssh.db` mtime 不变、`-wal` 0 字节）；全库快照与回滚前 `diff` **完全一致** |
+| V5 | **schema 闸门**（第 9 项 B） | 置 `_meta.schema_version=21` → 从终端启动 v0.15.0 | **PASS（拒绝正确）／但呈现为崩溃** | 进程 **exit 134**，stderr：`failed to initialise database: … (schema v21, but this build understands up to v20). Upgrade anySSH …`；进程未留存；数据未损（`integrity: ok`、分组与设置完好）；复原为 20 后重启成功。**呈现方式见 R-9** |
+| V6 | **应用内升级端到端**（第 9 项 / 手册 §7.1） | 0.14.46 + `autoUpdate=true` → 启动 | **PASS** | 20 秒内自行下载、安装、重启为 **0.15.0**（PID 变更、包 mtime 更新）；**装出的 bundle 与官方 dmg 逐字节一致**（可执行文件 / `Info.plist` / 全 bundle 递归哈希三项全等）⇒ 同时证明 minisign 签名校验通过（校验失败插件会拒装） |
+| V7 | `autoUpdate` 开关的真实语义 | 对照组交叉验证 | **PASS** | `=false`：端点已证可达且通告 0.15.0（本机 `curl` 取到 `latest.json`）、v0.14.46 启动确实执行检查（`AppShell.tsx:356`），但 **PID / 版本 / 包 mtime 三项不变、无下载残留**，且 jason 肉眼确认**弹出了「发现新版本 0.15.0」提示**；`=true`：如 V6 **静默升级**。⇒ 该开关控制的是**是否静默安装**，**不是**是否联网检查（关掉后仍会请求 `latest.json` 并弹窗） |
+
+**V7 的判定价值**：它同时封住了两个容易误判的推理缺口——① 若只看「什么都没发生」就下结论，无法区分「标志生效」与「更新检查根本没跑」（网络失败会得到相同观测）；② 正向对照（`=true` 时真的自升级）证明检查链路确实可用，反向对照才因此成立。
+
+**仍未验证（保持不判定为通过）**：
+
+- 手册 §7.3 更新器兜底（断网后检查更新 / 下载中断可重试 / 「跳过此版本」）——需断网操作 + 界面点击，本环境无法自动触发；
+- 第 12 节表中第 6 项的 **Windows / Linux** 实机安装、第 7 项高 DPI、第 8 项 4 小时长跑、第 10 项遥测抓包，以及第 1–5 项（需 RDP/VNC 主机、telnet 网元、串口设备、堡垒机等外部设备）。
 
 ---
 
@@ -341,10 +368,11 @@ CI 覆盖 **3 平台 × 4 目标**：
 
 **剩余条件（非代码，需人工）**：
 
-- §12 的 10 项实机验证中，**第 1、2、3、4、5、6、9 项**至少各完成一轮；
+- §12 的 10 项实机验证中，**第 9 项（升级 + 回滚）已完成**（§12.1 V3–V6，含应用内升级端到端与 schema 闸门），**第 6 项的 macOS 部分已完成**（§12.1 V1、V2）；
+- 仍需完成：第 1、2、3、4、5 项（需 RDP / VNC 主机、telnet 网元、串口设备、堡垒机等外部设备），第 6 项的 **Windows / Linux** 部分，第 7 项高 DPI；
 - 第 8 项（4 小时混合负载长跑、RSS 曲线）与 §6 的冷启动耗时，建议在正式对外前补一轮；
-- 第 10 项遥测抓包须带对照组执行。
+- 第 10 项遥测抓包须带对照组执行（V7 证明「关掉自动更新仍会请求更新清单」，说明出站行为确需抓包核实，不能凭开关推断）。
 
-**风险知悉项**（不阻塞，但须记录在案）：E2E 环境性抖动（R-2）、前端仅能由 CI 验证（R-3）、应用层无基准与长跑数据（R-5）、Windows GUI 零日志（R-7）、**macOS 未签名/未公证导致浏览器下载用户首启被拦（R-8）**。
+**风险知悉项**（不阻塞，但须记录在案）：E2E 环境性抖动（R-2）、前端仅能由 CI 验证（R-3）、应用层无基准与长跑数据（R-5）、Windows GUI 零日志（R-7）、**macOS 未签名/未公证导致浏览器下载用户首启被拦（R-8）**、**启动期致命错误以 panic/SIGABRT 呈现、GUI 启动无任何提示（R-9）**。
 
 **结论**：可以发布，但发布前的最后一道闸门是**实机冒烟**，不能由自动化测试替代。
