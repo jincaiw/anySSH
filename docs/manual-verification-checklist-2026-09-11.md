@@ -323,15 +323,37 @@ lsof -p "$PID" 2>/dev/null | wc -l   # macOS：句柄数
 
 代码层面确认过：设置 `ANYSSH_DISABLE_TELEMETRY` 时 HTTP client 根本不会被构造；但**唯一能证明"零出站"的方式是抓包**。
 
+> **⚠️ 2026-09-12 实测：不加"文件必须存在"这一步，会得到假阴性。** 第一次执行后两条 `wc -l` 都是 0，看起来像"遥测已关闭"，实际是 **`tcpdump -w` 根本没生成 pcap**，而 `tcpdump -r <不存在的文件>` 的错误被 `2>/dev/null` 吞掉、`wc -l` 于是返回 0。**任何一次数包之前，先 `ls -l` 确认文件存在且非空。**
+
 **步骤**：
 
-1. 抓包准备（macOS 需要 root）：
+0. **先证明 tcpdump 能用**（不要屏蔽 stderr）：
    ```bash
-   sudo tcpdump -i any -n 'host us.i.posthog.com' -w /tmp/telemetry-off.pcap
+   sudo tcpdump -i any -c 5 -n
    ```
-   或使用 Little Snitch / Wireshark 过滤 `us.i.posthog.com`。
-2. **对照组**（先证明抓包有效）：不带变量启动 anySSH → 做几个动作（连接主机、开 SFTP、起传输）→ 应观察到对 `us.i.posthog.com:443` 的连接。
-3. **实验组**：`ANYSSH_DISABLE_TELEMETRY=1` 启动 → 做**同样**的动作 → 观察期内（≥ 10 分钟）**必须 0 连接**。
+   打印出 5 行才继续。失败就把报错原样留下来看（多半是 sudo / BPF 权限）。
+1. **解析端点 IP**。`tcpdump` 的 `host <name>` 在**启动那一刻**做 DNS 解析，结果不稳；用 IP 过滤更可靠：
+   ```bash
+   dig +short us.i.posthog.com      # 取第一个 A 记录
+   ```
+   端点在代码里是 `POSTHOG_HOST = "https://us.i.posthog.com"`，POST 到 `/capture/`；遥测**默认开启**（`init()` 仅当设了 `ANYSSH_DISABLE_TELEMETRY` 才 no-op），所以对照组本该有流量。
+2. **对照组**（先证明抓包有效）：另开终端从**终端**启动（日志只在 stdout）→ 做几个动作（连接主机、开 SFTP、起传输）→ 退出：
+   ```bash
+   sudo tcpdump -i any -n -s 0 -w /tmp/tel-ctl.pcap "host <IP>"   # 终端 A
+   /Applications/anySSH.app/Contents/MacOS/anyssh                 # 终端 B
+   # ...做动作后退出应用，回到终端 A 按 Ctrl-C
+
+   ls -l /tmp/tel-ctl.pcap                                        # ★ 必须存在
+   tcpdump -r /tmp/tel-ctl.pcap -n 2>/dev/null | wc -l            # 应 > 0
+   ```
+3. **实验组**：同样抓包，但用禁用变量启动 → 做**同样**的动作 → 观察期内（≥ 10 分钟）：
+   ```bash
+   sudo tcpdump -i any -n -s 0 -w /tmp/tel-off.pcap "host <IP>"  # 终端 A
+   ANYSSH_DISABLE_TELEMETRY=1 /Applications/anySSH.app/Contents/MacOS/anyssh   # 终端 B
+
+   ls -l /tmp/tel-off.pcap                                        # ★ 必须存在
+   tcpdump -r /tmp/tel-off.pcap -n 2>/dev/null | wc -l            # 必须 == 0
+   ```
 
 | 结果 | 判定 |
 |---|---|
