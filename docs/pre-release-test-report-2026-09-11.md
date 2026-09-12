@@ -338,6 +338,8 @@ CI 覆盖 **3 平台 × 4 目标**：
 | R-8 | **macOS 包为 ad-hoc（linker-signed）签名、未用 Developer ID、未公证**（`spctl` rejected、`stapler validate` 无票据、无 `_CodeSignature`）。**从浏览器下载的用户首次启动会被 Gatekeeper 拦截**；命令行下载（`gh`/`curl`）不带 quarantine 故探测不到。与 v0.14.46 状态一致，**非本轮回归** | 中 | 未修复（需 Apple Developer 账号 + 公证流程，属发布决策）；已在手册 §4 给出复现与绕过步骤 |
 | R-9 | **启动期致命错误的呈现不可用**：`lib.rs` 的 `.setup()` 返回 `Err` → Tauri 内部 panic → 末端 `.run(...).expect(...)`；实测 schema 闸门触发时**进程 exit 134 / SIGABRT**，报错只走 stderr。**GUI 双击启动的用户看不到任何东西**——没有窗口、没有对话框、没有日志文件（日志不落盘，见 R-7），表现为「点了没反应」 | ~~中~~ | **已修（`24e4b34`）并实测**：改为打印 + 弹**阻塞式原生对话框** + `exit(1)`；另装 panic hook 写 `<app_data_dir>/panic.log`。用 `ANYSSH_DATA_DIR` 指向隔离目录 + `schema_version=21` 的库端到端验证：**exit 134 → 1、对话框等待点击、文案含具体数据目录路径**（§12.1 V8）。**注意**：判「有没有弹窗」必须放进 `.app` bundle 里测——裸二进制会假阴性 |
 
+| R-11 | **Linux 包把上游作者署为维护者**：`v0.15.1` 的 `.deb` 里是 `Maintainer: Nevil Macwan <macnev2013@gmail.com>`，即上游 anySCP 的作者。对一个已更名、自行发布的 fork 来说这是**错误署名**——用户会去找一个并不维护本构建的人。同一字段也决定 MSI 的 Manufacturer | 低 | **已在 main 修正，但只在下一个 tag 构建时生效**（v0.15.1 的产物仍带旧值）：`src-tauri/Cargo.toml` 的 `authors` 首位改为 fork 维护者，上游作者仍列在第二位，LICENSE / README / `bundle.copyright` 的双版权不动。**机制已从源码核实**：`tauri-utils/src/config.rs` 写明 `publisher` 仅当 **Cargo.toml 没有 `authors` 字段时**才映射到 deb Maintainer 与 MSI Manufacturer ⇒ 只加 `bundle.publisher` 是无效的 |
+
 ---
 
 ## 12. 需要人工验证项
@@ -353,7 +355,7 @@ CI 覆盖 **3 平台 × 4 目标**：
 | 3 | Telnet 真机 + **NAWS 主动协商**（改窗口尺寸后设备端尺寸同步） | telnet 网元 |
 | 4 | 串口真机 + 热插拔（`serial:ports-changed`） | USB 转串口 + console 线 |
 | 5 | 堡垒机 / 设备互通（华为、H3C、DPtech、TopSec、StoneOS） | 相应设备 |
-| 6 | 三平台实机安装与**首次启动**（含 Windows 离线 WebView2） | macOS / Windows / Linux 实机 —— **macOS 已执行**，Windows / Linux 未做（§12.1 V1） |
+| 6 | 三平台实机安装与**首次启动**（含 Windows 离线 WebView2） | macOS / Windows / Linux 实机 —— **macOS 已执行**，Windows / Linux 未做（§12.1 V1）。**Linux 包已做静态检查**（无需实机）：版本 `0.15.1` ✓、`Depends: libwebkit2gtk-4.1-0, libgtk-3-0` ✓、`.desktop` 的 Name/Exec/Icon/StartupWMClass ✓、二进制存在；**唯一问题是 deb Maintainer 署成上游作者**（R-11，已在 main 修正）。**静态检查不能替代安装验证**——依赖解析、WebKitGTK 运行时行为与桌面集成仍需实机 |
 | 7 | 高 DPI / 多显示器（尤其 SFTP 拖拽落点） | Windows 150%/200% 缩放 |
 | 8 | 4 小时长跑：RSS 与句柄数**无单调上升**（另可先跑手册 6.1 的 PTY 工装取得可复现基线） | 任一实机 —— **6.1 PTY 基线已通过**（2026-09-12，§12.1 V9）；**4 小时混合负载观测未做** |
 | 9 | 升级 + **回滚** | 两个版本的安装包 —— **已执行**（§12.1 V3–V6） |

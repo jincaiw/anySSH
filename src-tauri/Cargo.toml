@@ -2,7 +2,13 @@
 name = "anyssh"
 version = "0.0.0-dev"
 description = "A modern desktop client for SSH, SFTP, and S3"
-authors = ["Nevil Macwan <macnev2013@gmail.com>"]
+# Order matters: Tauri takes `authors[0]` for the .deb `Maintainer` field and the
+# MSI `Manufacturer` (see tauri-utils/src/config.rs — `bundle.publisher` is only
+# consulted when this field is absent, so setting publisher alone would not help).
+# v0.15.1 shipped with the upstream author as Maintainer, which points users at
+# someone who does not maintain this fork. Upstream stays listed second, and the
+# dual copyright in LICENSE / README / bundle.copyright is unchanged.
+authors = ["jincaiw <jincaiw@users.noreply.github.com>", "Nevil Macwan <macnev2013@gmail.com>"]
 license = "MIT"
 repository = "https://github.com/jincaiw/anySSH"
 homepage = "https://github.com/jincaiw/anySSH"
