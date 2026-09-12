@@ -197,7 +197,20 @@ and nothing else is affected.
    - **Linux**: `.deb` or `.AppImage`
 3. Install and launch
 
-> **macOS note**: If you see "app is damaged", run: `xattr -cr /Applications/anyssh.app`
+> **macOS note** — this build is not signed with an Apple Developer ID and is not
+> notarized, so Gatekeeper stops the **first launch of a browser-downloaded copy**.
+> (A download made with `curl` or `gh` carries no quarantine flag, which is why this
+> never shows up when installing from a script.) If macOS says *"cannot be opened
+> because the developer cannot be verified"* or *"is damaged and can't be opened"*:
+>
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/anySSH.app
+> ```
+>
+> Equivalently: **right-click the app → Open**, then **Open** again in the dialog —
+> once per install. If macOS insists the app is damaged, use `xattr -cr` in place of
+> `-dr com.apple.quarantine`. Nothing about how the app behaves afterwards differs.
+> Signing and notarization are on the roadmap.
 
 ### Portable builds
 

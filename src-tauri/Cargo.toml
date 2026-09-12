@@ -140,3 +140,23 @@ rcgen = "0.14.10"
 # `ChannelMsg::Data` carries `bytes::Bytes` since russh 0.58; the exec tests
 # build payloads with `Bytes::from_static`.
 bytes = "1"
+
+# Reached for directly (not through tauri-plugin-dialog) to put a startup failure
+# on screen. `MessageDialogBuilder::blocking_show` routes the dialog through
+# `AppHandle::run_on_main_thread`, and its own docs say it must not be called from
+# the main thread — which is exactly where `setup()` runs: measured, the call
+# returned after ~4s without a click, so nothing ever waited for a human. `rfd`'s
+# blocking `show()` is the main-thread modal (`NSAlert::runModal` on macOS), which
+# is the supported way to do this before the event loop starts. Same version and
+# same target set as the plugin's own dependency, with default features off so the
+# feature union is unchanged (the plugin's `gtk3` default still supplies the Linux
+# backend); it therefore adds no new code to the binary.
+#
+# Kept last on purpose: a `[table]` header placed mid-section captures every key
+# after it, which silently deleted the rest of [dependencies] the first time this
+# was written (the build then failed with "Permission
+# clipboard-manager:allow-read-text not found" because the plugin had fallen out
+# of the graph).
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies.rfd]
+version = "0.16"
+default-features = false

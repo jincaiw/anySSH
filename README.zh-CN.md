@@ -185,7 +185,18 @@ $env:ANYSSH_DISABLE_TELEMETRY = "1"; .\anySSH.exe
    - **Linux**：`.deb` 或 `.AppImage`
 3. 安装并启动
 
-> **macOS 提示**：如遇"应用已损坏"提示，执行：`xattr -cr /Applications/anyssh.app`
+> **macOS 提示** —— 当前安装包**未使用 Apple Developer ID 签名、也未公证**，因此
+> **从浏览器下载后首次启动会被 Gatekeeper 拦截**。（用 `curl` 或 `gh` 下载的文件不带
+> quarantine 标记，所以用脚本安装时不会遇到这个问题。）若系统提示
+> **"无法打开，因为无法验证开发者"** 或 **"已损坏，无法打开"**：
+>
+> ```bash
+> xattr -dr com.apple.quarantine /Applications/anySSH.app
+> ```
+>
+> 等效做法：**右键点击应用 → 打开**，在弹窗中再点一次**打开**（每次安装做一次即可）。
+> 若系统坚持报"已损坏"，把上面的 `-dr com.apple.quarantine` 换成 `xattr -cr`。
+> 绕过之后应用的行为完全一致。签名与公证已在计划中。
 
 ### 便携版
 

@@ -28,6 +28,7 @@ use scp::ScpManager;
 use sftp::transfer_manager::TransferManager;
 use sftp::SftpManager;
 use ssh::manager::SshManager;
+use std::path::Path;
 use std::sync::Arc;
 use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 
@@ -43,6 +44,87 @@ use tauri::{Manager, WebviewUrl, WebviewWindowBuilder};
 #[tauri::command]
 fn is_release_build() -> bool {
     !cfg!(debug_assertions)
+}
+
+/// Show a blocking native alert with the given message.
+///
+/// Blocking matters: this runs before the event loop exists (and, when it fails,
+/// before any window does), so there is no other thread to pump the dialog. `rfd`
+/// is the backend underneath `tauri-plugin-dialog`; calling it directly is what
+/// makes the wait real. Guarded to the targets that actually carry `rfd` — see the
+/// dependency comment in Cargo.toml.
+#[cfg(any(target_os = "macos", windows, target_os = "linux"))]
+fn show_fatal_alert(message: &str) {
+    rfd::MessageDialog::new()
+        .set_level(rfd::MessageLevel::Error)
+        .set_title("anySSH cannot start")
+        .set_description(message)
+        .set_buttons(rfd::MessageButtons::Ok)
+        .show();
+}
+
+/// Targets without `rfd` keep only the stderr line.
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
+fn show_fatal_alert(_message: &str) {}
+
+/// Report a fatal startup failure to the user, then stop the process.
+///
+/// These paths used to travel back out of `setup()` as `Err`, which Tauri turns
+/// into a panic: the process died with SIGABRT and the only explanation went to
+/// stderr. A GUI launch has nowhere to put stderr, so all the user saw was the
+/// icon bouncing and nothing opening — even though "this database was written by
+/// a newer version" is a recoverable situation with a clear remedy. Anything that
+/// stops the app from starting has to say so on screen before exiting.
+fn fatal_startup_error(message: &str) -> ! {
+    tracing::error!("fatal startup error: {message}");
+    eprintln!("anySSH cannot start: {message}");
+
+    // Best effort: a failure to display must never replace the real error with a
+    // second one, so the message is already on stderr above.
+    let shown = std::panic::catch_unwind(|| show_fatal_alert(message));
+    if shown.is_err() {
+        eprintln!("anySSH: could not display the startup error dialog");
+    }
+
+    std::process::exit(1);
+}
+
+/// Append one line to the panic log, creating the file if needed.
+///
+/// Never reports failure: by the time this runs the process is already
+/// unwinding, so a missing directory or a read-only disk must stay silent
+/// instead of replacing the original panic with a second one.
+fn append_panic_log(path: &Path, line: &str) {
+    use std::io::Write as _;
+
+    if let Ok(mut file) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+    {
+        let _ = file.write_all(line.as_bytes());
+    }
+}
+
+/// Append every panic to `<app_data_dir>/panic.log`.
+///
+/// `tracing` writes to stdout only, with no file appender, so a release build
+/// launched from Finder discards every log line it produces. Without this a
+/// crash leaves both the user and whoever they report it to with nothing at all
+/// to look at. Best effort by design — the hook runs while the process is already
+/// unwinding, so it must not panic itself or allocate more than it has to.
+fn install_panic_log(app_data_dir: &Path) {
+    let path = app_data_dir.join("panic.log");
+    let previous = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let since_epoch = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        append_panic_log(&path, &format!("[{since_epoch}] panic: {info}\n"));
+        previous(info);
+    }));
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -67,19 +149,36 @@ pub fn run() {
             if let Some(p) = &portable {
                 tracing::info!(data_dir = %p.data_dir.display(), "portable mode enabled");
             }
-            portable::install(portable.clone())
-                .map_err(|e| format!("could not create portable data directory: {e}"))?;
+            if let Err(e) = portable::install(portable.clone()) {
+                fatal_startup_error(&format!(
+                    "Could not create the portable data directory:\n\n{e}\n\n\
+                     anySSH cannot run without a writable data directory."
+                ));
+            }
 
             let app_data_dir = match &portable {
                 Some(p) => p.data_dir.clone(),
-                None => app
-                    .path()
-                    .app_data_dir()
-                    .map_err(|e| format!("could not resolve app data dir: {e}"))?,
+                None => match app.path().app_data_dir() {
+                    Ok(dir) => dir,
+                    Err(e) => fatal_startup_error(&format!(
+                        "Could not resolve the application data directory:\n\n{e}"
+                    )),
+                },
             };
 
-            let host_db = HostDb::new(&app_data_dir)
-                .map_err(|e| format!("failed to initialise database: {e}"))?;
+            // Once the data directory is known a panic has somewhere to leave a
+            // trace, so install the hook before the code that can fail fatally.
+            install_panic_log(&app_data_dir);
+
+            let host_db = match HostDb::new(&app_data_dir) {
+                Ok(db) => db,
+                Err(e) => fatal_startup_error(&format!(
+                    // `e` already explains the cause and the remedy; the one thing
+                    // it cannot state is where "the app data directory" actually is.
+                    "{e}\n\nThe app data directory is:\n{}",
+                    app_data_dir.display()
+                )),
+            };
 
             // Session logs live under <app_data_dir>/session-logs; pin the root
             // once at startup so the writer thread and log commands agree on it.
@@ -434,4 +533,53 @@ pub fn run() {
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::append_panic_log;
+
+    /// A fresh, uniquely named scratch directory per test — these run in
+    /// parallel, so they must not share state on disk.
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!("anyssh-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("create scratch dir");
+        dir
+    }
+
+    #[test]
+    fn panic_log_appends_so_an_earlier_crash_is_not_erased() {
+        let dir = scratch("panic-log-append");
+        let path = dir.join("panic.log");
+
+        append_panic_log(&path, "first\n");
+        append_panic_log(&path, "second\n");
+
+        let body = std::fs::read_to_string(&path).expect("read panic log");
+        assert_eq!(
+            body, "first\nsecond\n",
+            "each panic entry has to survive the next one; truncating would hide \
+             repeated crashes, which is the signal that something is systematically wrong"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn a_failed_panic_append_stays_silent_instead_of_panicking_again() {
+        let dir = scratch("panic-log-missing-parent");
+        // The parent directory deliberately does not exist: writing there fails,
+        // and the hook must swallow that rather than panic while unwinding.
+        let path = dir.join("no-such-dir").join("panic.log");
+
+        append_panic_log(&path, "boom\n");
+
+        assert!(
+            !path.exists(),
+            "a failed append must not leave a half-written file behind"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
