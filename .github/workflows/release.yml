@@ -120,8 +120,25 @@ jobs:
           jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
           # Update tauri.conf.json
           jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
-          # Update Cargo.toml
-          sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml && rm -f src-tauri/Cargo.toml.bak
+          # Update Cargo.toml. Anchor on the placeholder VALUE rather than on
+          # `^version = ".*"`: the loose pattern also rewrites dependency
+          # requirements that sit on their own `version = ` line — e.g. under a
+          # target-specific `[target.'cfg(..)'.dependencies.foo]` table — turning
+          # them into the release version. That is exactly how v0.15.1 first lost
+          # its Linux artifacts: the rfd requirement became `^0.15.1`, resolved to
+          # 0.15.4, and that version's build script refuses to run on Linux
+          # without a gtk3/xdg-portal feature, while macOS and Windows built fine.
+          #
+          # Anchoring on the value is also the portable choice: `0,/re/` would be
+          # tidier but is a GNU extension, and this step runs on the macOS and
+          # Windows runners too (BSD sed rejects it outright).
+          sed -i.bak "s/^version = \"0\.0\.0-dev\"/version = \"$VERSION\"/" src-tauri/Cargo.toml && rm -f src-tauri/Cargo.toml.bak
+          # Fail loudly if the anchor ever stops matching. Silently shipping a
+          # 0.0.0-dev build would mislabel the whole release.
+          if ! grep -q "^version = \"$VERSION\"" src-tauri/Cargo.toml; then
+            echo "::error::could not set the version in src-tauri/Cargo.toml (anchor '0.0.0-dev' not found)"
+            exit 1
+          fi
           # Updater signing needs the minisign private key. Without it (e.g. a
           # fork building its own releases) the bundler hard-fails on the
           # configured pubkey, so disable updater artifacts for this build.

@@ -157,6 +157,14 @@ bytes = "1"
 # was written (the build then failed with "Permission
 # clipboard-manager:allow-read-text not found" because the plugin had fallen out
 # of the graph).
-[target.'cfg(any(target_os = "macos", windows, target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies.rfd]
-version = "0.16"
-default-features = false
+#
+# The requirement is inline rather than a `version = "0.16"` line below the header
+# for a second, nastier reason: release.yml sets the package version with
+# `sed -i 's/^version = ".*"/version = "$VERSION"/'`, which cannot tell the package
+# version from a dependency's. As a separate line it became `^0.15.1` at build
+# time, resolved to rfd 0.15.4, and that older release aborts its build script on
+# Linux with "You need to choose at least one backend: gtk3 or xdg-portal" — the
+# release lost its Linux artifacts while macOS and Windows built fine. Inline, the
+# line does not start with `version`, so the release sed cannot see it.
+[target.'cfg(any(target_os = "macos", windows, target_os = "linux", target_os = "dragonfly", target_os = "freebsd", target_os = "openbsd", target_os = "netbsd"))'.dependencies]
+rfd = { version = "0.16", default-features = false }
