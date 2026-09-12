@@ -45,8 +45,11 @@
 - `sftp:file-edited`/`scp:file-edited`/`s3:file-edited` 前端从未订阅 ⇒ 外部编辑器保存回传后远端列表不自动刷新。
 - 遥测无应用内开关，唯一退出 `ANYSSH_DISABLE_TELEMETRY`；bridge 的 loopback WS **不校验 Origin**（靠 32B CSPRNG 单次令牌 + 60s TTL 兜底）。
 - quick-xml 不可升级（**已定案勿再当待办**）：`aws-creds`/`rust-s3` 最新版都锁 `^0.38`，修复需 `>=0.41`，跨 semver 必冲突。0.39.4 来自 proc-macro 构建期。
-- E2E 环境性抖动未根治（**判绿前必须分清「一次即绿」还是「重跑才绿」**）：本轮共 8 次失败 / 7 spec / 3 shard。唯一可复现类（`sshd-key` 就绪门）已修为**能力探测**（`wait_for_key_auth` 用 `ssh -o PreferredAuthentications=publickey` 试真连，而非 TCP 探活）。
-  - 归因证据：① 有 1 次复现于**零代码改动**的纯文档提交；② 同一产物 attempt 1 三 shard 红、attempt 2 重跑即 8/8 全绿。⇒ 与代码改动无关，但**不能排除「仅在高负载下才触发的竞态」**，需实机排除。
-  - 机制：容器 `libEGL warning: DRI3 error` ⇒ WebKitGTK 退软件渲染 + 多 worker 并行 ⇒ 首屏偶发超 30s。
+- E2E 失败分**三类，必须分开讲**（判绿前先归对类）：
+  - **A 类·编排被上游打断（确定性，0 个 spec 运行）**：2026-09-12 起 `make e2e-pull` 必然失败——MinIO 于 2025-10-23 停止发布社区版镜像，Docker Hub 上 `minio/minio`、`minio/mc` **已被移除**（实测匿名 pull 401、token `access` 声明为空；**限流是 429/`toomanyrequests`，不是这个**）。已改为 `quay.io/minio/{minio,mc}`（`ba5b8d1`）。**这类重跑永远不会好**。换源前查是否 distroless：Chainguard 镜像无 shell，`entrypoint: sh -c` 直接跑不起来。
+  - **B 类·环境性（时序 / 容器 DNS）**：累计 15 次 spec 级失败 / 9 个 spec / **覆盖全部 4 个 shard**。**分片是确定性 round-robin**（`wdio.conf.ts`：排序后 `i % 4`）⇒ 每个 shard 的 spec 集合固定——把失败 spec 映射回 shard 若**分散且每轮换点**，即可判环境；若**集中且复现**，才是真缺陷。机制：`libEGL DRI3 error` ⇒ WebKitGTK 软渲染 + 多 worker 争用。**根因整改方向是让 runner 图形栈确定化（装 mesa 软光栅 / 设 `WEBKIT_DISABLE_COMPOSITING_MODE`、`LIBGL_ALWAYS_SOFTWARE`），不是调大等待预算——后者属"放宽断言"**。
+  - **C 类·未解释（保持不判定）**：`04-connect-key` 曾报 `publickey ssh-ed25519 rejected`，而同 shard 就绪门在 **74 秒前**已打印 `sshd-key accepts the test key`，且两者 host/port/user/key **完全相同** ⇒ **不是就绪竞态**。⚠️ **因此"该类失败已由 `0fc493d`（`wait_for_key_auth` 能力探测）修复"这个结论不成立**，勿再沿用。
   - **别把不同超时混为一谈**：`waitForExplorer()` 是 **30s 条件轮询**（非固定 10s），`waitForEntry` 10s，`02-host-crud` 10s，`22-snippet-palette` 5s。
-  - 读日志陷阱：`--log-failed` 里 `Incorrect password…` / `Not a valid anySSH backup file` 的 `ERROR webdriver` 行是 `62-data-backup-restore` 的**负向用例**（该 spec 6 passing），不是失败；另外 `libEGL` 噪音会淹没 grep，要先 `grep -v libEGL`。
+  - 读日志陷阱：`--log-failed` 里 `Incorrect password…` / `Not a valid anySSH backup file` 的 `ERROR webdriver` 行是 `62-data-backup-restore` 的**负向用例**（该 spec 6 passing），不是失败；`libEGL` 噪音会淹没 grep，先 `grep -v libEGL`。
+  - 基线：`ba5b8d1` @ run `34680933632` 经**3 次 attempt** 才 8/8 绿、75/75 spec（19+19+19+18）。
+- **CI 对 `main` 的每次 push 都无条件运行，纯文档提交也会跑**（不存在按改动范围跳过的机制）。⇒ 纯文档提交红了也要查；且**修了编排类故障后，旧提交无法用"重跑旧 run"回头验证**，等价证据只能在源码相同的**新**提交上取。
