@@ -213,8 +213,18 @@ services:
       start_period: 5s
 
   # ─── S3-compatible storage (MinIO) ──────────────────────────────────────────
+  #
+  # Pulled from quay.io, not Docker Hub. MinIO stopped publishing community
+  # container images on 2025-10-23 and the Docker Hub repositories were removed
+  # outright: an anonymous pull of `minio/minio` or `minio/mc` now returns 401
+  # with an empty token scope, which made `make e2e-pull` fail on every run and
+  # stopped the suite from starting at all. quay.io still serves the last
+  # published images (verified 200), so the registry prefix is the whole fix.
+  # Those images are frozen end-of-line and carry an unpatched advisory; that is
+  # tolerable for a throwaway container on the isolated `e2e` network, but it is
+  # the reason the reference is not simply pointed at some other mirror.
   minio:
-    image: minio/minio:latest
+    image: quay.io/minio/minio:latest
     container_name: anyssh-e2e-minio
     command: server /data --console-address ":9001"
     environment:
@@ -223,9 +233,10 @@ services:
     networks: [e2e]
 
   # One-shot bucket seed — creates the test bucket and uploads two objects
-  # so the S3 explorer specs have something to render.
+  # so the S3 explorer specs have something to render. Uses only stock `mc`
+  # subcommands (alias set / mb / pipe), so it works with the frozen image.
   minio-seed:
-    image: minio/mc:latest
+    image: quay.io/minio/mc:latest
     container_name: anyssh-e2e-minio-seed
     depends_on:
       minio:
@@ -274,6 +285,13 @@ services:
     # The entrypoint's wait_for() polls TCP on each sshd before launching
     # WDIO, so we just need the containers started, not health-checked.
     depends_on:
+      # The runner reads /keys/id_ed25519 from the shared volume, so it must not
+      # start before keygen has created the pair. This is already guaranteed
+      # transitively (sshd-key waits for keygen, and we wait for sshd-key), but
+      # stating it here keeps the artifact dependency explicit rather than
+      # implicit, and mirrors how minio-seed is declared below.
+      keygen:
+        condition: service_completed_successfully
       sshd-pass:
         condition: service_started
       sshd-sudo:

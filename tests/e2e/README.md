@@ -198,8 +198,11 @@ the next run back to a full build.
 
 S3 specs are intentionally deferred — driving them needs:
 
-1. A MinIO sidecar in `docker-compose.yml` (image: `minio/minio:latest`,
+1. A MinIO sidecar in `docker-compose.yml` (image: `quay.io/minio/minio:latest`,
    command: `server /data --console-address ":9001"`, fixed root creds).
+   **Not `minio/minio` on Docker Hub** — MinIO stopped publishing community
+   images on 2025-10-23 and those repositories now return 401, which breaks
+   `make e2e-pull` before a single spec runs.
 2. A `keygen`-style one-shot service that creates a bucket and seeds it
    with a couple of test objects.
 3. A test helper to add an S3 connection via the UI's `+ New S3` dialog
