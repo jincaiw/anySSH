@@ -37,7 +37,8 @@
 
 - 单测 **311**（2026-09-11）；`--test-threads=1|32`/`--release` 一致，无顺序依赖。llvm-cov 只 `--lib`：行 **47.66%** / 函数 **34.44%** / 区域 53.26%；20 文件 0% 属口径限制（命令层由 75 spec 驱动成品二进制），**勿重复调查**。`cargo-miri` 不可用（rusqlite/ring/portable-pty）。生产 `unwrap/expect` 基线 **13 处**（统计时要匹配 `#[cfg(all(test, unix))]`）。无 `benches/`/`criterion`；`tracing` 硬编码 `anyssh=debug,russh=info`（不读 `RUST_LOG`）且**只写 stdout** ⇒ 人工验证必须从终端启动（Windows GUI 启动零日志）。
 - 主窗口在 `src-tauri/src/lib.rs` 的 `WebviewWindowBuilder` 建（`tauri.conf.json` 的 `app.windows` 是 `[]`）。
-- **main 历史线性，合分支用 rebase 不要 merge commit**。仅 `jincaiw` remote。v0.15.0 已发布（2026-09-11）。
+- **main 历史线性，合分支用 rebase 不要 merge commit**。仅 `jincaiw` remote。v0.15.0 已发布（2026-09-11，tag `a2f53d8`）。
+- ⚠️ **v0.15.0 不含审计后的修复（2026-09-12 核实）**：`v0.15.0` = `a2f53d8` @ 09-11 12:59，release 发布于 13:33；而审计产出的修复提交在**当晚 21:31–21:41**，**全部不在该 tag 内**。其中**两条是真缺陷修复**：`0537d3f`（`telemetry.rs` 有界队列 + 10s 超时）、`798d8cb`（`rdp.rs`/`s3`/`scp`/`sftp` 的 6 处 watcher `.expect()` 改优雅降级）。另 `a746290`（`bridge.rs`/`term/local.rs`，含回归用例）与 `824555a`（soak 工装）以测试为主；`6377a5e`（`deny.toml`）是 CI 门禁不随包发布。⇒ **要交付这些修复必须切新 tag（如 v0.15.1）**，不能复用 v0.15.0。判断「修复是否已发布」一律用 `git merge-base --is-ancestor <fix> <tag>`，**别信 skill 里"该版即 HEAD"这类会过期的记述**。
 - RDP 只支持 TLS/NLA：IronRDP 硬拒绝标准 RDP 安全层（**设计决策非缺陷**）。判定看 X.224 CC 的 `NEG_RSP selectedProtocol`（偏移 15..19，小端）：0=PROTOCOL_RDP 无解/1=SSL/2=NLA。`rdp.rs` 的 `explicit_rdp_rsp` 与 `ignored_negotiation` 两个布尔必须分开，合并会产生自相矛盾的错误文本。
 
 ## 四、已知遗留缺口（非回归）
