@@ -32,6 +32,8 @@
 - **沙箱（seatbelt）禁止 `ps`**（`Operation not permitted`），且 macOS 无 `/proc`。⇒ 任何以 `ps` 采样的指标会拿到**空输出**：必须把「采不到」显式表示为**不可用并跳过断言**，绝不能 `unwrap_or(0)` —— 那会印成「零增长」。「测不到」与「没增长」不能长得一样。RSS 类指标只能在普通终端采（`cargo test -- --ignored` 由人手动跑）。
 - CI 仅在 main/PR/`workflow_dispatch` 触发；`ci.yml` 有 `concurrency.cancel-in-progress` ⇒ 再次 push 会取消同分支旧 run。
 - 合规：`cargo fmt` 以实际输出为准（100 列断行会改写手写换行）；核对提交必须 `git show --name-status`，不能信 message。
+- **⚠️ 磁盘常满**：数据卷 `/Volumes/My-Data` 长期接近写满（2026-09-12 实测 993/1000 GB，`df` 仅剩 ~57 MiB）。后果：`cargo` 报 `No space left on device` 并**连锁引爆一串假错误**（先查空间，别先查代码）。可安全回收：本 worktree 的 `target/debug/incremental`（纯增量缓存，实测 6.6 GB）；**删完 `df` 不会立刻变**，有延迟。大头都是用户文件（`Downloads` 326 G / `Library` 190 G / `codebase` 114 G / 工作区各 `target` 共 61 G），**不得动**。
+- **Cargo.toml 的 `[target.'cfg(...)'.dependencies.X]` 表必须放文件末尾**：写在 `[dependencies]` 段中间会让**其后所有键变成该表的子键** ⇒ 依赖整体掉出图（指纹：构建报 `Permission xxx: not found`，且可选权限列表里**完全没有那个插件的前缀**），`Cargo.lock` 被连坐重写上千行。核对法：`git diff --numstat` 必须是**纯新增**（如 +20/-0）。
 
 ## 三、基线与发布事实
 
@@ -44,6 +46,9 @@
 ## 四、已知遗留缺口（非回归）
 
 - `sftp:file-edited`/`scp:file-edited`/`s3:file-edited` 前端从未订阅 ⇒ 外部编辑器保存回传后远端列表不自动刷新。
+- **R-9 已修（`24e4b34`）**：启动期致命错误（如库版本高于 App）不再 panic/SIGABRT，改为打印 + 弹**阻塞式原生对话框** + `exit(1)`。对话框走 `rfd` **直接调用**而非 `tauri-plugin-dialog` 的 `blocking_show`——后者文档明写**不得在主线程调用**，而 `setup()` 正是主线程（万一死锁比崩溃更糟）。另装 panic hook 写 `<app_data_dir>/panic.log`（tracing 只写 stdout ⇒ GUI 启动零日志）。
+  - **⚠️ 判「macOS 上有没有弹窗」必须放进 `.app` bundle 里测**：裸二进制会**假阴性**（`CFUserNotificationDisplayAlert` 返回非零即被当取消，实测 ~4s 就返回）；同一份代码放进最小 bundle 后**一直阻塞到被 kill**。2026-09-12 实测。
+- **R-8（macOS 未签名/未公证）维持不修，改为文档级缓解**：两个 README 已写明 Gatekeeper 两种提示的绕过法。原文的路径 `anyssh.app` 是**错的**（bundle 是 `anySSH.app`，只有内部可执行文件是小写 `anyssh`），已更正。
 - 遥测无应用内开关，唯一退出 `ANYSSH_DISABLE_TELEMETRY`；bridge 的 loopback WS **不校验 Origin**（靠 32B CSPRNG 单次令牌 + 60s TTL 兜底）。
 - quick-xml 不可升级（**已定案勿再当待办**）：`aws-creds`/`rust-s3` 最新版都锁 `^0.38`，修复需 `>=0.41`，跨 semver 必冲突。0.39.4 来自 proc-macro 构建期。
 - E2E 失败分**三类，必须分开讲**（判绿前先归对类）：
