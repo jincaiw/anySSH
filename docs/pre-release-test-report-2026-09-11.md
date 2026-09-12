@@ -20,7 +20,7 @@
 | 4. 安全检查 | **PASS**（2 WARN） | 无注入/XSS 路径；`unsafe` 0；凭据加密存储；遥测已披露 |
 | 5. 性能与稳定性 | **WARN**（已收窄） | 新增资源泄漏回归 + 400 轮句柄/延迟实测；仍**无应用层基准、无 4 小时长跑与内存曲线** |
 | 6. 数据与部署 | **PASS** | schema 保护 + 迁移幂等 + 备份往返；实机安装待人工 |
-| 7. 兼容性 | **WARN** | 3 平台 × 4 目标由 CI 构建；DPI 与实机仅部分覆盖 |
+| 7. 兼容性 | **WARN** | 3 平台 × 4 目标由 CI 构建；DPI 与实机仅部分覆盖；**macOS 未签名/未公证（R-8）** |
 | 8. 可运维性 | **WARN** | 无日志落盘、无 panic hook、级别硬编码 |
 
 **无 FAIL 项**（无阻塞级缺陷、无高危安全问题）。
@@ -249,7 +249,7 @@ CI 覆盖 **3 平台 × 4 目标**：
 
 已核实：Rust `edition = 2021`；主窗口由 `src-tauri/src/lib.rs` 的 `WebviewWindowBuilder` 创建（默认 1200×800、最小 800×500）——注意 `tauri.conf.json` 的 `app.windows` 是空数组，改窗口配置别只搜配置文件。
 
-**WARN**：① **未声明 MSRV**（`Cargo.toml` 无 `rust-version`），CI 用 `stable` ⇒ 源码构建的可重现性随时间漂移；② **高 DPI / 多显示器未验证**——仅 `ExplorerView` 对 Windows 单独补偿 `devicePixelRatio`，其余缩放场景无实机证据；③ Windows 上 GUI 启动**拿不到任何日志**（无控制台），见 §9。
+**WARN**：① **未声明 MSRV**（`Cargo.toml` 无 `rust-version`），CI 用 `stable` ⇒ 源码构建的可重现性随时间漂移；② **高 DPI / 多显示器未验证**——仅 `ExplorerView` 对 Windows 单独补偿 `devicePixelRatio`，其余缩放场景无实机证据；③ Windows 上 GUI 启动**拿不到任何日志**（无控制台），见 §9；④ **macOS 分发包未签名未公证**（见 R-8）。
 
 ---
 
@@ -299,6 +299,7 @@ CI 覆盖 **3 平台 × 4 目标**：
 | R-5 | 无基准与压力测试；**应用层**长跑与内存曲线、冷启动耗时未测量（PTY 层 400 轮句柄已实测、无漂移） | 中 | 部分验证，见 §6 |
 | R-6 | 无 MSRV（`Cargo.toml` 未声明 `rust-version`），CI 用 `stable` | 低 | 未修复 |
 | R-7 | 无 panic hook / 日志不落盘 / 级别硬编码 ⇒ Windows GUI 场景零日志 | 中 | 未修复，见 §9 |
+| R-8 | **macOS 包为 ad-hoc（linker-signed）签名、未用 Developer ID、未公证**（`spctl` rejected、`stapler validate` 无票据、无 `_CodeSignature`）。**从浏览器下载的用户首次启动会被 Gatekeeper 拦截**；命令行下载（`gh`/`curl`）不带 quarantine 故探测不到。与 v0.14.46 状态一致，**非本轮回归** | 中 | 未修复（需 Apple Developer 账号 + 公证流程，属发布决策）；已在手册 §4 给出复现与绕过步骤 |
 
 ---
 
@@ -344,6 +345,6 @@ CI 覆盖 **3 平台 × 4 目标**：
 - 第 8 项（4 小时混合负载长跑、RSS 曲线）与 §6 的冷启动耗时，建议在正式对外前补一轮；
 - 第 10 项遥测抓包须带对照组执行。
 
-**风险知悉项**（不阻塞，但须记录在案）：E2E 环境性抖动（R-2）、前端仅能由 CI 验证（R-3）、应用层无基准与长跑数据（R-5）、Windows GUI 零日志（R-7）。
+**风险知悉项**（不阻塞，但须记录在案）：E2E 环境性抖动（R-2）、前端仅能由 CI 验证（R-3）、应用层无基准与长跑数据（R-5）、Windows GUI 零日志（R-7）、**macOS 未签名/未公证导致浏览器下载用户首启被拦（R-8）**。
 
 **结论**：可以发布，但发布前的最后一道闸门是**实机冒烟**，不能由自动化测试替代。

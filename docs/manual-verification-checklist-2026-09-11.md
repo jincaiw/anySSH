@@ -1,8 +1,21 @@
 # anySSH 人工验证运行手册
 
-**版本**：v0.15.0 之后（`main` @ `9d66c0d` 及后续提交）
-**用途**：第 9 节 8 项无法自动验证的项目，逐项给出可照做的步骤、期望结果与判定标准。
+**版本**：v0.15.0（`main` @ `2c31fd2` 及后续纯文档提交）
+**用途**：报告 §12 列出的 **10 项**无法自动验证的项目，逐项给出可照做的步骤、期望结果与判定标准。
 **前置**：本手册所有项目都要求在**目标平台上用真实目标**执行；任何一项未执行即视为**未验证**，不得记为通过。
+
+## 本机现状（2026-09-12 核实，直接照此执行）
+
+| 项目 | 实测值 |
+|---|---|
+| 架构 | **arm64**（Apple Silicon）⇒ 下载 `anySSH_0.15.0_aarch64.dmg` |
+| 已安装 | `/Applications/anySSH.app`，版本 **0.14.46** |
+| 可执行文件 | `/Applications/anySSH.app/Contents/MacOS/anyssh`（**全小写 `anyssh`**） |
+| 数据目录 | `~/Library/Application Support/com.jincaiw.anyssh/` |
+| 库文件 | `anyssh.db`，`_meta.schema_version` = **20**（v0.15.0 上限也是 20 ⇒ 升级**不触发迁移**） |
+| 其他文件 | `.device_id`（遥测随机 UUID）、`anyssh.db-wal` / `-shm` |
+| 可回滚配对 | Releases 现有 `v0.14.46`（本机旧版）与 `v0.15.0`（目标版） |
+| 更新器 | 插件已注册、能力 `updater:default` 已授予、公钥与 0.14.46 **一致**；入口为启动自动检查 + 设置页「检查更新」；`autoUpdate` **默认开** |
 
 ## 0. 通用准备：先把日志拿到手
 
@@ -10,9 +23,12 @@
 
 | 平台 | 启动方式 |
 |---|---|
-| macOS | `/Applications/anySSH.app/Contents/MacOS/anySSH 2>&1 \| tee /tmp/anyssh.log` |
-| Linux | `./anySSH 2>&1 \| tee /tmp/anyssh.log`（或 AppImage 直接执行） |
-| Windows | **GUI 启动无法获得任何日志**（无控制台、无日志文件）。若需要日志，请在 WSL/PowerShell 中运行 `anySSH.exe 2>&1 \| Tee-Object C:\Temp\anyssh.log` 并接受可能无输出 |
+| macOS | `/Applications/anySSH.app/Contents/MacOS/anyssh 2>&1 \| tee /tmp/anyssh.log` |
+| Linux | `./anyssh 2>&1 \| tee /tmp/anyssh.log`（或 AppImage 直接执行） |
+| Windows | **GUI 启动无法获得任何日志**（无控制台、无日志文件）。若需要日志，请在 WSL/PowerShell 中运行 `anyssh.exe 2>&1 \| Tee-Object C:\Temp\anyssh.log` 并接受可能无输出 |
+
+> 注意可执行文件名是 **`anyssh`（小写）**，不是 `anySSH`——按产品名猜会得到 «no such file or directory»。
+> 带环境变量启动（如关遥测）也只能走终端：`ANYSSH_DISABLE_TELEMETRY=1 /Applications/anySSH.app/Contents/MacOS/anyssh`。用 `open -a anySSH` 或双击会把环境变量丢掉。
 
 同时打开 webview 开发者工具（macOS：`Cmd+Opt+I`；Windows/Linux：`Ctrl+Shift+I`）并保持 **Console** 面板可见——RDP/VNC 的失败大多只在 Console 里可见。
 
@@ -108,9 +124,42 @@ shutdown /r /t 0
 
 | 平台 | 安装包 | 关键核对点 |
 |---|---|---|
-| macOS | `anySSH_0.15.0_aarch64.dmg` / `_x64.dmg` | 挂载 → 拖入 Applications → 首次启动通过 Gatekeeper → 主窗口为 **1200×800**，最小可缩至 **800×500** |
+| macOS | `anySSH_0.15.0_aarch64.dmg` / `_x64.dmg` | 挂载 → 拖入 Applications → **首次启动能过 Gatekeeper**（见下方「macOS 签名实况」）→ 主窗口为 **1200×800**，最小可缩至 **800×500** |
 | Windows | `anySSH_0.15.0_x64-setup.exe`（在线）与 `x64_en-US.msi`（含离线 WebView2） | 无网络环境用 `.msi` 安装，WebView2 应离线装好；首启不弹缺 WebView2 的错 |
 | Linux | `.deb` / `.rpm` / AppImage | `.deb`/`.rpm` 依赖 `libwebkit2gtk-4.1` 可自动解析；AppImage 无需安装即可运行 |
+
+### macOS 签名实况（2026-09-12 实测，**必须知道**）
+
+对 v0.15.0 的 `aarch64.dmg` 与**本机已装的 v0.14.46** 同时做了签名核查，结论一致：
+
+```text
+Signature=adhoc       flags=0x20002(adhoc,linker-signed)     TeamIdentifier=not set
+codesign --verify → "code has no resources but signature indicates they must be present"
+xcrun stapler validate → does not have a ticket stapled to it
+spctl -a -t open <dmg> → rejected (source=no usable signature)
+```
+
+即：**既没有用 Developer ID 签名，也没有公证（notarization）**。这**不是**本轮引入的回归——v0.14.46 完全一样。
+
+**对验收的实际影响（这才是要点）**：
+
+| 获取方式 | 是否被 Gatekeeper 拦 | 说明 |
+|---|---|---|
+| 浏览器下载（Safari / Chrome） | **会被拦** | 文件带上 `com.apple.quarantine`，首次启动提示「无法验证开发者 / Apple 无法检查是否包含恶意软件」 |
+| 命令行 `gh` / `curl` 下载 | **不拦** | 实测下载到的 dmg **没有** quarantine 属性（只有 `provenance` / `macl` / `diskimages.recentcksum`），可直接安装启动 |
+
+**因此第 6 项在 macOS 上必须按「真实用户路径」测**——命令行下载探测不到 Gatekeeper 问题。复现与验证步骤：
+
+```bash
+# 1) 故意打上 quarantine，模拟浏览器下载的真实状态
+xattr -w com.apple.quarantine "0081;$(printf %x $(date +%s));Safari;" ~/Downloads/anySSH_0.15.0_aarch64.dmg
+# 2) 挂载并拖入 /Applications 后，从 Finder 双击启动 → 应被拦
+# 3) 用右键 → 打开，或：
+xattr -dr com.apple.quarantine /Applications/anySSH.app
+# 4) 再次双击 → 应能启动
+```
+
+**判定**：拦截本身**不算缺陷**（未公证的必然结果），但必须确认 ① 提示文案是可理解的、② 绕过步骤有效、③ 绕过之后应用一切正常。若希望用户**不再遇到这一步**，需要 Apple Developer Program 账号做 Developer ID 签名 + 公证（属发布决策，需另立任务）。
 
 **首次启动核对**：
 
@@ -185,21 +234,47 @@ lsof -p "$PID" 2>/dev/null | wc -l   # macOS：句柄数
 
 ## 7. 升级安装与回滚
 
-### 7.1 正常升级
+> **先读这三条事实**（2026-09-12 按代码核实，避免照着做却得到相反结论）：
+>
+> 1. **设置项 `autoUpdate` 默认为 `true`**（`settings-store.ts:207`）：只要启动时发现更高版本，就会**静默下载、安装并重启**进新二进制（`checkOnStartup` → `downloadInstall` → `relaunch`）。想在升级前先看到弹窗，**必须先在设置里关掉自动更新**。
+> 2. **「库版本高于 App」这道保护只在 v0.15.0 及以后存在**（`LATEST_SCHEMA_VERSION` 常量与 `version > LATEST_SCHEMA_VERSION` 检查是在本轮的 `0ec9add` 才加入）。**v0.14.46 没有这道保护**，所以「用 v0.14.46 打开 v0.15.0 写的库」**不会**出现该提示——这条旧指令已作废，正确做法见 7.2。
+> 3. schema 版本存在 **`_meta` 表的 `schema_version` 键**（不是 `PRAGMA user_version`）。本机现有库为 **20**，而 v0.15.0 上限也是 **20** ⇒ **0.14.46 → 0.15.0 不会执行任何迁移**（这一点必须知道，否则会误以为「迁移已验证」）。
 
-| 步骤 | 期望结果 |
-|---|---|
-| 安装 v0.15.0，建立若干主机与分组 | 数据正常 |
-| 触发应用内「检查更新」（有更高版本时） | 显示新版本号与说明，签名校验通过后才允许安装 |
-| 执行升级 | 升级成功后原有主机、分组、片段、转发规则、S3 连接**全部保留**；凭据仍可从 OS keychain 读出 |
+### 7.1 正常升级（应用内更新）
 
-### 7.2 回滚（重点，最易被忽略）
+| 步骤 | 命令 / 操作 | 期望结果 |
+|---|---|---|
+| 1 | 先看清当前版本 | 应用内「关于 / 设置」显示的版本号 = **v0.14.46** |
+| 2 | 关掉自动更新（为了**看到**弹窗）：设置 → 自动更新 → 关 | 设置持久化 |
+| 3 | 重启应用 | 弹窗提示发现新版本 **0.15.0**；含版本号与说明 |
+| 4 | 确认安装 | 下载 → 校验签名（公钥固定于 `tauri.conf.json`，与 0.14.46 一致，已核对）→ 重启进新二进制 |
+| 5 | 升级后核对 | 版本号显示 **0.15.0**；原有主机 / 分组 / 片段 / 转发规则 / S3 连接**全部保留**；凭据仍可从 OS keychain 读出 |
+| 6 | 再核对 schema | `_meta.schema_version` 仍为 **20**（未发生迁移，属预期） |
 
-| 步骤 | 期望结果 |
-|---|---|
-| 用**新版本**启动一次，确认数据库已被迁移到更高 schema 版本 | 新版本正常工作 |
-| 再安装**旧版本**并启动 | 应给出**明确提示**（库版本高于当前 App），**不得**静默降级、不得损坏数据库 |
-| 回滚后原数据 | 仍可通过重装新版本正常读取 |
+> 想看「自动更新」通路：第 2 步保持默认（开），重启后应**直接**完成升级并重启，不弹窗。
+
+### 7.2 回滚与 schema 保护（分开测，别混为一谈）
+
+**A. 回滚本身（0.15.0 → 0.14.46，验证旧版能读新库、数据不损坏）**
+
+| 步骤 | 命令 / 操作 | 期望结果 |
+|---|---|---|
+| 1 | **先关自动更新**（否则回滚后一启动就被升级回去，测试白做） | 设置里 `autoUpdate` 为关 |
+| 2 | 退出应用，**备份数据目录** | `cp -R ~/Library/Application\ Support/com.jincaiw.anyssh /tmp/anyssh-backup-$(date +%s)` |
+| 3 | 安装 v0.14.46：`anySSH_0.14.46_*.dmg`（或从 Releases 取） | 覆盖安装成功 |
+| 4 | 启动 | 正常打开；主机 / 分组等**仍在**；无「数据损坏」提示；库文件未被重建（对比 `anyssh.db` 大小与 mtime） |
+
+**B. schema 保护（必须制造「库比 App 新」的条件，v0.15.0 才有这道闸门）**
+
+| 步骤 | 命令 / 操作 | 期望结果 |
+|---|---|---|
+| 1 | 全部退出 anySSH | 无 anySSH 进程 |
+| 2 | 手工把库的版本标成 21（模拟未来版本写的库）<br>`sqlite3 ~/Library/Application\ Support/com.jincaiw.anyssh/anyssh.db "UPDATE _meta SET value='21' WHERE key='schema_version';"` | 写成功 |
+| 3 | 从**终端**启动 v0.15.0：<br>`/Applications/anySSH.app/Contents/MacOS/anyssh 2>&1 \| tee /tmp/anyssh-guard.log` | **窗口不出现 / 进程退出**；终端打印含 `failed to initialise database:` 与 `schema v21`、`understands up to v20` 的报错（`db/mod.rs:265-276`） |
+| 4 | 关键判定 | 数据**未被修改或删除**：库文件 mtime / 大小不变，主机表内容不变（可 `SELECT count(*) FROM saved_hosts` 对比） |
+| 5 | 恢复 | 用第 2 步的备份覆盖回去；或用 `UPDATE _meta SET value='20' WHERE key='schema_version';` 改回 |
+
+> 第 3 步的报错在 macOS 上走 stderr，GUI 双击启动看不到——这正是「必须从终端启动」的原因（§0）。
 
 ### 7.3 更新器失效时的兜底
 
@@ -207,6 +282,7 @@ lsof -p "$PID" 2>/dev/null | wc -l   # macOS：句柄数
 |---|---|
 | 断网后触发「检查更新」 | 给出网络错误提示，不崩溃、不卡死 |
 | 下载中断（中途断网） | 可重试；不会装上半截包 |
+| 弹窗里选「跳过此版本」 | 本次启动不再提示；下次启动仍会检查（除非版本号相同） |
 
 ---
 
