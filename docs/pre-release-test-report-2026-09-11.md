@@ -417,3 +417,51 @@ CI 覆盖 **3 平台 × 4 目标**：
 **风险知悉项**（不阻塞，但须记录在案）：E2E 环境性抖动 + 编排易被上游变更打断（R-2，`libEGL` 软渲染根因未根治）、前端仅能由 CI 验证（R-3）、应用层无基准与长跑数据（R-5）、Windows GUI 零日志（R-7 未修部分）、**macOS 未签名/未公证导致浏览器下载用户首启被拦（R-8，已做文档级缓解）**，以及 §3.4 C 类那 1 次未解释的密钥认证拒绝。~~R-9~~ **已修（`24e4b34`）并实测**。
 
 **结论**：可以发布，但发布前的最后一道闸门是**实机冒烟**，不能由自动化测试替代。
+
+---
+
+## 14. 发布记录：v0.15.1（2026-09-12）
+
+报告写完后实际发布了一版，**发布过程中发现的两个问题都记在这里**——它们不是本报告审计范围内的缺陷，而是发布流程自身的缺陷。
+
+### 已发布的版本
+
+| 项 | 值 |
+|---|---|
+| tag | `v0.15.1` → `7053acf`（代码提交为 `24e4b34`，CI 8/8、75/75 spec 全绿） |
+| release | https://github.com/jincaiw/anySSH/releases/tag/v0.15.1 |
+| 资产 | **25 个**，含 `latest.json` 与全部 `.sig` |
+| 平台构建 | macOS(Intel/Apple Silicon) / Linux / Windows **4/4 success** |
+| 更新端点校验 | `releases/latest/download/latest.json` → **version 0.15.1**，**11 个平台且签名齐全** |
+
+**为什么切新版本而不是复用 v0.15.0**：v0.15.0 = `a2f53d8`（09-11 12:59），而审计产出的修复在当晚 21:31–21:41，**全部不在该 tag 内**（逐个用 `git merge-base --is-ancestor` 核对）。其中两条是**真缺陷修复**（`telemetry.rs` 无界队列 + 无超时的 HTTP 客户端；`rdp/s3/scp/sftp` 的 6 处 watcher `.expect()`）。⇒ 已发布的 v0.15.0 从未把这些修复交付给用户。
+
+### 发布流程缺陷 1：版本注入的 sed 会改写**依赖要求**
+
+第一次 `v0.15.1` 构建 **macOS 与 Windows 全成功、Linux 失败**，报：
+
+```
+error: failed to run custom build command for `rfd v0.15.4`
+thread 'main' panicked at rfd-0.15.4/build.rs:14:17:
+You need to choose at least one backend: `gtk3` or `xdg-portal` features
+```
+
+根因是 release.yml 的
+
+```bash
+sed -i.bak "s/^version = \".*\"/version = \"$VERSION\"/" src-tauri/Cargo.toml
+```
+
+**分不清包版本与依赖要求**。`24e4b34` 引入的 rfd 恰好写在 `[target.'cfg(...)'.dependencies.rfd]` 表下、独占一行 `version = "0.16"`，于是被改成 `^0.15.1`，解析到 **rfd 0.15.4**，其 `build.rs` 在 Linux 上要求 gtk3/xdg-portal ⇒ panic。**macOS/Windows 无感，因为该检查只在 Linux 生效**——所以现象是「少一个平台」而非「构建失败」，极易被当成上游抖动放过去。
+
+修法（两层）：① 依赖改为**单行内联** `rfd = { version = "0.16", ... }`，该行不以 `version` 开头；② sed 改为锚定占位符值 `s/^version = "0\.0\.0-dev"/…/` 并**失败即 `::error::` 退出**。**刻意不用 GNU 的 `0,/re/` 地址**：这一步在 `matrix.platform` 内，macOS/Windows runner 是 BSD sed，实测直接报 `no previous regex`。
+
+> 附带一条项目约定：**新增需要 target 条件的依赖，一律用 `[...dependencies]` 表 + 单行内联写法**，不要写成表头 + 独立 `version = ` 行。
+
+### 发布流程缺陷 2：`[table]` 表头写在段中间会吞掉其后的键
+
+同一轮里还踩到：把 `[target.'cfg(...)'.dependencies.rfd]` 写在 `[dependencies]` **段中间**，使**其后 56 行依赖全成了该表的子键** ⇒ `tauri-plugin-clipboard-manager`、`drag` 等整体掉出依赖图。指纹是构建报 `Permission clipboard-manager:allow-read-text not found`，而**可选权限列表里完全没有 `clipboard-manager:*`**；`Cargo.lock` 被连坐重写 **−1483 行**。修法：**目标平台表一律放文件末尾**，并用 `git diff --numstat` 确认是**纯新增**（修好后为 +20/−0）。
+
+### 这一轮的 CI 代价（如实记录）
+
+代码提交 `24e4b34` 的 CI 经 **5 次 attempt** 才 8/8 全绿（attempt 1 有 3 个 shard 失败、attempt 2 有 2 个、attempt 3 有 1 个、attempt 4 有 1 个）。失败 spec **每轮都在换**（`19-sftp-refresh` / `15-cmd-w-close` / `03-connect-password` / `18-sftp-rename` / `04-connect-key`），错误全是 §3.4 B 类已记录的环境特征（`explorer did not open`、`Temporary failure in name resolution`）。**这是本报告记录过的最差收敛速度**，未做任何掩盖。同时 `04-connect-key` 这次抛出了**第三种错误串** `I/O error: No such file or directory (os error 2)`（此前见过 `Connection refused` 与 `Is a directory`），且**就绪门当时是通过的**——支持 §3.4 C 类「非就绪竞态」的判断：它更像 `test-ssh-keys` 卷/密钥路径在那一刻的状态问题，机制仍未定。
