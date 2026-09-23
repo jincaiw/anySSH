@@ -129,6 +129,11 @@ describe("RDP component lifecycle", () => {
     await screen.findByText("Authentication failed");
     expect(mocks.save).not.toHaveBeenCalled();
   });
+  it("renders structured bridge errors instead of [object Object]", async () => {
+    mocks.connect.mockRejectedValueOnce({ kind: "upstream", message: "upstream connect failed: refused" });
+    render(<RdpCanvas sessionId="rdp-bridge-error" wsUrl="ws://localhost" destination="localhost:3389" username="alice" password="bad" isActive />);
+    await screen.findByText("upstream connect failed: refused");
+  });
   it("connects without credentials and disables CredSSP when username and password are empty", async () => {
     const { enableCredssp } = await import("@devolutions/iron-remote-desktop-rdp") as { enableCredssp: (enable: boolean) => unknown };
     render(<RdpCanvas sessionId="rdp-anon" wsUrl="ws://localhost" destination="localhost:3389" username="" password="" isActive />);

@@ -33,7 +33,7 @@ import { useTabStore } from "../../stores/tab-store";
 import { useSftpStore } from "../../stores/sftp-store";
 import { useS3Store } from "../../stores/s3-store";
 import { useSettingsStore } from "../../stores/settings-store";
-import { isDualFactorTriggerError, sshHostKeyPromptOf, type SshHostKeyPrompt } from "../../lib/backend-errors";
+import { isDualFactorTriggerError, rawErrorMessage, sshHostKeyPromptOf, type SshHostKeyPrompt } from "../../lib/backend-errors";
 import { fireDualFactorTrigger, triggerDispatched } from "../../lib/dual-factor";
 import type { SavedHost, HostGroup, RecentConnection, S3Connection } from "../../types";
 import { HostCard } from "./HostCard";
@@ -426,7 +426,7 @@ export function HostsDashboard() {
         const hostKey = sshHostKeyPromptOf(err);
         const retry = () => void connectToHost(host, secrets);
         setConnectingHost({ label, error: msg, retry: hostKey ? null : retry, cancel: null, hostKey,
-          trust: hostKey ? () => void import("@tauri-apps/api/core").then(({ invoke }) => invoke("ssh_trust_host_key", { host: hostKey.host, port: hostKey.port, fingerprint: hostKey.fingerprint })).then(retry).catch(error => toast.error(String(error))) : null });
+          trust: hostKey ? () => void import("@tauri-apps/api/core").then(({ invoke }) => invoke("ssh_trust_host_key", { host: hostKey.host, port: hostKey.port, fingerprint: hostKey.fingerprint })).then(retry).catch(error => toast.error(rawErrorMessage(error))) : null });
       }
     },
     [t, ensurePasswordOrPrompt, connectProtocolHost],
@@ -527,7 +527,7 @@ export function HostsDashboard() {
         const hostKey = sshHostKeyPromptOf(err);
         const retry = () => void handleRecentConnect(conn, secrets);
         setConnectingHost({ label, error: msg, retry: hostKey ? null : retry, cancel: null, hostKey,
-          trust: hostKey ? () => void import("@tauri-apps/api/core").then(({ invoke }) => invoke("ssh_trust_host_key", { host: hostKey.host, port: hostKey.port, fingerprint: hostKey.fingerprint })).then(retry).catch(error => toast.error(String(error))) : null });
+          trust: hostKey ? () => void import("@tauri-apps/api/core").then(({ invoke }) => invoke("ssh_trust_host_key", { host: hostKey.host, port: hostKey.port, fingerprint: hostKey.fingerprint })).then(retry).catch(error => toast.error(rawErrorMessage(error))) : null });
       }
     },
     // `hosts` MUST be a dependency: `t` is memoised on the locale and never
@@ -615,7 +615,7 @@ export function HostsDashboard() {
         const hostKey = sshHostKeyPromptOf(err);
         const retry = () => void exploreHost(host, secrets);
         setConnectingHost({ label, error: msg, retry: hostKey ? null : retry, cancel: null, hostKey,
-          trust: hostKey ? () => void import("@tauri-apps/api/core").then(({ invoke }) => invoke("ssh_trust_host_key", { host: hostKey.host, port: hostKey.port, fingerprint: hostKey.fingerprint })).then(retry).catch(error => toast.error(String(error))) : null });
+          trust: hostKey ? () => void import("@tauri-apps/api/core").then(({ invoke }) => invoke("ssh_trust_host_key", { host: hostKey.host, port: hostKey.port, fingerprint: hostKey.fingerprint })).then(retry).catch(error => toast.error(rawErrorMessage(error))) : null });
       }
     },
     [t, ensurePasswordOrPrompt, connectProtocolHost],

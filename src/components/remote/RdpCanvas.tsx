@@ -7,6 +7,7 @@ import { persistProtocolHost } from "../../lib/protocol-hosts";
 import { useHostsStore } from "../../stores/hosts-store";
 import { withNativeClipboard, encodeRgbaAsPng } from "./rdp-native-clipboard";
 import { cancelDeferredClose, deferClose } from "./deferred-close";
+import { rawErrorMessage } from "../../lib/backend-errors";
 
 interface RdpCanvasProps {
   /** RDP session id — the one-time bridge token handed out by `rd_open`. */
@@ -166,7 +167,7 @@ export function RdpCanvas({
     setErrorMsg("");
     setStatus("loading");
     try { await onReconnect(); }
-    catch (error) { setErrorMsg(String(error)); setStatus("error"); }
+    catch (error) { setErrorMsg(rawErrorMessage(error)); setStatus("error"); }
   };
   /** Schedule the next auto-reconnect; returns false when retries are
    *  exhausted, the session never connected, or no handler exists. */
@@ -216,7 +217,7 @@ export function RdpCanvas({
       }
       setTransferNote(`${t("dashboard.rdp.fileTransferDone")} (${written})`);
     } catch (error) {
-      setErrorMsg(t("dashboard.rdp.fileTransferFailed", { error: String(error) }));
+      setErrorMsg(t("dashboard.rdp.fileTransferFailed", { error: rawErrorMessage(error) }));
     }
   };
 
@@ -225,7 +226,7 @@ export function RdpCanvas({
       if (document.fullscreenElement) await document.exitFullscreen();
       else await containerRef.current?.requestFullscreen();
     } catch (error) {
-      setErrorMsg(String(error));
+      setErrorMsg(rawErrorMessage(error));
     }
   };
 
@@ -281,7 +282,7 @@ export function RdpCanvas({
             await session.onClipboardPaste(data);
           };
         }, () => !cancelled && activeRef.current, error => {
-          if (!cancelled) setErrorMsg(String(error));
+          if (!cancelled) setErrorMsg(rawErrorMessage(error));
         });
         elementRef.current = el;
 
@@ -371,7 +372,7 @@ export function RdpCanvas({
               if (cancelled) return;
               if (maybeAutoReconnect(() => cancelled)) return;
               setErrorMsg(
-                err instanceof Error ? err.message : String(err ?? ""),
+                rawErrorMessage(err),
               );
               setStatus("error");
             });
@@ -379,7 +380,7 @@ export function RdpCanvas({
         host.appendChild(el);
       } catch (err) {
         if (cancelled) return;
-        setErrorMsg(err instanceof Error ? err.message : String(err ?? ""));
+        setErrorMsg(rawErrorMessage(err));
         setStatus("error");
       }
     })();
@@ -421,7 +422,7 @@ export function RdpCanvas({
     <div className="absolute inset-0 flex flex-col bg-bg-base">
       {status === "connected" && <div className="flex shrink-0 items-center gap-2 border-b border-border px-3 py-1 text-xs text-text-secondary">
         <button className="rounded px-2 py-1 hover:bg-bg-subtle" onClick={() => apiRef.current?.ctrlAltDel()}>Ctrl+Alt+Del</button>
-        <button className="rounded px-2 py-1 hover:bg-bg-subtle" onClick={() => void pasteRef.current?.().catch(error => setErrorMsg(String(error)))}>{t("dashboard.protocol.pasteClipboard")}</button>
+        <button className="rounded px-2 py-1 hover:bg-bg-subtle" onClick={() => void pasteRef.current?.().catch(error => setErrorMsg(rawErrorMessage(error)))}>{t("dashboard.protocol.pasteClipboard")}</button>
         <button className="flex items-center gap-1 rounded px-2 py-1 hover:bg-bg-subtle" onClick={() => void sendFiles()} title={t("dashboard.rdp.sendFiles")}><FileUp size={13} />{t("dashboard.rdp.sendFiles")}</button>
         {remoteFiles.length > 0 && isActive && <button className="flex items-center gap-1 rounded px-2 py-1 text-status-warning hover:bg-bg-subtle" onClick={() => void saveRemoteFiles()} title={t("dashboard.rdp.saveFiles")}>
           <FolderDown size={13} />{t("dashboard.rdp.filesOffered", { count: remoteFiles.length })}
