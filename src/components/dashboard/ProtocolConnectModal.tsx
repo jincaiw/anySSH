@@ -11,6 +11,7 @@ import { useGroupsStore } from "../../stores/groups-store";
 import { useHostsStore } from "../../stores/hosts-store";
 import { TERMINAL_ENCODINGS, useSettingsStore } from "../../stores/settings-store";
 import { buildProtocolHost, protocolParams, type ProtocolHostKind } from "../../lib/protocol-hosts";
+import { rawErrorMessage } from "../../lib/backend-errors";
 import type { SavedHost } from "../../types";
 
 interface Props { kind: ProtocolHostKind; initial?: SavedHost; onClose: () => void }
@@ -57,7 +58,7 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
   const graph = kind === "vnc" || kind === "rdp";
   const network = kind !== "local" && kind !== "serial";
   const title = kind === "local" ? t("dashboard.action.localTerminal") : t(`dashboard.${kind}.title`);
-  const messageOf = (err: unknown) => err && typeof err === "object" && "message" in err ? String(err.message) : String(err);
+  const messageOf = (err: unknown) => rawErrorMessage(err);
   const close = () => { alive.current = false; onClose(); };
 
   useEffect(() => {
@@ -223,7 +224,7 @@ export function ProtocolConnectModal({ kind, initial, onClose }: Props) {
       if (importedDomain) setDomain(importedDomain);
       if (!label.trim()) setLabel(addr ? `rdp://${addr}` : label);
     } catch (err) {
-      if (alive.current) setError(err instanceof Error ? err.message : String(err) || t("dashboard.rdp.importRdpFailed"));
+      if (alive.current) setError(rawErrorMessage(err) || t("dashboard.rdp.importRdpFailed"));
       return;
     } finally {
       if (alive.current) setImportingRdp(false);

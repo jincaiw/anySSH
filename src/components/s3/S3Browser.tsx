@@ -7,6 +7,7 @@ import type { ExplorerEntry } from "../../types/explorer";
 import { ExplorerToolbar, ExplorerFileTable, ExplorerDropZone } from "../explorer";
 import { createS3Provider, toS3ExplorerEntry } from "../../providers/s3-provider";
 import { editorLaunchErrorMessage } from "../../lib/editor-errors";
+import { rawErrorMessage } from "../../lib/backend-errors";
 import { toast } from "../../stores/toast-store";
 import type { EditorConfig } from "../../stores/settings-store";
 
@@ -284,7 +285,7 @@ export function S3Browser({ sessionId, isActive = true }: S3BrowserProps) {
         localPath: savePath,
       });
     } catch (err) {
-      setError(sessionId, err instanceof Error ? err.message : String(err));
+      setError(sessionId, rawErrorMessage(err));
     }
   }, [sessionId, setError]);
 

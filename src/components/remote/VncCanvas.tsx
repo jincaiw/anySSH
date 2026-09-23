@@ -6,6 +6,7 @@ import type { SavedHost } from "../../types";
 import { persistProtocolHost } from "../../lib/protocol-hosts";
 import { useHostsStore } from "../../stores/hosts-store";
 import { cancelDeferredClose, deferClose } from "./deferred-close";
+import { rawErrorMessage } from "../../lib/backend-errors";
 
 // RFB type comes from src/types/novnc.d.ts (noVNC ships no types).
 type RfbInstance = import("@novnc/novnc").default;
@@ -22,16 +23,6 @@ interface VncCanvasProps {
 }
 
 type VncStatus = "connecting" | "connected" | "disconnected" | "error";
-
-/**
- * Tauri rejects commands with an object (`BridgeError` serialises to
- * `{ kind, message }`), so `String(err)` would render "[object Object]".
- */
-function messageOf(err: unknown): string {
-  return err && typeof err === "object" && "message" in err
-    ? String((err as { message: unknown }).message)
-    : String(err);
-}
 
 /**
  * P3 VNC viewer. Mounts a noVNC RFB client that connects to the Rust
@@ -89,7 +80,7 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost, onReconnect, 
     setErrorMsg("");
     setStatus("connecting");
     try { await onReconnect(); }
-    catch (error) { setErrorMsg(messageOf(error)); setStatus("error"); }
+    catch (error) { setErrorMsg(rawErrorMessage(error)); setStatus("error"); }
   };
 
   // Connect once per (token, endpoint).
@@ -142,7 +133,7 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost, onReconnect, 
           const fingerprint = Array.from(new Uint8Array(digest), byte => byte.toString(16).padStart(2, "0")).join(":");
           setServerFingerprint(fingerprint);
         }).catch(error => {
-          if (!cancelled) { setErrorMsg(messageOf(error)); setStatus("error"); }
+          if (!cancelled) { setErrorMsg(rawErrorMessage(error)); setStatus("error"); }
         });
       });
 
@@ -181,7 +172,7 @@ export function VncCanvas({ sessionId, wsUrl, isActive, savedHost, onReconnect, 
         ).catch(() => {/* clipboard unavailable */});
       });
     })().catch((error: unknown) => {
-      if (!cancelled) { setErrorMsg(messageOf(error)); setStatus("error"); }
+      if (!cancelled) { setErrorMsg(rawErrorMessage(error)); setStatus("error"); }
     });
 
     return () => {
