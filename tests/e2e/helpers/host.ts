@@ -61,6 +61,19 @@ async function setInput(testid: string, value: string): Promise<void> {
     // setValue clears + types — safer than 'addValue' for inputs that may
     // have a placeholder showing the previous saved value.
     await el.setValue(value);
+    // WebKit's WebDriver can return from sendKeys before a controlled React
+    // input has committed the final characters. Wait for the visible value so
+    // the next action cannot submit a partially entered credential. Keep the
+    // expected value out of the error text because this helper also fills
+    // passwords.
+    await browser.waitUntil(
+        async () => (await el.getValue()) === value,
+        {
+            timeout: 2_000,
+            interval: 50,
+            timeoutMsg: `input ${testid} did not retain its assigned value`,
+        },
+    );
 }
 
 /** Pick an option from the auth-type CustomSelect (password|privateKey). */
