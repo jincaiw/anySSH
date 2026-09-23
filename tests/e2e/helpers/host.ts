@@ -57,10 +57,35 @@ export async function waitForModalClosed(): Promise<void> {
 async function setInput(testid: string, value: string): Promise<void> {
     const el = await $(`[data-testid='${testid}']`);
     await el.waitForExist({ timeout: 5_000 });
+    await el.clearValue();
+    await browser.waitUntil(
+        async () => (await el.getValue()) === "",
+        {
+            timeout: 1_000,
+            interval: 25,
+            timeoutMsg: `input ${testid} did not clear before typing`,
+        },
+    );
     await el.click();
-    // setValue clears + types — safer than 'addValue' for inputs that may
-    // have a placeholder showing the previous saved value.
-    await el.setValue(value);
+
+    // A single WebKit WebDriver setValue call can outrun controlled React
+    // inputs under software rendering. Send one character at a time and wait
+    // until that character is reflected before sending the next one. This
+    // keeps form state in step with real key input without retrying submits or
+    // hiding incomplete values. Never echo the value: this fills passwords.
+    let typed = "";
+    for (const character of value) {
+        typed += character;
+        await el.addValue(character);
+        await browser.waitUntil(
+            async () => (await el.getValue()) === typed,
+            {
+                timeout: 1_000,
+                interval: 25,
+                timeoutMsg: `input ${testid} did not accept a character`,
+            },
+        );
+    }
 }
 
 /** Pick an option from the auth-type CustomSelect (password|privateKey). */
